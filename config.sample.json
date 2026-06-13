@@ -1,0 +1,9 @@
+{
+  "pdf_original_path": "/path/to/original-book.epub",
+  "pdf_translation_path": "/path/to/translated-book.epub",
+  "page_anchors": [
+    [0, 0],
+    [10, 8],
+    [20, 17]
+  ]
+}
