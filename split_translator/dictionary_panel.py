@@ -8,6 +8,7 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLineEdit,
     QPushButton,
@@ -40,6 +41,7 @@ class CaptureWebView(QWebEngineView):
 
     def contextMenuEvent(self, event):
         text = self.page().selectedText().strip()
+        page_url = self.url().toString()
         # Start from the standard menu (Copy, Back, Reload, ...) so nothing is lost.
         menu = self.createStandardContextMenu()
         menu.addSeparator()
@@ -47,11 +49,16 @@ class CaptureWebView(QWebEngineView):
         to_english = menu.addAction("Add selection to English")
         to_polish.setEnabled(bool(text))
         to_english.setEnabled(bool(text))
+        menu.addSeparator()
+        copy_url = menu.addAction("Copy page URL")
+        copy_url.setEnabled(bool(page_url))
         chosen = menu.exec(event.globalPos())
         if chosen == to_polish:
             self.capture_selection.emit("polish", text)
         elif chosen == to_english:
             self.capture_selection.emit("english", text)
+        elif chosen == copy_url:
+            QApplication.clipboard().setText(page_url)
 
 
 class DictionaryPanel(QWidget):
