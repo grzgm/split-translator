@@ -285,8 +285,22 @@ class DictionaryPanel(QWidget):
             var sel = document.createElement('select');
             sel.className = 'st-capture-select';
             sel.title = 'Add to a specific sense';
-            sel.style.cssText = 'margin-left:4px;font-size:11px;line-height:16px;'
-                + 'border:1px solid #0a84ff;border-radius:3px;vertical-align:middle;';
+            // box-sizing + explicit height force the native select down to the
+            // button height (18px); without it Chromium gives selects a taller
+            // fixed minimum control height regardless of padding. appearance:none
+            // drops the native arrow (which also imposed the taller height), so a
+            // white chevron is drawn back in as a background SVG.
+            var arrow = "url(\"data:image/svg+xml,"
+                + "%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' "
+                + "viewBox='0 0 8 8'%3E%3Cpath d='M1 2.5L4 5.5L7 2.5' "
+                + "stroke='white' stroke-width='1.2' fill='none'/%3E%3C/svg%3E\")";
+            sel.style.cssText = 'margin-left:4px;padding:0 14px 0 4px;font-size:11px;'
+                + 'line-height:16px;height:18px;box-sizing:border-box;'
+                + 'border:1px solid #0a84ff;border-radius:3px;'
+                + 'background-color:#0a84ff;color:#fff;cursor:pointer;'
+                + 'vertical-align:middle;appearance:none;-webkit-appearance:none;'
+                + 'background-image:' + arrow + ';background-repeat:no-repeat;'
+                + 'background-position:right 3px center;';
             fillSelect(sel);
             sel.addEventListener('mousedown', function(ev) { ev.stopPropagation(); });
             sel.addEventListener('change', function(ev) {
