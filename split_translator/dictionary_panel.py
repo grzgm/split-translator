@@ -181,12 +181,40 @@ class DictionaryPanel(QWidget):
         }
         var uk = grab('uk');
         var us = grab('us');
+
+        // UK/US spelling. Cambridge lists only the differing spelling as a
+        // variant (span.spellvar with a .region tag saying UK or US and a .v
+        // value); the headword is the opposite region's spelling. So a US
+        // variant means us=variant and uk=headword, and vice versa. If there is
+        // no variant the word spells the same in both, so leave both null.
+        function grabSpelling() {
+            var head = document.querySelector('.hw.dhw');
+            var headword = head ? head.textContent.trim() : null;
+            var ukSpelling = null, usSpelling = null;
+            var variants = document.querySelectorAll('.spellvar.dspellvar');
+            for (var i = 0; i < variants.length; i++) {
+                var regionEl = variants[i].querySelector('.region.dregion');
+                var valEl = variants[i].querySelector('.v.dv');
+                if (!regionEl || !valEl) { continue; }
+                var region = regionEl.textContent.trim().toUpperCase();
+                var value = valEl.textContent.trim();
+                if (region === 'US' && !usSpelling) {
+                    usSpelling = value; if (!ukSpelling) { ukSpelling = headword; }
+                } else if (region === 'UK' && !ukSpelling) {
+                    ukSpelling = value; if (!usSpelling) { usSpelling = headword; }
+                }
+            }
+            return { uk: ukSpelling, us: usSpelling };
+        }
+        var spelling = grabSpelling();
+
         // Return a JSON string, not a bare object: Qt's runJavaScript bridge
         // drops a plain object here (it arrives as an empty string), whereas a
         // string round-trips reliably. The Python callback parses it back.
         return JSON.stringify({
             ipa_uk: uk.ipa, ipa_us: us.ipa,
-            audio_uk_url: uk.audio, audio_us_url: us.audio
+            audio_uk_url: uk.audio, audio_us_url: us.audio,
+            spelling_uk: spelling.uk, spelling_us: spelling.us
         });
     })();
     """

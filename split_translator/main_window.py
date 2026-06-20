@@ -244,6 +244,8 @@ class TranslationTool(QMainWindow):
             data.get("ipa_us"),
             data.get("audio_uk_url"),
             data.get("audio_us_url"),
+            data.get("spelling_uk"),
+            data.get("spelling_us"),
         )
 
     def closeEvent(self, event):

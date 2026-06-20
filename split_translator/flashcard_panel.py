@@ -114,8 +114,14 @@ class FlashcardPanel(QWidget):
         spelling_row = QHBoxLayout()
         self.spelling_uk_input = QLineEdit()
         self.spelling_uk_input.setPlaceholderText("UK spelling")
+        self.spelling_uk_input.setToolTip(
+            "Grab CD: fill from the Cambridge page (when it differs UK/US)"
+        )
         self.spelling_us_input = QLineEdit()
         self.spelling_us_input.setPlaceholderText("US spelling")
+        self.spelling_us_input.setToolTip(
+            "Grab CD: fill from the Cambridge page (when it differs UK/US)"
+        )
         spelling_row.addWidget(self.spelling_uk_input)
         spelling_row.addWidget(self.spelling_us_input)
         form.addRow("Spelling", spelling_row)
@@ -240,7 +246,15 @@ class FlashcardPanel(QWidget):
 
     # --- pronunciation --------------------------------------------------
 
-    def set_pronunciation(self, ipa_uk, ipa_us, audio_uk_url, audio_us_url):
+    def set_pronunciation(
+        self,
+        ipa_uk,
+        ipa_us,
+        audio_uk_url,
+        audio_us_url,
+        spelling_uk=None,
+        spelling_us=None,
+    ):
         if ipa_uk:
             self.ipa_uk_input.setText(ipa_uk)
         if ipa_us:
@@ -249,6 +263,11 @@ class FlashcardPanel(QWidget):
             self._audio_uk_url = audio_uk_url
         if audio_us_url:
             self._audio_us_url = audio_us_url
+        # Only fill spelling when empty, so a manual edit is never overwritten.
+        if spelling_uk and not self.spelling_uk_input.text().strip():
+            self.spelling_uk_input.setText(spelling_uk)
+        if spelling_us and not self.spelling_us_input.text().strip():
+            self.spelling_us_input.setText(spelling_us)
         self._update_play_buttons()
 
     def _update_play_buttons(self):
