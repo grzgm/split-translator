@@ -80,10 +80,6 @@ class TranslationTool(QMainWindow):
         )
         self.flashcard_dock.hide()
 
-        toggle_action = self.flashcard_dock.toggleViewAction()
-        toggle_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
-        self.addAction(toggle_action)
-
     def connect_signals(self):
         # A dictionary lookup records history and drives the PDF search.
         self.dictionary_panel.word_searched.connect(self.on_word_searched)
@@ -147,6 +143,9 @@ class TranslationTool(QMainWindow):
                 lambda num=i: self.dictionary_panel.play_cambridge_audio(num)
             )
 
+        shortcut_toggle_card = QShortcut(QKeySequence("Ctrl+Shift+F"), self)
+        shortcut_toggle_card.activated.connect(self.toggle_flashcard)
+
         shortcut_new_card = QShortcut(QKeySequence("Ctrl+N"), self)
         shortcut_new_card.activated.connect(self.new_flashcard)
 
@@ -168,10 +167,24 @@ class TranslationTool(QMainWindow):
     def focus_search(self):
         self.dictionary_panel.focus_search()
 
+    def toggle_flashcard(self):
+        if self.flashcard_dock.isVisible():
+            self.flashcard_dock.hide()
+            return
+        self.flashcard_dock.show()
+        # Populate from the current word only when the editor is empty, so an
+        # in-progress card is never clobbered by toggling the dock.
+        if not self.flashcard_panel.has_content():
+            word = self.dictionary_panel.search_input.text().strip()
+            if word:
+                self.flashcard_panel.headword_input.setText(word)
+            self.dictionary_panel.grab_pronunciation()
+
     def new_flashcard(self):
         word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_dock.show()
         self.flashcard_panel.new_card(word)
+        self.dictionary_panel.grab_pronunciation()
 
     def capture_to_polish(self):
         text = self.dictionary_panel.focused_selection()
