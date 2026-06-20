@@ -206,14 +206,18 @@ class DictionaryPanel(QWidget):
     }
 
     # Injected on the Cambridge views: builds two small buttons next to each
-    # definition (English page) or translation (Polish page) and routes clicks
-    # through the QWebChannel bridge. Placeholders __CHANNEL_JS__ (Qt's
-    # qwebchannel.js client), __FIELD__ ("english"/"polish"), __ITEM_SELECTOR__
-    # and __POS_MAP__ are substituted with str.replace, not str.format, because
-    # the embedded qwebchannel.js is full of braces that would break formatting.
+    # definition and translation and routes clicks through the QWebChannel
+    # bridge. __PAIRS__ is a JSON array of {selector, field} objects, so one
+    # view can carry both English-definition and Polish-translation buttons
+    # (the English-Polish page shows both). Placeholders __CHANNEL_JS__ (Qt's
+    # qwebchannel.js client), __PAIRS__ and __POS_MAP__ are substituted with
+    # str.replace, not str.format, because the embedded qwebchannel.js is full
+    # of braces that would break formatting.
     _CAPTURE_JS_TEMPLATE = r"""
     (function() {
         __CHANNEL_JS__
+
+        var pairs = __PAIRS__;
 
         function posCodeFor(el) {
             var posMap = __POS_MAP__;
@@ -243,15 +247,13 @@ class DictionaryPanel(QWidget):
             return b;
         }
 
-        function inject() {
-            if (!window.captureBridge) { return; }
-            var items = document.querySelectorAll('__ITEM_SELECTOR__');
+        function injectPair(selector, field) {
+            var items = document.querySelectorAll(selector);
             items.forEach(function(item) {
                 if (item.dataset.stCapture === '1') { return; }
                 item.dataset.stCapture = '1';
                 var text = item.textContent.trim();
                 if (!text) { return; }
-                var field = '__FIELD__';
                 var pos = posCodeFor(item);
                 var holder = document.createElement('span');
                 holder.className = 'st-capture-holder';
@@ -264,6 +266,11 @@ class DictionaryPanel(QWidget):
                 }));
                 item.appendChild(holder);
             });
+        }
+
+        function inject() {
+            if (!window.captureBridge) { return; }
+            pairs.forEach(function(p) { injectPair(p.selector, p.field); });
         }
 
         function start() {
@@ -284,6 +291,15 @@ class DictionaryPanel(QWidget):
     })();
     """
 
+    # Which (CSS selector, target field) pairs get capture buttons per view.
+    # The English page shows only definitions; the English-Polish page shows
+    # both Polish translations and the English definitions, so both get buttons.
+    _EN_CAPTURE_PAIRS = [{"selector": ".def.ddef_d", "field": "english"}]
+    _PL_CAPTURE_PAIRS = [
+        {"selector": ".trans.dtrans.dtrans-se", "field": "polish"},
+        {"selector": ".def.ddef_d", "field": "english"},
+    ]
+
     def _setup_capture_buttons(self):
         channel = QWebChannel(self)
         channel.registerObject("captureBridge", self.capture_bridge)
@@ -293,24 +309,24 @@ class DictionaryPanel(QWidget):
         self._capture_channel = channel
 
         self.cambridge_en_view.loadFinished.connect(
-            lambda ok: self._inject_capture(self.cambridge_en_view, "english", ok)
+            lambda ok: self._inject_capture(
+                self.cambridge_en_view, self._EN_CAPTURE_PAIRS, ok
+            )
         )
         self.cambridge_pl_view.loadFinished.connect(
-            lambda ok: self._inject_capture(self.cambridge_pl_view, "polish", ok)
+            lambda ok: self._inject_capture(
+                self.cambridge_pl_view, self._PL_CAPTURE_PAIRS, ok
+            )
         )
 
-    def _inject_capture(self, view, field, ok):
+    def _inject_capture(self, view, pairs, ok):
         if not ok:
             return
-        item_selector = (
-            ".def.ddef_d" if field == "english" else ".trans.dtrans.dtrans-se"
-        )
         js = (
             self._CAPTURE_JS_TEMPLATE
             .replace("__CHANNEL_JS__", _qwebchannel_js())
             .replace("__POS_MAP__", json.dumps(self._POS_MAP))
-            .replace("__ITEM_SELECTOR__", item_selector)
-            .replace("__FIELD__", field)
+            .replace("__PAIRS__", json.dumps(pairs))
         )
         view.page().runJavaScript(js)
 
