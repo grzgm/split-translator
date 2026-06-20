@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
+    QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -16,6 +17,8 @@ from PySide6.QtCore import Qt
 
 from .config import Config, PROJECT_ROOT
 from .dictionary_panel import DictionaryPanel
+from .flashcard_panel import FlashcardPanel
+from .flashcards import FlashcardStore
 from .history import HistoryPanel
 from .pdf_panel import PDFPanel
 
@@ -28,6 +31,10 @@ class TranslationTool(QMainWindow):
 
         history_file = PROJECT_ROOT / ".translation_tool_history.json"
         self.history_panel = HistoryPanel(history_file)
+
+        flashcards_file = PROJECT_ROOT / ".translation_tool_flashcards.json"
+        self.flashcard_store = FlashcardStore(flashcards_file)
+        self.flashcard_panel = FlashcardPanel(self.flashcard_store)
 
         self.init_ui()
         self.setup_shortcuts()
@@ -66,6 +73,17 @@ class TranslationTool(QMainWindow):
         # Prepare status bar.
         self.statusBar().showMessage("", 0)
 
+        self.flashcard_dock = QDockWidget("Flashcard", self)
+        self.flashcard_dock.setWidget(self.flashcard_panel)
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea, self.flashcard_dock
+        )
+        self.flashcard_dock.hide()
+
+        toggle_action = self.flashcard_dock.toggleViewAction()
+        toggle_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        self.addAction(toggle_action)
+
     def connect_signals(self):
         # A dictionary lookup records history and drives the PDF search.
         self.dictionary_panel.word_searched.connect(self.on_word_searched)
@@ -75,6 +93,26 @@ class TranslationTool(QMainWindow):
 
         # Notice when a word was first searched on an earlier day.
         self.history_panel.previous_search.connect(self.show_previous_search_notice)
+
+        # Flashcard editor wiring.
+        self.flashcard_panel.new_button.clicked.connect(self.new_flashcard)
+        self.flashcard_panel.grab_requested.connect(
+            self.dictionary_panel.grab_pronunciation
+        )
+        self.dictionary_panel.pronunciation_grabbed.connect(
+            self.on_pronunciation_grabbed
+        )
+        self.dictionary_panel.selection_capture_requested.connect(
+            self.on_capture_requested
+        )
+        self.flashcard_panel.card_saved.connect(
+            lambda headword: self.statusBar().showMessage(
+                f'Saved flashcard "{headword}"', 4000
+            )
+        )
+        self.flashcard_panel.save_rejected.connect(
+            lambda message: self.statusBar().showMessage(message, 4000)
+        )
 
     def on_word_searched(self, word: str):
         self.history_panel.add_to_history(word)
@@ -109,6 +147,18 @@ class TranslationTool(QMainWindow):
                 lambda num=i: self.dictionary_panel.play_cambridge_audio(num)
             )
 
+        shortcut_new_card = QShortcut(QKeySequence("Ctrl+N"), self)
+        shortcut_new_card.activated.connect(self.new_flashcard)
+
+        shortcut_save_card = QShortcut(QKeySequence("Ctrl+S"), self)
+        shortcut_save_card.activated.connect(self.flashcard_panel.save_card)
+
+        shortcut_to_polish = QShortcut(QKeySequence("Alt+P"), self)
+        shortcut_to_polish.activated.connect(self.capture_to_polish)
+
+        shortcut_to_english = QShortcut(QKeySequence("Alt+E"), self)
+        shortcut_to_english.activated.connect(self.capture_to_english)
+
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():
             self.pdf_panel.go_to_next()
@@ -118,7 +168,47 @@ class TranslationTool(QMainWindow):
     def focus_search(self):
         self.dictionary_panel.focus_search()
 
+    def new_flashcard(self):
+        word = self.dictionary_panel.search_input.text().strip()
+        self.flashcard_dock.show()
+        self.flashcard_panel.new_card(word)
+
+    def capture_to_polish(self):
+        text = self.dictionary_panel.focused_selection()
+        if not text:
+            return
+        self.flashcard_dock.show()
+        self.flashcard_panel.set_polish_selection(text)
+
+    def capture_to_english(self):
+        text = self.dictionary_panel.focused_selection()
+        if not text:
+            return
+        self.flashcard_dock.show()
+        self.flashcard_panel.set_english_selection(text)
+
+    def on_capture_requested(self, field: str, text: str):
+        self.flashcard_dock.show()
+        if field == "polish":
+            self.flashcard_panel.set_polish_selection(text)
+        else:
+            self.flashcard_panel.set_english_selection(text)
+
+    def on_pronunciation_grabbed(self, data):
+        if not data or not any(data.values()):
+            self.statusBar().showMessage(
+                "No pronunciation found on the Cambridge page", 4000
+            )
+            return
+        self.flashcard_panel.set_pronunciation(
+            data.get("ipa_uk"),
+            data.get("ipa_us"),
+            data.get("audio_uk_url"),
+            data.get("audio_us_url"),
+        )
+
     def closeEvent(self, event):
         self.history_panel.shutdown()
+        self.flashcard_store.shutdown()
         self.pdf_panel.close_doc()
         super().closeEvent(event)
