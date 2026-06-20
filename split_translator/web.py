@@ -95,11 +95,16 @@ _PAGE_SCRIPT = f"""
     }}
 
     function dismissConsent() {{
-        const clickable = document.querySelectorAll('button, [role="button"], a, input[type="submit"]');
+        // Only real buttons dismiss a consent banner. Anchors that navigate to
+        // another page (href to a path/URL) are dictionary content, not consent
+        // controls; clicking them would hijack the view. So skip linking anchors.
+        const clickable = document.querySelectorAll('button, [role="button"], input[type="submit"]');
         for (const el of clickable) {{
             const label = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
             if (!label) continue;
-            if (consentTexts.some(t => label === t || label.includes(t))) {{
+            // Exact match only. A substring match on bare words like "agree" or
+            // "accept" clicks in-content links (e.g. on the "resentment" entry).
+            if (consentTexts.includes(label)) {{
                 el.click();
                 return true;
             }}
