@@ -1,0 +1,19 @@
+[project]
+name = "split-translator"
+version = "0.2.0"
+description = "Read a book and its translation side by side, with synced views, search and dictionary lookup."
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.11",
+    "pymupdf>=1.27",
+]
+
+[project.scripts]
+split-translator = "split_translator.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["split_translator"]
