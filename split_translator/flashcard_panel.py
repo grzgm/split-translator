@@ -43,8 +43,10 @@ class SenseRow(QFrame):
 
         self.polish_input = QLineEdit()
         self.polish_input.setPlaceholderText("Polish")
+        self.polish_input.setToolTip("Alt+P: add the web-view selection here")
         self.english_input = QLineEdit()
         self.english_input.setPlaceholderText("English definition")
+        self.english_input.setToolTip("Alt+E: add the web-view selection here")
 
         self.remove_button = QPushButton("x")
         self.remove_button.setMaximumWidth(28)
@@ -104,6 +106,9 @@ class FlashcardPanel(QWidget):
         form = QFormLayout()
 
         self.headword_input = QLineEdit()
+        self.headword_input.setToolTip(
+            "Ctrl+N: fill from the search box (New from word)"
+        )
         form.addRow("Headword", self.headword_input)
 
         spelling_row = QHBoxLayout()
@@ -118,8 +123,10 @@ class FlashcardPanel(QWidget):
         ipa_row = QHBoxLayout()
         self.ipa_uk_input = QLineEdit()
         self.ipa_uk_input.setPlaceholderText("IPA UK")
+        self.ipa_uk_input.setToolTip("Grab CD: fill from the Cambridge page")
         self.ipa_us_input = QLineEdit()
         self.ipa_us_input.setPlaceholderText("IPA US")
+        self.ipa_us_input.setToolTip("Grab CD: fill from the Cambridge page")
         ipa_row.addWidget(self.ipa_uk_input)
         ipa_row.addWidget(self.ipa_us_input)
         form.addRow("IPA", ipa_row)
