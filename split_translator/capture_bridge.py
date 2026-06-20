@@ -1,0 +1,20 @@
+"""Bridge between injected web-page buttons and the flashcard editor.
+
+The dictionary web views get small "add to sense" buttons injected next to each
+definition and translation. When the user clicks one, page JavaScript calls into
+this QObject over a QWebChannel, which re-emits the request as a Qt signal the
+main window routes into the flashcard panel.
+"""
+
+from PySide6.QtCore import QObject, Signal, Slot
+
+
+class CaptureBridge(QObject):
+    """Receives capture clicks from injected page buttons and re-emits them as signals."""
+
+    # field: "polish" | "english"; target: "current" | "new"; pos: "" when unknown.
+    capture_requested = Signal(str, str, str, str)  # text, field, target, pos
+
+    @Slot(str, str, str, str)
+    def capture(self, text: str, field: str, target: str, pos: str) -> None:
+        self.capture_requested.emit(text, field, target, pos)

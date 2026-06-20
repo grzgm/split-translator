@@ -3,7 +3,8 @@
 import json
 from urllib.parse import quote
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QFile, QIODevice, Qt, QUrl, Signal
+from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
@@ -17,6 +18,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .capture_bridge import CaptureBridge
+
+
+def _qwebchannel_js() -> str:
+    """Read Qt's bundled qwebchannel.js client from the resource system."""
+    f = QFile(":/qtwebchannel/qwebchannel.js")
+    if not f.open(QIODevice.OpenModeFlag.ReadOnly):
+        return ""
+    try:
+        return bytes(f.readAll().data()).decode("utf-8")
+    finally:
+        f.close()
+
 
 class DictionaryPanel(QWidget):
     """Search controls and the web views that show dictionary/translation results.
@@ -28,12 +42,19 @@ class DictionaryPanel(QWidget):
     word_searched = Signal(str)
     pronunciation_grabbed = Signal(object)
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
+    # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
+    sense_capture_requested = Signal(str, str, str, str)
 
     def __init__(self, profile: QWebEngineProfile, parent=None):
         super().__init__(parent)
         self.profile = profile
+        self.capture_bridge = CaptureBridge(self)
+        self.capture_bridge.capture_requested.connect(
+            self.sense_capture_requested
+        )
         self.init_ui()
         self._setup_context_menus()
+        self._setup_capture_buttons()
 
     def _make_view(self) -> QWebEngineView:
         """Create a web view backed by the shared persistent profile."""
@@ -168,6 +189,130 @@ class DictionaryPanel(QWidget):
         except (json.JSONDecodeError, TypeError):
             data = {}
         self.pronunciation_grabbed.emit(data)
+
+    # --- inject capture buttons into the Cambridge views ----------------
+
+    # POS labels Cambridge uses, mapped to the editor's short dropdown codes.
+    _POS_MAP = {
+        "noun": "n",
+        "verb": "v",
+        "adjective": "adj",
+        "adverb": "adv",
+        "preposition": "prep",
+        "conjunction": "conj",
+        "pronoun": "pron",
+        "phrase": "phrase",
+        "idiom": "phrase",
+    }
+
+    # Injected on the Cambridge views: builds two small buttons next to each
+    # definition (English page) or translation (Polish page) and routes clicks
+    # through the QWebChannel bridge. Placeholders __CHANNEL_JS__ (Qt's
+    # qwebchannel.js client), __FIELD__ ("english"/"polish"), __ITEM_SELECTOR__
+    # and __POS_MAP__ are substituted with str.replace, not str.format, because
+    # the embedded qwebchannel.js is full of braces that would break formatting.
+    _CAPTURE_JS_TEMPLATE = r"""
+    (function() {
+        __CHANNEL_JS__
+
+        function posCodeFor(el) {
+            var posMap = __POS_MAP__;
+            var block = el.closest('.pr.entry-body__el')
+                || el.closest('.entry-body__el') || el.closest('.di-body')
+                || document;
+            var posEl = (el.closest('.def-block') || block).querySelector('.pos.dpos')
+                || block.querySelector('.pos.dpos');
+            if (!posEl) { return ""; }
+            var word = posEl.textContent.trim().toLowerCase();
+            return posMap[word] || "";
+        }
+
+        function makeButton(label, title, onClick) {
+            var b = document.createElement('button');
+            b.textContent = label;
+            b.title = title;
+            b.className = 'st-capture-btn';
+            b.style.cssText = 'margin-left:4px;padding:0 5px;font-size:11px;'
+                + 'line-height:16px;border:1px solid #0a84ff;border-radius:3px;'
+                + 'background:#0a84ff;color:#fff;cursor:pointer;vertical-align:middle;';
+            b.addEventListener('click', function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                onClick();
+            });
+            return b;
+        }
+
+        function inject() {
+            if (!window.captureBridge) { return; }
+            var items = document.querySelectorAll('__ITEM_SELECTOR__');
+            items.forEach(function(item) {
+                if (item.dataset.stCapture === '1') { return; }
+                item.dataset.stCapture = '1';
+                var text = item.textContent.trim();
+                if (!text) { return; }
+                var field = '__FIELD__';
+                var pos = posCodeFor(item);
+                var holder = document.createElement('span');
+                holder.className = 'st-capture-holder';
+                holder.style.cssText = 'white-space:nowrap;display:inline-block;';
+                holder.appendChild(makeButton('+cur', 'Add to current sense', function() {
+                    window.captureBridge.capture(text, field, 'current', pos);
+                }));
+                holder.appendChild(makeButton('+new', 'Add to new sense', function() {
+                    window.captureBridge.capture(text, field, 'new', pos);
+                }));
+                item.appendChild(holder);
+            });
+        }
+
+        function start() {
+            new QWebChannel(qt.webChannelTransport, function(channel) {
+                window.captureBridge = channel.objects.captureBridge;
+                inject();
+            });
+        }
+
+        if (window.captureBridge) { inject(); } else { start(); }
+
+        // Cambridge renders content progressively; re-inject for late nodes.
+        var observer = new MutationObserver(inject);
+        if (document.body) {
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+        setTimeout(function() { observer.disconnect(); }, 8000);
+    })();
+    """
+
+    def _setup_capture_buttons(self):
+        channel = QWebChannel(self)
+        channel.registerObject("captureBridge", self.capture_bridge)
+        # Both Cambridge views share the one bridge object.
+        self.cambridge_en_view.page().setWebChannel(channel)
+        self.cambridge_pl_view.page().setWebChannel(channel)
+        self._capture_channel = channel
+
+        self.cambridge_en_view.loadFinished.connect(
+            lambda ok: self._inject_capture(self.cambridge_en_view, "english", ok)
+        )
+        self.cambridge_pl_view.loadFinished.connect(
+            lambda ok: self._inject_capture(self.cambridge_pl_view, "polish", ok)
+        )
+
+    def _inject_capture(self, view, field, ok):
+        if not ok:
+            return
+        item_selector = (
+            ".def.ddef_d" if field == "english" else ".trans.dtrans.dtrans-se"
+        )
+        js = (
+            self._CAPTURE_JS_TEMPLATE
+            .replace("__CHANNEL_JS__", _qwebchannel_js())
+            .replace("__POS_MAP__", json.dumps(self._POS_MAP))
+            .replace("__ITEM_SELECTOR__", item_selector)
+            .replace("__FIELD__", field)
+        )
+        view.page().runJavaScript(js)
 
     def set_focus(self):
         self.search_input.setFocus()

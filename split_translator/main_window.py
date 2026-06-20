@@ -101,6 +101,9 @@ class TranslationTool(QMainWindow):
         self.dictionary_panel.selection_capture_requested.connect(
             self.on_capture_requested
         )
+        self.dictionary_panel.sense_capture_requested.connect(
+            self.on_sense_capture_requested
+        )
         self.flashcard_panel.card_saved.connect(
             lambda headword: self.statusBar().showMessage(
                 f'Saved flashcard "{headword}"', 4000
@@ -206,6 +209,21 @@ class TranslationTool(QMainWindow):
             self.flashcard_panel.set_polish_selection(text)
         else:
             self.flashcard_panel.set_english_selection(text)
+
+    def on_sense_capture_requested(
+        self, text: str, field: str, target: str, pos: str
+    ):
+        self.flashcard_dock.show()
+        if target == "new":
+            self.flashcard_panel.add_sense()
+        if field == "polish":
+            self.flashcard_panel.set_polish_selection(text)
+        else:
+            self.flashcard_panel.set_english_selection(text)
+        if pos:
+            row = self.flashcard_panel.active_row
+            if row is not None and not row.pos_combo.currentText().strip():
+                row.pos_combo.setCurrentText(pos)
 
     def on_pronunciation_grabbed(self, data):
         if not data or not any(data.values()):
