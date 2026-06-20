@@ -12,18 +12,29 @@ SCHEMA_VERSION = 1
 
 @dataclass
 class Sense:
-    """One meaning of a word: a part of speech bound to a Polish and an English text."""
+    """One meaning of a word: a part of speech bound to a Polish and an English
+    text, plus any usage examples that belong to that meaning."""
 
     pos: str = ""
     polish: str = ""
     english: str = ""
+    examples: list[str] = field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
-        return not self.polish.strip() and not self.english.strip()
+        return (
+            not self.polish.strip()
+            and not self.english.strip()
+            and not any(e.strip() for e in self.examples)
+        )
 
     def to_dict(self) -> dict:
-        return {"pos": self.pos, "polish": self.polish, "english": self.english}
+        return {
+            "pos": self.pos,
+            "polish": self.polish,
+            "english": self.english,
+            "examples": list(self.examples),
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Sense":
@@ -31,6 +42,7 @@ class Sense:
             pos=data.get("pos", ""),
             polish=data.get("polish", ""),
             english=data.get("english", ""),
+            examples=list(data.get("examples", [])),
         )
 
 

@@ -166,6 +166,9 @@ class TranslationTool(QMainWindow):
         shortcut_to_english = QShortcut(QKeySequence("Alt+E"), self)
         shortcut_to_english.activated.connect(self.capture_to_english)
 
+        shortcut_to_example = QShortcut(QKeySequence("Alt+X"), self)
+        shortcut_to_example.activated.connect(self.capture_to_example)
+
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():
             self.pdf_panel.go_to_next()
@@ -208,10 +211,22 @@ class TranslationTool(QMainWindow):
         self.flashcard_dock.show()
         self.flashcard_panel.set_english_selection(text)
 
+    def capture_to_example(self):
+        text = self.dictionary_panel.focused_selection()
+        if not text:
+            return
+        self.flashcard_dock.show()
+        self.flashcard_panel.add_example_selection(text)
+
     def on_capture_requested(self, field: str, text: str):
         self.flashcard_dock.show()
+        self._route_capture(field, text)
+
+    def _route_capture(self, field: str, text: str):
         if field == "polish":
             self.flashcard_panel.set_polish_selection(text)
+        elif field == "example":
+            self.flashcard_panel.add_example_selection(text)
         else:
             self.flashcard_panel.set_english_selection(text)
 
@@ -224,10 +239,7 @@ class TranslationTool(QMainWindow):
         elif target.isdigit():
             # A specific 1-based sense index chosen from the page dropdown.
             self.flashcard_panel.set_active_index(int(target))
-        if field == "polish":
-            self.flashcard_panel.set_polish_selection(text)
-        else:
-            self.flashcard_panel.set_english_selection(text)
+        self._route_capture(field, text)
         if pos:
             row = self.flashcard_panel.active_row
             if row is not None and not row.pos_combo.currentText().strip():

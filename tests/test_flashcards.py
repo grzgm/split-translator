@@ -21,6 +21,23 @@ class SenseTests(unittest.TestCase):
         self.assertTrue(Sense(pos="n").is_empty)
         self.assertFalse(Sense(polish="adres").is_empty)
         self.assertFalse(Sense(english="a place").is_empty)
+        self.assertFalse(Sense(examples=["She lives at that address."]).is_empty)
+        self.assertTrue(Sense(examples=["  "]).is_empty)
+
+    def test_round_trip_with_examples(self):
+        sense = Sense(
+            pos="n",
+            polish="adres",
+            english="the details of a place",
+            examples=["She lives at that address.", "Send it to my address."],
+        )
+        restored = Sense.from_dict(sense.to_dict())
+        self.assertEqual(restored, sense)
+        self.assertEqual(restored.examples, sense.examples)
+
+    def test_from_dict_defaults_examples_empty(self):
+        sense = Sense.from_dict({"pos": "n", "polish": "adres", "english": "a place"})
+        self.assertEqual(sense.examples, [])
 
 
 class CardTests(unittest.TestCase):

@@ -21,7 +21,8 @@ from .flashcards import Card, FlashcardStore, Sense
 
 
 class SenseRow(QFrame):
-    """One editable sense: POS combo, Polish field, English field and a remove button."""
+    """One editable sense: POS combo, Polish field, English field, a remove button
+    and a small list of usage examples beneath them."""
 
     activated = Signal(object)
     remove_requested = Signal(object)
@@ -32,8 +33,11 @@ class SenseRow(QFrame):
         super().__init__(parent)
         self.setObjectName("senseRow")
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(2, 2, 2, 2)
+        outer.setSpacing(2)
+
+        top = QHBoxLayout()
 
         self.pos_combo = QComboBox()
         self.pos_combo.setEditable(True)
@@ -52,10 +56,25 @@ class SenseRow(QFrame):
         self.remove_button.setMaximumWidth(28)
         self.remove_button.clicked.connect(lambda: self.remove_requested.emit(self))
 
-        layout.addWidget(self.pos_combo)
-        layout.addWidget(self.polish_input)
-        layout.addWidget(self.english_input)
-        layout.addWidget(self.remove_button)
+        top.addWidget(self.pos_combo)
+        top.addWidget(self.polish_input)
+        top.addWidget(self.english_input)
+        top.addWidget(self.remove_button)
+        outer.addLayout(top)
+
+        # Examples: a variable-length list of one-line fields, each with a remove
+        # button. Capture appends a new row; "+ example" adds a blank one to type.
+        self.examples_container = QVBoxLayout()
+        self.examples_container.setContentsMargins(0, 0, 0, 0)
+        self.examples_container.setSpacing(2)
+        outer.addLayout(self.examples_container)
+
+        self.add_example_button = QPushButton("+ example")
+        self.add_example_button.setToolTip(
+            "Add a usage example (or use the + buttons on the Cambridge page)"
+        )
+        self.add_example_button.clicked.connect(lambda: self.add_example())
+        outer.addWidget(self.add_example_button)
 
         for widget in (self.pos_combo, self.polish_input, self.english_input):
             widget.installEventFilter(self)
@@ -73,11 +92,63 @@ class SenseRow(QFrame):
             f"#senseRow {{ border: 2px solid {color}; border-radius: 4px; }}"
         )
 
+    # --- examples -------------------------------------------------------
+
+    def _example_rows(self) -> list:
+        rows = []
+        for i in range(self.examples_container.count()):
+            widget = self.examples_container.itemAt(i).widget()
+            if widget is not None:
+                rows.append(widget)
+        return rows
+
+    def add_example(self, text: str = "") -> None:
+        """Append an example field (focusing the active row first)."""
+        self.activated.emit(self)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(2)
+
+        field_input = QLineEdit()
+        field_input.setPlaceholderText("Example")
+        field_input.setToolTip("Alt+X: add the web-view selection as an example")
+        field_input.setText(text)
+        field_input.installEventFilter(self)
+        row.example_input = field_input
+
+        remove = QPushButton("x")
+        remove.setMaximumWidth(28)
+        remove.clicked.connect(lambda: self._remove_example(row))
+
+        row_layout.addWidget(field_input)
+        row_layout.addWidget(remove)
+        self.examples_container.addWidget(row)
+
+    def add_example_text(self, text: str) -> None:
+        """Append an example carrying captured text (skips blank input)."""
+        text = text.strip()
+        if text:
+            self.add_example(text)
+
+    def _remove_example(self, row) -> None:
+        self.examples_container.removeWidget(row)
+        row.deleteLater()
+
+    def examples(self) -> list:
+        result = []
+        for row in self._example_rows():
+            text = row.example_input.text().strip()
+            if text:
+                result.append(text)
+        return result
+
     def to_sense(self) -> Sense:
         return Sense(
             pos=self.pos_combo.currentText().strip(),
             polish=self.polish_input.text().strip(),
             english=self.english_input.text().strip(),
+            examples=self.examples(),
         )
 
 
@@ -243,6 +314,12 @@ class FlashcardPanel(QWidget):
         if not text:
             return
         self._ensure_active_row().english_input.setText(text)
+
+    def add_example_selection(self, text: str):
+        text = text.strip()
+        if not text:
+            return
+        self._ensure_active_row().add_example_text(text)
 
     # --- pronunciation --------------------------------------------------
 

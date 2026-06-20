@@ -47,8 +47,10 @@ class CaptureWebView(QWebEngineView):
         menu.addSeparator()
         to_polish = menu.addAction("Add selection to Polish")
         to_english = menu.addAction("Add selection to English")
+        to_example = menu.addAction("Add selection to Example")
         to_polish.setEnabled(bool(text))
         to_english.setEnabled(bool(text))
+        to_example.setEnabled(bool(text))
         menu.addSeparator()
         copy_url = menu.addAction("Copy page URL")
         copy_url.setEnabled(bool(page_url))
@@ -57,6 +59,8 @@ class CaptureWebView(QWebEngineView):
             self.capture_selection.emit("polish", text)
         elif chosen == to_english:
             self.capture_selection.emit("english", text)
+        elif chosen == to_example:
+            self.capture_selection.emit("example", text)
         elif chosen == copy_url:
             QApplication.clipboard().setText(page_url)
 
@@ -396,12 +400,17 @@ class DictionaryPanel(QWidget):
     """
 
     # Which (CSS selector, target field) pairs get capture buttons per view.
-    # The English page shows only definitions; the English-Polish page shows
-    # both Polish translations and the English definitions, so both get buttons.
-    _EN_CAPTURE_PAIRS = [{"selector": ".def.ddef_d", "field": "english"}]
+    # The English page shows definitions and their usage examples; the
+    # English-Polish page also shows Polish translations. Examples (.eg.deg) get
+    # the same controls so each can be added to a chosen sense.
+    _EN_CAPTURE_PAIRS = [
+        {"selector": ".def.ddef_d", "field": "english"},
+        {"selector": ".eg.deg", "field": "example"},
+    ]
     _PL_CAPTURE_PAIRS = [
         {"selector": ".trans.dtrans.dtrans-se", "field": "polish"},
         {"selector": ".def.ddef_d", "field": "english"},
+        {"selector": ".eg.deg", "field": "example"},
     ]
 
     def _setup_capture_buttons(self):
