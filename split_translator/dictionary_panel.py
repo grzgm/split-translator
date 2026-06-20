@@ -1,5 +1,6 @@
 """Dictionary lookup panel: search bar plus a grid of web views for each source."""
 
+import json
 from urllib.parse import quote
 
 from PySide6.QtCore import Qt, QUrl, Signal
@@ -8,6 +9,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -24,11 +26,14 @@ class DictionaryPanel(QWidget):
     """
 
     word_searched = Signal(str)
+    pronunciation_grabbed = Signal(object)
+    selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
 
     def __init__(self, profile: QWebEngineProfile, parent=None):
         super().__init__(parent)
         self.profile = profile
         self.init_ui()
+        self._setup_context_menus()
 
     def _make_view(self) -> QWebEngineView:
         """Create a web view backed by the shared persistent profile."""
@@ -83,6 +88,86 @@ class DictionaryPanel(QWidget):
         main_splitter.addWidget(right_splitter)
         main_splitter.setSizes([500, 500])
         layout.addWidget(main_splitter)
+
+    def _all_views(self) -> list:
+        return [
+            self.cambridge_en_view,
+            self.cambridge_pl_view,
+            self.google_meaning_view,
+            self.google_translate_view,
+            self.babla_view,
+        ]
+
+    def _setup_context_menus(self):
+        for view in self._all_views():
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            view.customContextMenuRequested.connect(
+                lambda pos, v=view: self._show_capture_menu(v, pos)
+            )
+
+    def _show_capture_menu(self, view, pos):
+        text = view.page().selectedText().strip()
+        menu = QMenu(view)
+        to_polish = menu.addAction("Add selection to Polish")
+        to_english = menu.addAction("Add selection to English")
+        to_polish.setEnabled(bool(text))
+        to_english.setEnabled(bool(text))
+        action = menu.exec(view.mapToGlobal(pos))
+        if action == to_polish:
+            self.selection_capture_requested.emit("polish", text)
+        elif action == to_english:
+            self.selection_capture_requested.emit("english", text)
+
+    def focused_selection(self) -> str:
+        for view in self._all_views():
+            proxy = view.focusProxy()
+            if view.hasFocus() or (proxy is not None and proxy.hasFocus()):
+                text = view.page().selectedText().strip()
+                if text:
+                    return text
+        for view in self._all_views():
+            text = view.page().selectedText().strip()
+            if text:
+                return text
+        return ""
+
+    _GRAB_JS = r"""
+    (function() {
+        function grab(region) {
+            var block = document.querySelector('span.' + region + '.dpron-i');
+            if (!block) { return { ipa: null, audio: null }; }
+            var ipaEl = block.querySelector('.ipa');
+            var srcEl = block.querySelector('source[type="audio/mpeg"]')
+                || block.querySelector('source[src$=".mp3"]');
+            var audio = srcEl ? srcEl.getAttribute('src') : null;
+            if (audio && audio.indexOf('http') !== 0) {
+                audio = 'https://dictionary.cambridge.org' + audio;
+            }
+            return { ipa: ipaEl ? ipaEl.textContent.trim() : null, audio: audio };
+        }
+        var uk = grab('uk');
+        var us = grab('us');
+        // Return a JSON string, not a bare object: Qt's runJavaScript bridge
+        // drops a plain object here (it arrives as an empty string), whereas a
+        // string round-trips reliably. The Python callback parses it back.
+        return JSON.stringify({
+            ipa_uk: uk.ipa, ipa_us: us.ipa,
+            audio_uk_url: uk.audio, audio_us_url: us.audio
+        });
+    })();
+    """
+
+    def grab_pronunciation(self):
+        self.cambridge_en_view.page().runJavaScript(
+            self._GRAB_JS, self._on_pronunciation
+        )
+
+    def _on_pronunciation(self, result):
+        try:
+            data = json.loads(result) if result else {}
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+        self.pronunciation_grabbed.emit(data)
 
     def set_focus(self):
         self.search_input.setFocus()
