@@ -10,7 +10,6 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
-    QMenu,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -30,6 +29,29 @@ def _qwebchannel_js() -> str:
         return bytes(f.readAll().data()).decode("utf-8")
     finally:
         f.close()
+
+
+class CaptureWebView(QWebEngineView):
+    """A web view whose right-click menu keeps the browser defaults and adds the
+    two flashcard capture actions below them."""
+
+    # field ("polish"/"english"), selected text
+    capture_selection = Signal(str, str)
+
+    def contextMenuEvent(self, event):
+        text = self.page().selectedText().strip()
+        # Start from the standard menu (Copy, Back, Reload, ...) so nothing is lost.
+        menu = self.createStandardContextMenu()
+        menu.addSeparator()
+        to_polish = menu.addAction("Add selection to Polish")
+        to_english = menu.addAction("Add selection to English")
+        to_polish.setEnabled(bool(text))
+        to_english.setEnabled(bool(text))
+        chosen = menu.exec(event.globalPos())
+        if chosen == to_polish:
+            self.capture_selection.emit("polish", text)
+        elif chosen == to_english:
+            self.capture_selection.emit("english", text)
 
 
 class DictionaryPanel(QWidget):
@@ -53,14 +75,18 @@ class DictionaryPanel(QWidget):
             self.sense_capture_requested
         )
         self.init_ui()
-        self._setup_context_menus()
         self._setup_capture_buttons()
 
     def _make_view(self) -> QWebEngineView:
         """Create a web view backed by the shared persistent profile."""
-        view = QWebEngineView()
+        view = CaptureWebView()
         view.setPage(QWebEnginePage(self.profile, view))
+        view.capture_selection.connect(self._on_capture_selection)
         return view
+
+    def _on_capture_selection(self, field: str, text: str):
+        if text:
+            self.selection_capture_requested.emit(field, text)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -118,26 +144,6 @@ class DictionaryPanel(QWidget):
             self.google_translate_view,
             self.babla_view,
         ]
-
-    def _setup_context_menus(self):
-        for view in self._all_views():
-            view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            view.customContextMenuRequested.connect(
-                lambda pos, v=view: self._show_capture_menu(v, pos)
-            )
-
-    def _show_capture_menu(self, view, pos):
-        text = view.page().selectedText().strip()
-        menu = QMenu(view)
-        to_polish = menu.addAction("Add selection to Polish")
-        to_english = menu.addAction("Add selection to English")
-        to_polish.setEnabled(bool(text))
-        to_english.setEnabled(bool(text))
-        action = menu.exec(view.mapToGlobal(pos))
-        if action == to_polish:
-            self.selection_capture_requested.emit("polish", text)
-        elif action == to_english:
-            self.selection_capture_requested.emit("english", text)
 
     def focused_selection(self) -> str:
         for view in self._all_views():
