@@ -104,6 +104,11 @@ class TranslationTool(QMainWindow):
         self.dictionary_panel.sense_capture_requested.connect(
             self.on_sense_capture_requested
         )
+        self.flashcard_panel.sense_count_changed.connect(
+            self.dictionary_panel.set_sense_count
+        )
+        # Sync the initial sense count (the editor starts with one sense).
+        self.dictionary_panel.set_sense_count(len(self.flashcard_panel._rows()))
         self.flashcard_panel.card_saved.connect(
             lambda headword: self.statusBar().showMessage(
                 f'Saved flashcard "{headword}"', 4000
@@ -216,6 +221,9 @@ class TranslationTool(QMainWindow):
         self.flashcard_dock.show()
         if target == "new":
             self.flashcard_panel.add_sense()
+        elif target.isdigit():
+            # A specific 1-based sense index chosen from the page dropdown.
+            self.flashcard_panel.set_active_index(int(target))
         if field == "polish":
             self.flashcard_panel.set_polish_selection(text)
         else:

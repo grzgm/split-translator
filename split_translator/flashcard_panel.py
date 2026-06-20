@@ -85,6 +85,7 @@ class FlashcardPanel(QWidget):
     grab_requested = Signal()
     card_saved = Signal(str)
     save_rejected = Signal(str)
+    sense_count_changed = Signal(int)
 
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
@@ -180,11 +181,18 @@ class FlashcardPanel(QWidget):
         row.remove_requested.connect(self.remove_sense)
         self.senses_container.addWidget(row)
         self.set_active_row(row)
+        self.sense_count_changed.emit(len(self._rows()))
 
     def set_active_row(self, row):
         self.active_row = row
         for candidate in self._rows():
             candidate.set_active(candidate is row)
+
+    def set_active_index(self, index: int):
+        """Make the 1-based sense index active (no-op if out of range)."""
+        rows = self._rows()
+        if 1 <= index <= len(rows):
+            self.set_active_row(rows[index - 1])
 
     def remove_sense(self, row):
         rows = self._rows()
@@ -197,6 +205,7 @@ class FlashcardPanel(QWidget):
         row.deleteLater()
         if self.active_row is row:
             self.set_active_row(self._rows()[0])
+        self.sense_count_changed.emit(len(self._rows()))
 
     def _ensure_active_row(self):
         rows = self._rows()

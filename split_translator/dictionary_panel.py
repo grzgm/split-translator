@@ -232,6 +232,11 @@ class DictionaryPanel(QWidget):
 
         var pairs = __PAIRS__;
 
+        // How many senses the editor currently has; the editor keeps this in
+        // sync by calling window.stSetSenseCount. The per-item "sense#" dropdown
+        // lists exactly these existing senses.
+        if (typeof window.stSenseCount !== 'number') { window.stSenseCount = 1; }
+
         function posCodeFor(el) {
             var posMap = __POS_MAP__;
             var block = el.closest('.pr.entry-body__el')
@@ -260,6 +265,40 @@ class DictionaryPanel(QWidget):
             return b;
         }
 
+        function fillSelect(sel) {
+            // First option is a non-action placeholder; the rest are sense numbers.
+            sel.innerHTML = '';
+            var ph = document.createElement('option');
+            ph.value = '';
+            ph.textContent = 'sense#';
+            sel.appendChild(ph);
+            for (var i = 1; i <= window.stSenseCount; i++) {
+                var o = document.createElement('option');
+                o.value = String(i);
+                o.textContent = String(i);
+                sel.appendChild(o);
+            }
+            sel.selectedIndex = 0;
+        }
+
+        function makeSenseSelect(text, field, getPos) {
+            var sel = document.createElement('select');
+            sel.className = 'st-capture-select';
+            sel.title = 'Add to a specific sense';
+            sel.style.cssText = 'margin-left:4px;font-size:11px;line-height:16px;'
+                + 'border:1px solid #0a84ff;border-radius:3px;vertical-align:middle;';
+            fillSelect(sel);
+            sel.addEventListener('mousedown', function(ev) { ev.stopPropagation(); });
+            sel.addEventListener('change', function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                var val = sel.value;
+                if (val) { window.captureBridge.capture(text, field, val, getPos()); }
+                sel.selectedIndex = 0;  // reset so it can be reused
+            });
+            return sel;
+        }
+
         function injectPair(selector, field) {
             var items = document.querySelectorAll(selector);
             items.forEach(function(item) {
@@ -268,6 +307,7 @@ class DictionaryPanel(QWidget):
                 var text = item.textContent.trim();
                 if (!text) { return; }
                 var pos = posCodeFor(item);
+                var getPos = function() { return pos; };
                 var holder = document.createElement('span');
                 holder.className = 'st-capture-holder';
                 holder.style.cssText = 'white-space:nowrap;display:inline-block;';
@@ -277,6 +317,7 @@ class DictionaryPanel(QWidget):
                 holder.appendChild(makeButton('+new', 'Add to new sense', function() {
                     window.captureBridge.capture(text, field, 'new', pos);
                 }));
+                holder.appendChild(makeSenseSelect(text, field, getPos));
                 item.appendChild(holder);
             });
         }
@@ -285,6 +326,14 @@ class DictionaryPanel(QWidget):
             if (!window.captureBridge) { return; }
             pairs.forEach(function(p) { injectPair(p.selector, p.field); });
         }
+
+        // Called from Python when the editor's sense count changes: refresh
+        // every existing dropdown so it lists the current sense numbers.
+        window.stSetSenseCount = function(n) {
+            window.stSenseCount = (typeof n === 'number' && n > 0) ? n : 1;
+            var selects = document.querySelectorAll('select.st-capture-select');
+            selects.forEach(function(sel) { fillSelect(sel); });
+        };
 
         function start() {
             new QWebChannel(qt.webChannelTransport, function(channel) {
@@ -342,6 +391,20 @@ class DictionaryPanel(QWidget):
             .replace("__PAIRS__", json.dumps(pairs))
         )
         view.page().runJavaScript(js)
+        # A fresh page resets the JS sense count to 1; re-push the real count.
+        self._push_sense_count(view)
+
+    def set_sense_count(self, count: int):
+        """Tell the injected dropdowns how many senses the editor currently has."""
+        self._sense_count = max(1, int(count))
+        for view in (self.cambridge_en_view, self.cambridge_pl_view):
+            self._push_sense_count(view)
+
+    def _push_sense_count(self, view):
+        count = getattr(self, "_sense_count", 1)
+        view.page().runJavaScript(
+            f"if (window.stSetSenseCount) {{ window.stSetSenseCount({count}); }}"
+        )
 
     def set_focus(self):
         self.search_input.setFocus()
