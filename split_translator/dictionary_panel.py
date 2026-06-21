@@ -74,6 +74,7 @@ class DictionaryPanel(QWidget):
 
     word_searched = Signal(str)
     pronunciation_grabbed = Signal(object)
+    grammar_grabbed = Signal(object)  # {"plural": bool} from the Cambridge page
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
     # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
     sense_capture_requested = Signal(str, str, str, str)
@@ -234,6 +235,41 @@ class DictionaryPanel(QWidget):
         except (json.JSONDecodeError, TypeError):
             data = {}
         self.pronunciation_grabbed.emit(data)
+
+    # Detect whether Cambridge marks the headword as plural-only. Grammar notes
+    # live in span.gram.dgram blocks rendered like "[ plural ]". The word is
+    # plural-only when a whole block (brackets and spacing stripped) reads exactly
+    # "plural" (as for scissors, trousers, glasses). A softer block like
+    # "[ U or plural ]" (data) is deliberately not matched, even though it
+    # contains the word "plural". Returns a JSON string for the same reason as
+    # _GRAB_JS (a bare object arrives empty from runJavaScript).
+    _GRAMMAR_JS = r"""
+    (function() {
+        var plural = false;
+        var grams = document.querySelectorAll('.gram.dgram');
+        for (var i = 0; i < grams.length; i++) {
+            var text = grams[i].textContent
+                .replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+            if (text === 'plural') {
+                plural = true;
+                break;
+            }
+        }
+        return JSON.stringify({ plural: plural });
+    })();
+    """
+
+    def grab_grammar(self):
+        self.cambridge_en_view.page().runJavaScript(
+            self._GRAMMAR_JS, self._on_grammar
+        )
+
+    def _on_grammar(self, result):
+        try:
+            data = json.loads(result) if result else {}
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+        self.grammar_grabbed.emit(data)
 
     # --- inject capture buttons into the Cambridge views ----------------
 
@@ -425,6 +461,10 @@ class DictionaryPanel(QWidget):
             lambda ok: self._inject_capture(
                 self.cambridge_en_view, self._EN_CAPTURE_PAIRS, ok
             )
+        )
+        # Read the headword's grammar (plural-only marker) once the page loads.
+        self.cambridge_en_view.loadFinished.connect(
+            lambda ok: self.grab_grammar() if ok else None
         )
         self.cambridge_pl_view.loadFinished.connect(
             lambda ok: self._inject_capture(

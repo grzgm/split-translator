@@ -70,8 +70,10 @@ class TranslationTool(QMainWindow):
         main_layout.addWidget(content_splitter)
         self.dictionary_panel.set_focus()
 
-        # Prepare status bar.
+        # Prepare status bar. Drop any highlight style once the bar goes empty
+        # (for example when a timed notice clears) so the colour does not linger.
         self.statusBar().showMessage("", 0)
+        self.statusBar().messageChanged.connect(self._on_status_message_changed)
 
         self.flashcard_dock = QDockWidget("Flashcard", self)
         self.flashcard_dock.setWidget(self.flashcard_panel)
@@ -98,6 +100,7 @@ class TranslationTool(QMainWindow):
         self.dictionary_panel.pronunciation_grabbed.connect(
             self.on_pronunciation_grabbed
         )
+        self.dictionary_panel.grammar_grabbed.connect(self.on_grammar_grabbed)
         self.dictionary_panel.selection_capture_requested.connect(
             self.on_capture_requested
         )
@@ -244,6 +247,22 @@ class TranslationTool(QMainWindow):
             row = self.flashcard_panel.active_row
             if row is not None and not row.pos_combo.currentText().strip():
                 row.pos_combo.setCurrentText(pos)
+
+    def _on_status_message_changed(self, message: str):
+        if not message:
+            self.statusBar().setStyleSheet("")
+
+    def on_grammar_grabbed(self, data):
+        if not data or not data.get("plural"):
+            return
+        word = self.dictionary_panel.search_input.text().strip()
+        label = f'"{word}" is plural' if word else "This word is plural"
+        # Same yellow highlight as the previously-searched notice; a timeout so it
+        # clears on its own.
+        self.statusBar().setStyleSheet(
+            "background-color: #fff3cd; color: #856404;"
+        )
+        self.statusBar().showMessage(label, 6000)
 
     def on_pronunciation_grabbed(self, data):
         if not data or not any(data.values()):
