@@ -57,6 +57,15 @@ class CardTests(unittest.TestCase):
         self.assertIsNone(card.audio_uk_url)
         self.assertEqual(card.senses, [])
 
+    def test_starred_defaults_false_and_round_trips(self):
+        self.assertFalse(Card(headword="dog").starred)
+        card = Card(headword="dog", starred=True)
+        self.assertTrue(Card.from_dict(card.to_dict()).starred)
+
+    def test_starred_defaults_false_for_old_cards(self):
+        card = Card.from_dict({"headword": "dog"})
+        self.assertFalse(card.starred)
+
 
 class StorageTests(unittest.TestCase):
     def test_load_missing_returns_empty(self):

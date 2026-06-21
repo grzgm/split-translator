@@ -160,6 +160,10 @@ class FlashcardPanel(QWidget):
     save_rejected = Signal(str)
     sense_count_changed = Signal(int)
 
+    # Star toggle labels. Plain text (no glyph) to keep to standard characters.
+    _STAR_EMPTY = "Star"
+    _STAR_SET = "Starred"
+
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
         self.store = store
@@ -176,11 +180,21 @@ class FlashcardPanel(QWidget):
 
         form = QFormLayout()
 
+        headword_row = QHBoxLayout()
         self.headword_input = QLineEdit()
         self.headword_input.setToolTip(
             "Ctrl+N: fill from the search box (New from word)"
         )
-        form.addRow("Headword", self.headword_input)
+        # Star toggle: marks a card as important to focus on. Persisted with the
+        # card and reset with the editor.
+        self.star_button = QPushButton(self._STAR_EMPTY)
+        self.star_button.setCheckable(True)
+        self.star_button.setMaximumWidth(70)
+        self.star_button.setToolTip("Star this card (mark as important)")
+        self.star_button.toggled.connect(self._on_star_toggled)
+        headword_row.addWidget(self.headword_input)
+        headword_row.addWidget(self.star_button)
+        form.addRow("Headword", headword_row)
 
         spelling_row = QHBoxLayout()
         self.spelling_uk_input = QLineEdit()
@@ -351,6 +365,22 @@ class FlashcardPanel(QWidget):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
         self.play_us_button.setEnabled(bool(self._audio_us_url))
 
+    # --- star -----------------------------------------------------------
+
+    def _on_star_toggled(self, checked: bool):
+        self.star_button.setText(self._STAR_SET if checked else self._STAR_EMPTY)
+        self.star_button.setStyleSheet(
+            "background-color: #f0b400; color: #000; font-weight: bold;"
+            if checked
+            else ""
+        )
+
+    def set_starred(self, starred: bool):
+        self.star_button.setChecked(bool(starred))
+
+    def is_starred(self) -> bool:
+        return self.star_button.isChecked()
+
     def play_audio(self, which: str):
         url = self._audio_uk_url if which == "uk" else self._audio_us_url
         if not url:
@@ -396,6 +426,7 @@ class FlashcardPanel(QWidget):
             audio_uk_url=self._audio_uk_url,
             audio_us_url=self._audio_us_url,
             senses=senses,
+            starred=self.is_starred(),
             created_at=now,
             updated_at=now,
         )
@@ -434,6 +465,7 @@ class FlashcardPanel(QWidget):
         self._audio_uk_url = None
         self._audio_us_url = None
         self._update_play_buttons()
+        self.star_button.setChecked(False)
         for row in self._rows():
             self.senses_container.removeWidget(row)
             row.deleteLater()

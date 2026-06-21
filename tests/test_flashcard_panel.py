@@ -103,6 +103,22 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(len(store.cards), 1)
         self.assertEqual(panel.headword_input.text(), "")
 
+    def test_build_card_carries_star(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("address")
+        self.assertFalse(panel.build_card().starred)
+        panel.set_starred(True)
+        self.assertTrue(panel.build_card().starred)
+
+    def test_save_resets_star(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("address")
+        panel.set_starred(True)
+        panel.save_card()
+        store.shutdown()
+        self.assertTrue(store.cards[0].starred)
+        self.assertFalse(panel.is_starred())
+
 
 if __name__ == "__main__":
     unittest.main()
