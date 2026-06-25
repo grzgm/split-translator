@@ -229,20 +229,6 @@ class DictionaryPanel(QWidget):
             self._GRAB_JS, self._on_pronunciation
         )
 
-    def grab_pronunciation_when_loaded(self):
-        """Grab now (in case the page is already loaded) and once more the next
-        time the Cambridge English page finishes loading, so a lookup that is
-        still in flight is picked up too. ``set_pronunciation`` only fills empty
-        fields, so the repeat grab is harmless."""
-        self.grab_pronunciation()
-
-        def once(ok):
-            self.cambridge_en_view.loadFinished.disconnect(once)
-            if ok:
-                self.grab_pronunciation()
-
-        self.cambridge_en_view.loadFinished.connect(once)
-
     def _on_pronunciation(self, result):
         try:
             data = json.loads(result) if result else {}
@@ -476,15 +462,21 @@ class DictionaryPanel(QWidget):
                 self.cambridge_en_view, self._EN_CAPTURE_PAIRS, ok
             )
         )
-        # Read the headword's grammar (plural-only marker) once the page loads.
+        # Once the English page loads, read the headword's grammar (plural-only
+        # marker) and its pronunciation. The pronunciation result is emitted on
+        # every load; the flashcard editor decides whether to use it.
         self.cambridge_en_view.loadFinished.connect(
-            lambda ok: self.grab_grammar() if ok else None
+            lambda ok: self._on_english_loaded() if ok else None
         )
         self.cambridge_pl_view.loadFinished.connect(
             lambda ok: self._inject_capture(
                 self.cambridge_pl_view, self._PL_CAPTURE_PAIRS, ok
             )
         )
+
+    def _on_english_loaded(self):
+        self.grab_grammar()
+        self.grab_pronunciation()
 
     def _inject_capture(self, view, pairs, ok):
         if not ok:

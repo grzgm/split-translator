@@ -35,8 +35,6 @@ class TranslationTool(QMainWindow):
         flashcards_file = PROJECT_ROOT / ".translation_tool_flashcards.json"
         self.flashcard_store = FlashcardStore(flashcards_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
-        # The word an in-flight "New from word" / dock-open grab will fill in.
-        self._pending_card_word = ""
 
         self.init_ui()
         self.setup_shortcuts()
@@ -185,23 +183,19 @@ class TranslationTool(QMainWindow):
             self.flashcard_dock.hide()
             return
         self.flashcard_dock.show()
-        # Populate from the current word only when the editor is empty, so an
-        # in-progress card is never clobbered by toggling the dock. The grab
-        # (gated on the editor being empty) fills the headword too.
-        if not self.flashcard_panel.has_content():
-            self._pending_card_word = self.dictionary_panel.search_input.text().strip()
-            self.dictionary_panel.grab_pronunciation_when_loaded()
+        # Grab the already-loaded page now; the panel ignores it unless the
+        # editor is empty. (A still-loading page also fires the auto-grab on
+        # load.)
+        self.dictionary_panel.grab_pronunciation()
 
     def new_flashcard(self):
         word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_dock.show()
-        # Clearing first means the editor is empty, so the gated grab fills
-        # everything (headword, IPA, spelling, audio). Skip if the user declined
-        # to discard an in-progress card.
+        # Clear first (the editor is then empty, so the grab fills everything).
+        # Skip if the user declined to discard an in-progress card.
         if not self.flashcard_panel.new_card(word):
             return
-        self._pending_card_word = word
-        self.dictionary_panel.grab_pronunciation_when_loaded()
+        self.dictionary_panel.grab_pronunciation()
 
     def capture_to_polish(self):
         text = self.dictionary_panel.focused_selection()
@@ -268,15 +262,14 @@ class TranslationTool(QMainWindow):
         self.statusBar().showMessage(label, 6000)
 
     def on_pronunciation_grabbed(self, data):
-        if not data or not any(data.values()):
-            # An empty grab (often the immediate one fired before the page has
-            # loaded). Do not touch the editor and do not consume the pending
-            # word, so the later post-load grab still fills everything.
+        # Fires on every Cambridge English page load. Only fill the flashcard
+        # editor when the dock is open; the panel itself drops the data unless
+        # all of its fields are empty (all-or-nothing).
+        if not self.flashcard_dock.isVisible():
             return
-        # The word that armed this grab (New from word / dock open). Consume it
-        # so a later, unrelated grab does not carry a stale headword.
-        word = getattr(self, "_pending_card_word", "")
-        self._pending_card_word = ""
+        if not data or not any(data.values()):
+            return
+        word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_panel.set_pronunciation(
             data.get("ipa_uk"),
             data.get("ipa_us"),
