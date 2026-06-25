@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtCore import QEvent, Qt, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -253,9 +254,12 @@ class FlashcardPanel(QWidget):
         self.new_button = QPushButton("New from word")
         self.new_button.setToolTip(
             "Ctrl+N: start a card and fill headword, IPA, spelling and audio "
-            "from the Cambridge page"
+            "from the Cambridge page. Ctrl+click skips the discard confirmation."
         )
         self.clear_button = QPushButton("Clear")
+        self.clear_button.setToolTip(
+            "Empty the editor. Ctrl+click skips the discard confirmation."
+        )
         self.clear_button.clicked.connect(self.clear_editor)
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_card)
@@ -466,18 +470,31 @@ class FlashcardPanel(QWidget):
         self._reset_editor()
         self.card_saved.emit(headword)
 
-    def new_card(self, word: str) -> bool:
+    @staticmethod
+    def ctrl_held() -> bool:
+        """True when Ctrl is down (used to skip the discard confirmation on a
+        Ctrl+click of New from word / Clear)."""
+        return bool(
+            QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier
+        )
+
+    def new_card(self, word: str, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
-        to discard unsaved content. The headword and pronunciation are filled by
-        the grab (see ``set_pronunciation``), not here, so the all-or-nothing
-        gate sees a fully empty editor."""
-        if self.has_content() and not self._confirm_discard():
+        to discard unsaved content. ``force`` skips the confirmation. The headword
+        and pronunciation are filled by the grab (see ``set_pronunciation``), not
+        here, so the all-or-nothing gate sees a fully empty editor."""
+        if not force and self.has_content() and not self._confirm_discard():
             return False
         self._reset_editor()
         return True
 
     def clear_editor(self):
-        if self.has_content() and not self._confirm_discard():
+        # Ctrl+click skips the discard confirmation.
+        if (
+            not self.ctrl_held()
+            and self.has_content()
+            and not self._confirm_discard()
+        ):
             return
         self._reset_editor()
 

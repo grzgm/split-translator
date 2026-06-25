@@ -167,6 +167,33 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertFalse(panel.new_card("run"))
         self.assertEqual(panel.headword_input.text(), "keep")
 
+    def test_new_card_force_skips_confirmation(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("keep")
+        asked = []
+        panel._confirm_discard = lambda: asked.append(True) or False
+        self.assertTrue(panel.new_card("run", force=True))
+        self.assertEqual(asked, [])  # never prompted
+        self.assertEqual(panel.headword_input.text(), "")  # cleared
+
+    def test_clear_editor_ctrl_skips_confirmation(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("keep")
+        asked = []
+        panel._confirm_discard = lambda: asked.append(True) or False
+        panel.ctrl_held = lambda: True
+        panel.clear_editor()
+        self.assertEqual(asked, [])  # never prompted
+        self.assertEqual(panel.headword_input.text(), "")  # cleared
+
+    def test_clear_editor_without_ctrl_confirms(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("keep")
+        panel.ctrl_held = lambda: False
+        panel._confirm_discard = lambda: False  # decline
+        panel.clear_editor()
+        self.assertEqual(panel.headword_input.text(), "keep")  # not cleared
+
 
 if __name__ == "__main__":
     unittest.main()

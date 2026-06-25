@@ -92,8 +92,12 @@ class TranslationTool(QMainWindow):
         # Notice when a word was first searched on an earlier day.
         self.history_panel.previous_search.connect(self.show_previous_search_notice)
 
-        # Flashcard editor wiring.
-        self.flashcard_panel.new_button.clicked.connect(self.new_flashcard)
+        # Flashcard editor wiring. A Ctrl+click on the button skips the discard
+        # confirmation; the Ctrl+N shortcut keeps the confirmation (Ctrl is part
+        # of the shortcut, not a deliberate skip).
+        self.flashcard_panel.new_button.clicked.connect(
+            lambda: self.new_flashcard(force=self.flashcard_panel.ctrl_held())
+        )
         self.dictionary_panel.pronunciation_grabbed.connect(
             self.on_pronunciation_grabbed
         )
@@ -188,12 +192,13 @@ class TranslationTool(QMainWindow):
         # load.)
         self.dictionary_panel.grab_pronunciation()
 
-    def new_flashcard(self):
+    def new_flashcard(self, force: bool = False):
         word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_dock.show()
         # Clear first (the editor is then empty, so the grab fills everything).
-        # Skip if the user declined to discard an in-progress card.
-        if not self.flashcard_panel.new_card(word):
+        # Skip if the user declined to discard an in-progress card (force bypasses
+        # the confirmation, used on a Ctrl+click of the button).
+        if not self.flashcard_panel.new_card(word, force=force):
             return
         self.dictionary_panel.grab_pronunciation()
 
