@@ -151,6 +151,17 @@ class HistoryPanel(QWidget):
         self.save_history()
         self.update_history_list()
 
+    def remove_word(self, word):
+        """Remove every history entry for a word (used when Get Correction
+        replaces a misspelled lookup). Saves and refreshes only if something
+        was removed."""
+        remaining = [entry for entry in self.history if entry["word"] != word]
+        if len(remaining) == len(self.history):
+            return
+        self.history = remaining
+        self.save_history()
+        self.update_history_list()
+
     def update_history_list(self):
         self.history_list.setUpdatesEnabled(False)  # Pause rendering.
         self.history_list.clear()

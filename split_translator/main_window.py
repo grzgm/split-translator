@@ -92,6 +92,12 @@ class TranslationTool(QMainWindow):
         # Notice when a word was first searched on an earlier day.
         self.history_panel.previous_search.connect(self.show_previous_search_notice)
 
+        # Get Correction drops the misspelled entry; the corrected lookup that
+        # follows re-adds the right word through word_searched.
+        self.dictionary_panel.correction_applied.connect(
+            lambda wrong, corrected: self.history_panel.remove_word(wrong)
+        )
+
         # Flashcard editor wiring. A Ctrl+click on the button skips the discard
         # confirmation; the Ctrl+N shortcut keeps the confirmation (Ctrl is part
         # of the shortcut, not a deliberate skip).

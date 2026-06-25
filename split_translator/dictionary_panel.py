@@ -75,6 +75,7 @@ class DictionaryPanel(QWidget):
     word_searched = Signal(str)
     pronunciation_grabbed = Signal(object)
     grammar_grabbed = Signal(object)  # {"plural": bool} from the Cambridge page
+    correction_applied = Signal(str, str)  # wrong word, corrected word
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
     # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
     sense_capture_requested = Signal(str, str, str, str)
@@ -563,9 +564,18 @@ class DictionaryPanel(QWidget):
         self.google_meaning_view.page().runJavaScript(js_code, self._handle_correction)
 
     def _handle_correction(self, result):
-        if result:
-            corrected = result.replace(" meaning", "").strip()
-            self.search_word(corrected)
+        if not result:
+            return
+        corrected = result.replace(" meaning", "").strip()
+        if not corrected:
+            return
+        # The word that was wrong is whatever is in the box before we re-search.
+        wrong = self.search_input.text().strip()
+        if wrong and wrong != corrected:
+            # Let the owner drop the misspelled history entry; the re-search
+            # below adds the corrected word as a normal lookup.
+            self.correction_applied.emit(wrong, corrected)
+        self.search_word(corrected)
 
     def play_cambridge_audio(self, audio_num: int = 1):
         js_code = f"audio{audio_num}.load(); audio{audio_num}.play();"
