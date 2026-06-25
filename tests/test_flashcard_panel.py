@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLineEdit
 
 from split_translator.flashcard_panel import FlashcardPanel
 from split_translator.flashcards import FlashcardStore
@@ -55,6 +55,32 @@ class FlashcardPanelTests(unittest.TestCase):
         panel, _ = self._panel()
         panel.add_example_selection("   ")
         self.assertEqual(panel.active_row.examples(), [])
+
+    # Real keyboard focus cannot be asserted under the offscreen platform
+    # (focusWidget() is always None), so these check that setFocus is invoked on
+    # the right field instead, which is what drives the focus on a live display.
+    def test_add_example_with_focus_calls_setfocus(self):
+        panel, _ = self._panel()
+        focused = []
+        orig = QLineEdit.setFocus
+        try:
+            QLineEdit.setFocus = lambda self, *a: focused.append(self)
+            panel.active_row.add_example(focus=True)
+        finally:
+            QLineEdit.setFocus = orig
+        field = panel.active_row._example_rows()[-1].example_input
+        self.assertIn(field, focused)
+
+    def test_example_capture_does_not_focus(self):
+        panel, _ = self._panel()
+        focused = []
+        orig = QLineEdit.setFocus
+        try:
+            QLineEdit.setFocus = lambda self, *a: focused.append(self)
+            panel.active_row.add_example_text("She lives at that address.")
+        finally:
+            QLineEdit.setFocus = orig
+        self.assertEqual(focused, [])
 
     def test_build_card_carries_examples(self):
         panel, _ = self._panel()

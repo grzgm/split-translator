@@ -74,7 +74,9 @@ class SenseRow(QFrame):
         self.add_example_button.setToolTip(
             "Add a usage example (or use the + buttons on the Cambridge page)"
         )
-        self.add_example_button.clicked.connect(lambda: self.add_example())
+        self.add_example_button.clicked.connect(
+            lambda: self.add_example(focus=True)
+        )
         outer.addWidget(self.add_example_button)
 
         for widget in (self.pos_combo, self.polish_input, self.english_input):
@@ -103,8 +105,10 @@ class SenseRow(QFrame):
                 rows.append(widget)
         return rows
 
-    def add_example(self, text: str = "") -> None:
-        """Append an example field (focusing the active row first)."""
+    def add_example(self, text: str = "", focus: bool = False) -> None:
+        """Append an example field (focusing the active row first). With
+        ``focus`` the new field takes keyboard focus, so a manual "+ example"
+        click can be typed into straight away."""
         self.activated.emit(self)
         row = QWidget()
         row_layout = QHBoxLayout(row)
@@ -125,6 +129,9 @@ class SenseRow(QFrame):
         row_layout.addWidget(field_input)
         row_layout.addWidget(remove)
         self.examples_container.addWidget(row)
+
+        if focus:
+            field_input.setFocus()
 
     def add_example_text(self, text: str) -> None:
         """Append an example carrying captured text (skips blank input)."""
