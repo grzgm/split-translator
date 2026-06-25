@@ -425,6 +425,12 @@ class FlashcardPanel(QWidget):
             self.player = QMediaPlayer(self)
             self.audio_output = QAudioOutput(self)
             self.player.setAudioOutput(self.audio_output)
+        # Clicking the same play button twice would otherwise do nothing: setting
+        # the source to the URL the player already holds is a no-op, so after the
+        # clip has finished it never replays. Stop and clear the source first so
+        # every click reloads and plays from the start, even for the same URL.
+        self.player.stop()
+        self.player.setSource(QUrl())
         self.player.setSource(QUrl(url))
         self.player.play()
 
