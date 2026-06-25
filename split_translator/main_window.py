@@ -94,9 +94,6 @@ class TranslationTool(QMainWindow):
 
         # Flashcard editor wiring.
         self.flashcard_panel.new_button.clicked.connect(self.new_flashcard)
-        self.flashcard_panel.grab_requested.connect(
-            self.dictionary_panel.grab_pronunciation
-        )
         self.dictionary_panel.pronunciation_grabbed.connect(
             self.on_pronunciation_grabbed
         )
@@ -192,13 +189,13 @@ class TranslationTool(QMainWindow):
             word = self.dictionary_panel.search_input.text().strip()
             if word:
                 self.flashcard_panel.headword_input.setText(word)
-            self.dictionary_panel.grab_pronunciation()
+            self.dictionary_panel.grab_pronunciation_when_loaded()
 
     def new_flashcard(self):
         word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_dock.show()
         self.flashcard_panel.new_card(word)
-        self.dictionary_panel.grab_pronunciation()
+        self.dictionary_panel.grab_pronunciation_when_loaded()
 
     def capture_to_polish(self):
         text = self.dictionary_panel.focused_selection()

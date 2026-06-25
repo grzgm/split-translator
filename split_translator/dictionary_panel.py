@@ -229,6 +229,20 @@ class DictionaryPanel(QWidget):
             self._GRAB_JS, self._on_pronunciation
         )
 
+    def grab_pronunciation_when_loaded(self):
+        """Grab now (in case the page is already loaded) and once more the next
+        time the Cambridge English page finishes loading, so a lookup that is
+        still in flight is picked up too. ``set_pronunciation`` only fills empty
+        fields, so the repeat grab is harmless."""
+        self.grab_pronunciation()
+
+        def once(ok):
+            self.cambridge_en_view.loadFinished.disconnect(once)
+            if ok:
+                self.grab_pronunciation()
+
+        self.cambridge_en_view.loadFinished.connect(once)
+
     def _on_pronunciation(self, result):
         try:
             data = json.loads(result) if result else {}

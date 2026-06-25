@@ -155,7 +155,6 @@ class SenseRow(QFrame):
 class FlashcardPanel(QWidget):
     """Editor that builds one card at a time and saves it to the store."""
 
-    grab_requested = Signal()
     card_saved = Signal(str)
     save_rejected = Signal(str)
     sense_count_changed = Signal(int)
@@ -200,12 +199,12 @@ class FlashcardPanel(QWidget):
         self.spelling_uk_input = QLineEdit()
         self.spelling_uk_input.setPlaceholderText("UK spelling")
         self.spelling_uk_input.setToolTip(
-            "Grab CD: fill from the Cambridge page (when it differs UK/US)"
+            "New from word: filled from the Cambridge page (when it differs UK/US)"
         )
         self.spelling_us_input = QLineEdit()
         self.spelling_us_input.setPlaceholderText("US spelling")
         self.spelling_us_input.setToolTip(
-            "Grab CD: fill from the Cambridge page (when it differs UK/US)"
+            "New from word: filled from the Cambridge page (when it differs UK/US)"
         )
         spelling_row.addWidget(self.spelling_uk_input)
         spelling_row.addWidget(self.spelling_us_input)
@@ -214,10 +213,14 @@ class FlashcardPanel(QWidget):
         ipa_row = QHBoxLayout()
         self.ipa_uk_input = QLineEdit()
         self.ipa_uk_input.setPlaceholderText("IPA UK")
-        self.ipa_uk_input.setToolTip("Grab CD: fill from the Cambridge page")
+        self.ipa_uk_input.setToolTip(
+            "New from word: filled from the Cambridge page"
+        )
         self.ipa_us_input = QLineEdit()
         self.ipa_us_input.setPlaceholderText("IPA US")
-        self.ipa_us_input.setToolTip("Grab CD: fill from the Cambridge page")
+        self.ipa_us_input.setToolTip(
+            "New from word: filled from the Cambridge page"
+        )
         ipa_row.addWidget(self.ipa_uk_input)
         ipa_row.addWidget(self.ipa_us_input)
         form.addRow("IPA", ipa_row)
@@ -248,14 +251,15 @@ class FlashcardPanel(QWidget):
 
         buttons = QHBoxLayout()
         self.new_button = QPushButton("New from word")
-        self.grab_button = QPushButton("Grab CD")
-        self.grab_button.clicked.connect(self.grab_requested.emit)
+        self.new_button.setToolTip(
+            "Ctrl+N: start a card and fill headword, IPA, spelling and audio "
+            "from the Cambridge page"
+        )
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self.clear_editor)
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_card)
         buttons.addWidget(self.new_button)
-        buttons.addWidget(self.grab_button)
         buttons.addWidget(self.clear_button)
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
