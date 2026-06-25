@@ -119,41 +119,53 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(store.cards[0].starred)
         self.assertFalse(panel.is_starred())
 
-    def test_pronunciation_fills_empty_fields_without_asking(self):
+    def test_grab_fills_everything_when_editor_empty(self):
         panel, _ = self._panel()
-        asked = []
-        panel._confirm_overwrite_fields = lambda: asked.append(True) or True
-        panel.set_pronunciation("/aa/", "/bb/", None, None, "uk", "us")
+        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        self.assertEqual(panel.headword_input.text(), "run")
         self.assertEqual(panel.ipa_uk_input.text(), "/aa/")
+        self.assertEqual(panel.ipa_us_input.text(), "/bb/")
         self.assertEqual(panel.spelling_uk_input.text(), "uk")
-        self.assertEqual(asked, [])  # no conflict, so no prompt
+        self.assertEqual(panel.spelling_us_input.text(), "us")
+        self.assertEqual(panel._audio_uk_url, "a.mp3")
 
-    def test_pronunciation_keeps_values_when_overwrite_declined(self):
+    def test_grab_fills_nothing_when_any_field_has_value(self):
         panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/old/")
-        panel.spelling_us_input.setText("kept")
-        panel._confirm_overwrite_fields = lambda: False
-        # ipa_us is empty, so it fills even though the user declined the others.
-        panel.set_pronunciation("/new/", "/usnew/", None, None, "uk", "newus")
-        self.assertEqual(panel.ipa_uk_input.text(), "/old/")
-        self.assertEqual(panel.spelling_us_input.text(), "kept")
-        self.assertEqual(panel.ipa_us_input.text(), "/usnew/")
-        self.assertEqual(panel.spelling_uk_input.text(), "uk")
+        panel.ipa_uk_input.setText("/mine/")  # one field already filled
+        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        # Nothing is touched, not even the empty fields.
+        self.assertEqual(panel.headword_input.text(), "")
+        self.assertEqual(panel.ipa_uk_input.text(), "/mine/")
+        self.assertEqual(panel.ipa_us_input.text(), "")
+        self.assertEqual(panel.spelling_uk_input.text(), "")
+        self.assertIsNone(panel._audio_uk_url)
 
-    def test_pronunciation_overwrites_when_confirmed(self):
+    def test_grab_blocked_by_headword_value(self):
         panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/old/")
-        panel._confirm_overwrite_fields = lambda: True
-        panel.set_pronunciation("/new/", None, None, None)
-        self.assertEqual(panel.ipa_uk_input.text(), "/new/")
+        panel.headword_input.setText("kept")
+        panel.set_pronunciation("/aa/", None, None, None, word="run")
+        self.assertEqual(panel.headword_input.text(), "kept")
+        self.assertEqual(panel.ipa_uk_input.text(), "")
 
-    def test_pronunciation_same_value_is_not_a_conflict(self):
+    def test_grab_blocked_by_existing_audio(self):
         panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/same/")
-        asked = []
-        panel._confirm_overwrite_fields = lambda: asked.append(True) or True
-        panel.set_pronunciation("/same/", None, None, None)
-        self.assertEqual(asked, [])  # identical value, no prompt
+        panel._audio_uk_url = "old.mp3"
+        panel.set_pronunciation("/aa/", None, None, None, word="run")
+        self.assertEqual(panel.headword_input.text(), "")
+        self.assertEqual(panel.ipa_uk_input.text(), "")
+
+    def test_new_card_clears_without_setting_headword(self):
+        panel, _ = self._panel()
+        # Empty editor: no discard prompt, returns True, clears.
+        self.assertTrue(panel.new_card("run"))
+        self.assertEqual(panel.headword_input.text(), "")
+
+    def test_new_card_returns_false_when_discard_declined(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("keep")
+        panel._confirm_discard = lambda: False
+        self.assertFalse(panel.new_card("run"))
+        self.assertEqual(panel.headword_input.text(), "keep")
 
 
 if __name__ == "__main__":

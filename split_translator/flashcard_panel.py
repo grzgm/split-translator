@@ -341,6 +341,19 @@ class FlashcardPanel(QWidget):
 
     # --- pronunciation --------------------------------------------------
 
+    def _grab_fields_empty(self) -> bool:
+        """True when every field an automatic grab fills is still empty."""
+        for widget in (
+            self.headword_input,
+            self.ipa_uk_input,
+            self.ipa_us_input,
+            self.spelling_uk_input,
+            self.spelling_us_input,
+        ):
+            if widget.text().strip():
+                return False
+        return not (self._audio_uk_url or self._audio_us_url)
+
     def set_pronunciation(
         self,
         ipa_uk,
@@ -349,49 +362,29 @@ class FlashcardPanel(QWidget):
         audio_us_url,
         spelling_uk=None,
         spelling_us=None,
+        word=None,
     ):
-        # Empty fields fill silently. A field that already holds a different
-        # value is only overwritten if the user confirms, so an automatic grab
-        # never clobbers a manual edit without asking (the same rule the headword
-        # follows). Audio has no visible field, so its URL fills silently too.
-        line_fields = (
-            (self.ipa_uk_input, ipa_uk),
-            (self.ipa_us_input, ipa_us),
-            (self.spelling_uk_input, spelling_uk),
-            (self.spelling_us_input, spelling_us),
-        )
-        conflicts = [
-            field
-            for field, value in line_fields
-            if value
-            and field.text().strip()
-            and field.text().strip() != value
-        ]
-        overwrite = True
-        if conflicts:
-            overwrite = self._confirm_overwrite_fields()
-
-        for field, value in line_fields:
-            if not value:
-                continue
-            if not field.text().strip() or overwrite:
-                field.setText(value)
-
+        # All-or-nothing: fill the headword, IPA, spelling and audio only when
+        # every one of those fields is still empty. If anything is already
+        # filled (a manual edit or an earlier grab), leave the whole card
+        # untouched so a later search never clobbers in-progress work.
+        if not self._grab_fields_empty():
+            return
+        if word:
+            self.headword_input.setText(word)
+        if ipa_uk:
+            self.ipa_uk_input.setText(ipa_uk)
+        if ipa_us:
+            self.ipa_us_input.setText(ipa_us)
+        if spelling_uk:
+            self.spelling_uk_input.setText(spelling_uk)
+        if spelling_us:
+            self.spelling_us_input.setText(spelling_us)
         if audio_uk_url:
             self._audio_uk_url = audio_uk_url
         if audio_us_url:
             self._audio_us_url = audio_us_url
         self._update_play_buttons()
-
-    def _confirm_overwrite_fields(self) -> bool:
-        reply = QMessageBox.question(
-            self,
-            "Overwrite fields?",
-            "Some IPA or spelling fields already have values. "
-            "Replace them with the values from the Cambridge page?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        return reply == QMessageBox.StandardButton.Yes
 
     def _update_play_buttons(self):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
@@ -473,11 +466,15 @@ class FlashcardPanel(QWidget):
         self._reset_editor()
         self.card_saved.emit(headword)
 
-    def new_card(self, word: str):
+    def new_card(self, word: str) -> bool:
+        """Clear the editor for a fresh card. Returns False if the user declined
+        to discard unsaved content. The headword and pronunciation are filled by
+        the grab (see ``set_pronunciation``), not here, so the all-or-nothing
+        gate sees a fully empty editor."""
         if self.has_content() and not self._confirm_discard():
-            return
+            return False
         self._reset_editor()
-        self.headword_input.setText(word)
+        return True
 
     def clear_editor(self):
         if self.has_content() and not self._confirm_discard():
