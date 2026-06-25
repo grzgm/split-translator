@@ -350,20 +350,48 @@ class FlashcardPanel(QWidget):
         spelling_uk=None,
         spelling_us=None,
     ):
-        if ipa_uk:
-            self.ipa_uk_input.setText(ipa_uk)
-        if ipa_us:
-            self.ipa_us_input.setText(ipa_us)
+        # Empty fields fill silently. A field that already holds a different
+        # value is only overwritten if the user confirms, so an automatic grab
+        # never clobbers a manual edit without asking (the same rule the headword
+        # follows). Audio has no visible field, so its URL fills silently too.
+        line_fields = (
+            (self.ipa_uk_input, ipa_uk),
+            (self.ipa_us_input, ipa_us),
+            (self.spelling_uk_input, spelling_uk),
+            (self.spelling_us_input, spelling_us),
+        )
+        conflicts = [
+            field
+            for field, value in line_fields
+            if value
+            and field.text().strip()
+            and field.text().strip() != value
+        ]
+        overwrite = True
+        if conflicts:
+            overwrite = self._confirm_overwrite_fields()
+
+        for field, value in line_fields:
+            if not value:
+                continue
+            if not field.text().strip() or overwrite:
+                field.setText(value)
+
         if audio_uk_url:
             self._audio_uk_url = audio_uk_url
         if audio_us_url:
             self._audio_us_url = audio_us_url
-        # Only fill spelling when empty, so a manual edit is never overwritten.
-        if spelling_uk and not self.spelling_uk_input.text().strip():
-            self.spelling_uk_input.setText(spelling_uk)
-        if spelling_us and not self.spelling_us_input.text().strip():
-            self.spelling_us_input.setText(spelling_us)
         self._update_play_buttons()
+
+    def _confirm_overwrite_fields(self) -> bool:
+        reply = QMessageBox.question(
+            self,
+            "Overwrite fields?",
+            "Some IPA or spelling fields already have values. "
+            "Replace them with the values from the Cambridge page?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
 
     def _update_play_buttons(self):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))

@@ -119,6 +119,42 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(store.cards[0].starred)
         self.assertFalse(panel.is_starred())
 
+    def test_pronunciation_fills_empty_fields_without_asking(self):
+        panel, _ = self._panel()
+        asked = []
+        panel._confirm_overwrite_fields = lambda: asked.append(True) or True
+        panel.set_pronunciation("/aa/", "/bb/", None, None, "uk", "us")
+        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")
+        self.assertEqual(panel.spelling_uk_input.text(), "uk")
+        self.assertEqual(asked, [])  # no conflict, so no prompt
+
+    def test_pronunciation_keeps_values_when_overwrite_declined(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/old/")
+        panel.spelling_us_input.setText("kept")
+        panel._confirm_overwrite_fields = lambda: False
+        # ipa_us is empty, so it fills even though the user declined the others.
+        panel.set_pronunciation("/new/", "/usnew/", None, None, "uk", "newus")
+        self.assertEqual(panel.ipa_uk_input.text(), "/old/")
+        self.assertEqual(panel.spelling_us_input.text(), "kept")
+        self.assertEqual(panel.ipa_us_input.text(), "/usnew/")
+        self.assertEqual(panel.spelling_uk_input.text(), "uk")
+
+    def test_pronunciation_overwrites_when_confirmed(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/old/")
+        panel._confirm_overwrite_fields = lambda: True
+        panel.set_pronunciation("/new/", None, None, None)
+        self.assertEqual(panel.ipa_uk_input.text(), "/new/")
+
+    def test_pronunciation_same_value_is_not_a_conflict(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/same/")
+        asked = []
+        panel._confirm_overwrite_fields = lambda: asked.append(True) or True
+        panel.set_pronunciation("/same/", None, None, None)
+        self.assertEqual(asked, [])  # identical value, no prompt
+
 
 if __name__ == "__main__":
     unittest.main()
