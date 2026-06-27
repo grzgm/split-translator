@@ -35,6 +35,16 @@ class FlashcardPanelTests(unittest.TestCase):
             row.english_input.text(), "the details of where someone lives"
         )
 
+    def test_capture_scrolls_field_to_start(self):
+        # A captured value longer than the field shows its beginning, not its
+        # end: the cursor is reset to position 0 after the fill.
+        panel, _ = self._panel()
+        long_text = "a very long english definition that overflows the field width"
+        panel.set_english_selection(long_text)
+        row = panel.active_row
+        self.assertEqual(row.english_input.text(), long_text)
+        self.assertEqual(row.english_input.cursorPosition(), 0)
+
     def test_add_sense_makes_new_row_active(self):
         panel, _ = self._panel()
         panel.add_sense()

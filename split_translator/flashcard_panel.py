@@ -43,6 +43,17 @@ def _mark_empty(field) -> None:
         field.setStyleSheet(f"{type_name} {{ border: {_EMPTY_BORDER}; }}")
 
 
+def _fill(field: QLineEdit, text: str) -> None:
+    """Set a line edit's text programmatically and scroll it to the start.
+
+    After ``setText`` the cursor sits at the end, so an overflowing field shows
+    the end of the text. Resetting the cursor to position 0 scrolls the view back
+    so the beginning is visible. Used only for programmatic fills (capture, grab,
+    load), not while the user types."""
+    field.setText(text)
+    field.setCursorPosition(0)
+
+
 class SenseRow(QFrame):
     """One editable sense: POS combo, Polish field, English field, a remove button
     and a small list of usage examples beneath them."""
@@ -150,8 +161,8 @@ class SenseRow(QFrame):
         field_input = QLineEdit()
         field_input.setPlaceholderText("Example")
         field_input.setToolTip("Alt+X: add the web-view selection as an example")
-        field_input.setText(text)
         field_input.installEventFilter(self)
+        _fill(field_input, text)
         # Mark the example field while it is empty (kept in sync as it is typed).
         field_input.textChanged.connect(
             lambda _=None, f=field_input: _mark_empty(f)
@@ -411,13 +422,13 @@ class FlashcardPanel(QWidget):
         text = text.strip()
         if not text:
             return
-        self._ensure_active_row().polish_input.setText(text)
+        _fill(self._ensure_active_row().polish_input, text)
 
     def set_english_selection(self, text: str):
         text = text.strip()
         if not text:
             return
-        self._ensure_active_row().english_input.setText(text)
+        _fill(self._ensure_active_row().english_input, text)
 
     def add_example_selection(self, text: str):
         text = text.strip()
@@ -457,15 +468,15 @@ class FlashcardPanel(QWidget):
         if not self._grab_fields_empty():
             return
         if word:
-            self.headword_input.setText(word)
+            _fill(self.headword_input, word)
         if ipa_uk:
-            self.ipa_uk_input.setText(ipa_uk)
+            _fill(self.ipa_uk_input, ipa_uk)
         if ipa_us:
-            self.ipa_us_input.setText(ipa_us)
+            _fill(self.ipa_us_input, ipa_us)
         if spelling_uk:
-            self.spelling_uk_input.setText(spelling_uk)
+            _fill(self.spelling_uk_input, spelling_uk)
         if spelling_us:
-            self.spelling_us_input.setText(spelling_us)
+            _fill(self.spelling_us_input, spelling_us)
         if audio_uk_url:
             self._audio_uk_url = audio_uk_url
         if audio_us_url:
@@ -654,12 +665,12 @@ class FlashcardPanel(QWidget):
         ):
             return False
         self._reset_editor()  # clears fields and any previous loaded id
-        self.headword_input.setText(card.headword)
-        self.spelling_uk_input.setText(card.spelling_uk or "")
-        self.spelling_us_input.setText(card.spelling_us or "")
-        self.ipa_uk_input.setText(card.ipa_uk or "")
-        self.ipa_us_input.setText(card.ipa_us or "")
-        self.own_notation_input.setText(card.own_notation or "")
+        _fill(self.headword_input, card.headword)
+        _fill(self.spelling_uk_input, card.spelling_uk or "")
+        _fill(self.spelling_us_input, card.spelling_us or "")
+        _fill(self.ipa_uk_input, card.ipa_uk or "")
+        _fill(self.ipa_us_input, card.ipa_us or "")
+        _fill(self.own_notation_input, card.own_notation or "")
         self._audio_uk_url = card.audio_uk_url
         self._audio_us_url = card.audio_us_url
         self._update_play_buttons()
@@ -675,8 +686,8 @@ class FlashcardPanel(QWidget):
                 self.add_sense()
                 row = self.active_row
                 row.pos_combo.setCurrentText(sense.pos)
-                row.polish_input.setText(sense.polish)
-                row.english_input.setText(sense.english)
+                _fill(row.polish_input, sense.polish)
+                _fill(row.english_input, sense.english)
                 for example in sense.examples:
                     row.add_example(example)
             self.set_active_index(1)
