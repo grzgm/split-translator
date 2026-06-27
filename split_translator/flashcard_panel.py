@@ -20,6 +20,25 @@ from PySide6.QtWidgets import (
 
 from .flashcards import Card, FlashcardStore, Sense
 
+# A light-blue border shown on a fillable field while it is still empty, so it is
+# easy to see at a glance what remains to be filled. It clears back to the default
+# border the moment the field has any content.
+_EMPTY_BORDER = "2px solid #aaccfe"
+
+
+def _mark_empty(field) -> None:
+    """Give a field the empty-field border when blank, default otherwise.
+
+    Works for both ``QLineEdit`` (``text()``) and an editable ``QComboBox``
+    (``currentText()``); the stylesheet selector is keyed off the widget's class
+    so it targets the right control."""
+    text = field.currentText() if isinstance(field, QComboBox) else field.text()
+    type_name = type(field).__name__
+    if text.strip():
+        field.setStyleSheet("")
+    else:
+        field.setStyleSheet(f"{type_name} {{ border: {_EMPTY_BORDER}; }}")
+
 
 class SenseRow(QFrame):
     """One editable sense: POS combo, Polish field, English field, a remove button
@@ -52,6 +71,16 @@ class SenseRow(QFrame):
         self.english_input = QLineEdit()
         self.english_input.setPlaceholderText("English definition")
         self.english_input.setToolTip("Alt+E: add the web-view selection here")
+
+        # Mark the POS dropdown and the Polish/English fields while empty and keep
+        # each marker in sync as it is typed into or filled by capture.
+        self.pos_combo.currentTextChanged.connect(
+            lambda _=None: _mark_empty(self.pos_combo)
+        )
+        _mark_empty(self.pos_combo)
+        for field in (self.polish_input, self.english_input):
+            field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
+            _mark_empty(field)
 
         self.remove_button = QPushButton("x")
         self.remove_button.setMaximumWidth(28)
@@ -120,6 +149,11 @@ class SenseRow(QFrame):
         field_input.setToolTip("Alt+X: add the web-view selection as an example")
         field_input.setText(text)
         field_input.installEventFilter(self)
+        # Mark the example field while it is empty (kept in sync as it is typed).
+        field_input.textChanged.connect(
+            lambda _=None, f=field_input: _mark_empty(f)
+        )
+        _mark_empty(field_input)
         row.example_input = field_input
 
         remove = QPushButton("x")
@@ -244,6 +278,19 @@ class FlashcardPanel(QWidget):
 
         self.own_notation_input = QLineEdit()
         form.addRow("Own notation", self.own_notation_input)
+
+        # Mark every fillable card field while empty and keep each marker in sync
+        # as it is typed into or filled by a grab.
+        for field in (
+            self.headword_input,
+            self.spelling_uk_input,
+            self.spelling_us_input,
+            self.ipa_uk_input,
+            self.ipa_us_input,
+            self.own_notation_input,
+        ):
+            field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
+            _mark_empty(field)
 
         layout.addLayout(form)
 

@@ -220,6 +220,89 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.clear_editor()
         self.assertEqual(panel.headword_input.text(), "keep")  # not cleared
 
+    # --- empty-field marking --------------------------------------------
+    # A blank fillable field carries a "border" style; a filled one does not.
+
+    @staticmethod
+    def _marked(field):
+        return "border" in field.styleSheet()
+
+    def _card_fields(self, panel):
+        return (
+            panel.headword_input,
+            panel.spelling_uk_input,
+            panel.spelling_us_input,
+            panel.ipa_uk_input,
+            panel.ipa_us_input,
+            panel.own_notation_input,
+        )
+
+    def test_empty_card_fields_are_marked(self):
+        panel, _ = self._panel()
+        self.assertTrue(all(self._marked(f) for f in self._card_fields(panel)))
+
+    def test_empty_sense_fields_are_marked(self):
+        panel, _ = self._panel()
+        row = panel.active_row
+        self.assertTrue(self._marked(row.pos_combo))
+        self.assertTrue(self._marked(row.polish_input))
+        self.assertTrue(self._marked(row.english_input))
+
+    def test_setting_pos_clears_its_marker(self):
+        panel, _ = self._panel()
+        row = panel.active_row
+        row.pos_combo.setCurrentText("n")
+        self.assertFalse(self._marked(row.pos_combo))
+        row.pos_combo.setCurrentText("")
+        self.assertTrue(self._marked(row.pos_combo))
+
+    def test_blank_example_is_marked_and_clears_when_typed(self):
+        panel, _ = self._panel()
+        row = panel.active_row
+        row.add_example()  # blank "+ example" row
+        field = row._example_rows()[-1].example_input
+        self.assertTrue(self._marked(field))
+        field.setText("She lives here.")
+        self.assertFalse(self._marked(field))
+
+    def test_captured_example_is_not_marked(self):
+        panel, _ = self._panel()
+        row = panel.active_row
+        row.add_example_text("She lives here.")
+        field = row._example_rows()[-1].example_input
+        self.assertFalse(self._marked(field))
+
+    def test_filling_a_field_clears_its_marker(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("dog")
+        self.assertFalse(self._marked(panel.headword_input))
+        panel.active_row.polish_input.setText("pies")
+        self.assertFalse(self._marked(panel.active_row.polish_input))
+
+    def test_clearing_a_field_re_marks_it(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("dog")
+        panel.headword_input.clear()
+        self.assertTrue(self._marked(panel.headword_input))
+
+    def test_grab_clears_markers_on_filled_fields(self):
+        panel, _ = self._panel()
+        panel.set_pronunciation("/wn/", "/wun/", "u.mp3", None, word="one")
+        self.assertFalse(self._marked(panel.headword_input))
+        self.assertFalse(self._marked(panel.ipa_uk_input))
+        # No spelling came through, so those stay marked.
+        self.assertTrue(self._marked(panel.spelling_uk_input))
+
+    def test_reset_re_marks_card_and_new_sense(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("dog")
+        panel.active_row.polish_input.setText("pies")
+        panel._reset_editor()
+        self.assertTrue(all(self._marked(f) for f in self._card_fields(panel)))
+        new_row = panel.active_row
+        self.assertTrue(self._marked(new_row.polish_input))
+        self.assertTrue(self._marked(new_row.english_input))
+
 
 if __name__ == "__main__":
     unittest.main()
