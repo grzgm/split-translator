@@ -179,6 +179,11 @@ class TranslationTool(QMainWindow):
         shortcut_to_example = QShortcut(QKeySequence("Alt+X"), self)
         shortcut_to_example.activated.connect(self.capture_to_example)
 
+        shortcut_anchor_editor = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
+        shortcut_anchor_editor.activated.connect(
+            self.book_panel.open_anchor_editor
+        )
+
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():
             self.book_panel.go_to_next()
