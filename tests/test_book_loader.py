@@ -1,6 +1,8 @@
+import tempfile
 import unittest
 
 from split_translator.book_loader import BookDocument, assign_block_ids
+from tests.fixtures.make_fixtures import make_epub, make_pdf
 
 
 class AssignBlockIdsTests(unittest.TestCase):
@@ -48,3 +50,21 @@ class AssignBlockIdsTests(unittest.TestCase):
         self.assertEqual(doc.html, '<p data-stid="b0">x</p>')
         self.assertEqual(doc.block_ids, ["b0"])
         self.assertEqual(doc.title, "T")
+
+
+class FixtureBuilderTests(unittest.TestCase):
+    def test_make_epub_creates_a_readable_zip(self):
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as d:
+            path = make_epub(d)
+            self.assertTrue(zipfile.is_zipfile(path))
+
+    def test_make_pdf_creates_a_pdf(self):
+        import pymupdf
+
+        with tempfile.TemporaryDirectory() as d:
+            path = make_pdf(d)
+            doc = pymupdf.open(path)
+            self.assertEqual(doc.page_count, 1)
+            doc.close()
