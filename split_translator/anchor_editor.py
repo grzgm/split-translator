@@ -2,12 +2,14 @@
 then bind the two selections into an anchor. Saved anchors stay highlighted in
 both views; clicking an anchor in the list jumps both views to it."""
 
+from PySide6.QtCore import Qt
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -49,7 +51,14 @@ class AnchorEditor(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
 
-        views = QHBoxLayout()
+        # A vertical splitter so the boundary between the two book views (top)
+        # and the controls + anchor list (bottom) can be dragged to give the
+        # list more or less height.
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        views_container = QWidget()
+        views = QHBoxLayout(views_container)
+        views.setContentsMargins(0, 0, 0, 0)
         self.original_view = AnchorBookView(
             self.original_document, self._profile_ref
         )
@@ -60,7 +69,13 @@ class AnchorEditor(QWidget):
         self.translation_view.block_clicked.connect(self._on_translation_clicked)
         views.addWidget(self.original_view)
         views.addWidget(self.translation_view)
-        layout.addLayout(views)
+        splitter.addWidget(views_container)
+
+        # The controls stay attached to the list so they are not squashed when
+        # the views are given most of the height.
+        bottom_container = QWidget()
+        bottom = QVBoxLayout(bottom_container)
+        bottom.setContentsMargins(0, 0, 0, 0)
 
         controls = QHBoxLayout()
         self.add_button = QPushButton("Add anchor here")
@@ -71,11 +86,21 @@ class AnchorEditor(QWidget):
         controls.addWidget(self.add_button)
         controls.addWidget(self.remove_button)
         controls.addStretch()
-        layout.addLayout(controls)
+        bottom.addLayout(controls)
 
         self.anchor_list = QListWidget()
         self.anchor_list.itemClicked.connect(self._on_anchor_clicked)
-        layout.addWidget(self.anchor_list)
+        bottom.addWidget(self.anchor_list)
+        splitter.addWidget(bottom_container)
+
+        # Give the book views most of the height by default; both stay resizable.
+        # setSizes seeds the initial split (book-heavy); the stretch factors keep
+        # that ratio as the window resizes.
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([640, 160])
+
+        layout.addWidget(splitter)
 
     def _on_original_clicked(self, block_id: str) -> None:
         self._selected_original = block_id
