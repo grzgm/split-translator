@@ -12,6 +12,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
 
+import pymupdf
+
 BLOCK_TAGS = frozenset(
     {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"}
 )
@@ -124,12 +126,27 @@ def _load_epub(path: str) -> tuple[str, str]:
     return "".join(bodies), title
 
 
+def _load_pdf(path: str) -> tuple[str, str]:
+    doc = pymupdf.open(path)
+    try:
+        bodies = []
+        for page in doc:
+            xhtml = page.get_text("xhtml")
+            bodies.append(_extract_body(xhtml))
+        title = doc.metadata.get("title") or Path(path).stem
+    finally:
+        doc.close()
+    return "".join(bodies), title
+
+
 def load_book(path: str) -> BookDocument:
     """Load a book file to normalised HTML with block ids. Raises ValueError on
     an unsupported or unreadable file."""
     suffix = Path(path).suffix.lower()
     if suffix == ".epub":
         body, title = _load_epub(path)
+    elif suffix == ".pdf":
+        body, title = _load_pdf(path)
     else:
         raise ValueError(f"Unsupported book format: {path}")
     html, ids = assign_block_ids(body)

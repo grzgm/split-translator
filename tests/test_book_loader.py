@@ -92,3 +92,26 @@ class EpubLoadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             doc = load_book(make_epub(d))
             self.assertEqual(doc.title, "Test Book")
+
+
+class PdfLoadTests(unittest.TestCase):
+    def test_loads_pdf_text_as_html_blocks(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_pdf(d))
+            self.assertIn("Chapter One", doc.html)
+            self.assertIn("The first paragraph.", doc.html)
+            self.assertTrue(doc.block_ids)  # at least one block id assigned
+
+    def test_ids_are_stable_across_two_loads(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = make_pdf(d)
+            first = load_book(path)
+            second = load_book(path)
+            self.assertEqual(first.block_ids, second.block_ids)
+            self.assertEqual(first.html, second.html)
+
+
+class UnsupportedFormatTests(unittest.TestCase):
+    def test_unknown_extension_raises_valueerror(self):
+        with self.assertRaises(ValueError):
+            load_book("/tmp/whatever.txt")
