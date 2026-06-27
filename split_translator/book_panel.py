@@ -209,3 +209,10 @@ class BookPanel(QFrame):
         # native highlight does not linger.
         self.original_view.find("", True, lambda _c: None)
         self.translation_view.find("", True, lambda _c: None)
+        # Close the anchor editor if open so its pages are released before the
+        # shared web profile is torn down (avoids the "profile released but page
+        # not deleted" warning).
+        if self.anchor_editor is not None:
+            self.anchor_editor.close()
+        # Await any in-flight anchor write so anchors are not lost on quit.
+        self.anchor_store.shutdown()

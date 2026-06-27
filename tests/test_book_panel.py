@@ -88,6 +88,26 @@ class BookPanelSyncWiringTests(unittest.TestCase):
             panel._sync_from(panel.original_view, "b0", 0.0)  # must not raise
 
 
+class BookPanelCloseTests(unittest.TestCase):
+    def test_close_doc_shuts_down_anchor_store(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            real_shutdown = panel.anchor_store.shutdown
+            shutdown_called = []
+
+            def tracking_shutdown():
+                shutdown_called.append(True)
+                real_shutdown()
+
+            panel.anchor_store.shutdown = tracking_shutdown
+            panel.close_doc()
+            self.assertTrue(
+                shutdown_called,
+                "close_doc() must call anchor_store.shutdown() to await in-flight writes",
+            )
+
+
 class BookPanelEditorTests(unittest.TestCase):
     def test_open_anchor_editor_is_callable_and_reseeds_sync(self):
         with tempfile.TemporaryDirectory() as d:
