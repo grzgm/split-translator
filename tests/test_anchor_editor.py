@@ -85,3 +85,23 @@ class AnchorClickBridgeTests(unittest.TestCase):
         bridge.block_clicked.connect(received.append)
         bridge.clicked("b7")
         self.assertEqual(received, ["b7"])
+
+
+from split_translator.anchor_book_view import AnchorBookView
+
+
+class AnchorBookViewTests(unittest.TestCase):
+    def test_constructs_and_exposes_highlight_methods(self):
+        view = AnchorBookView(_doc(), QWebEngineProfile())
+        self.assertTrue(hasattr(view, "block_clicked"))
+        self.assertTrue(callable(view.set_selected))
+        self.assertTrue(callable(view.set_anchored))
+        self.assertTrue(callable(view.set_jump))
+
+    def test_block_clicked_signal_relays_bridge(self):
+        view = AnchorBookView(_doc(), QWebEngineProfile())
+        received = []
+        view.block_clicked.connect(received.append)
+        # The bridge is the source of truth; emitting from it relays to the view.
+        view._bridge.clicked("b3")
+        self.assertEqual(received, ["b3"])
