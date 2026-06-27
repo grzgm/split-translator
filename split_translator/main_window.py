@@ -20,7 +20,7 @@ from .dictionary_panel import DictionaryPanel
 from .flashcard_panel import FlashcardPanel
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
-from .pdf_panel import PDFPanel
+from .book_panel import BookPanel
 
 
 class TranslationTool(QMainWindow):
@@ -61,10 +61,10 @@ class TranslationTool(QMainWindow):
         content_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.dictionary_panel = DictionaryPanel(self.profile)
-        self.pdf_panel = PDFPanel(self.config)
+        self.book_panel = BookPanel(self.config, self.profile)
 
         content_splitter.addWidget(self.dictionary_panel)
-        content_splitter.addWidget(self.pdf_panel)
+        content_splitter.addWidget(self.book_panel)
         content_splitter.setSizes([1000, 500])
 
         main_layout.addWidget(content_splitter)
@@ -130,7 +130,7 @@ class TranslationTool(QMainWindow):
 
     def on_word_searched(self, word: str):
         self.history_panel.add_to_history(word)
-        self.pdf_panel.search(word)
+        self.book_panel.search(word)
 
     def show_previous_search_notice(self, word: str, formatted_date: str):
         self.statusBar().setStyleSheet(
@@ -153,7 +153,7 @@ class TranslationTool(QMainWindow):
         shortcut_ctrl_f.activated.connect(self.handle_search_and_pdf_navigation)
 
         shortcut_shift_f3 = QShortcut(QKeySequence("Shift+F3"), self)
-        shortcut_shift_f3.activated.connect(self.pdf_panel.go_to_previous)
+        shortcut_shift_f3.activated.connect(self.book_panel.go_to_previous)
 
         for i in range(1, 10):
             shortcut = QShortcut(QKeySequence(f"Alt+{i}"), self)
@@ -181,7 +181,7 @@ class TranslationTool(QMainWindow):
 
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():
-            self.pdf_panel.go_to_next()
+            self.book_panel.go_to_next()
         else:
             self.focus_search()
 
@@ -294,5 +294,5 @@ class TranslationTool(QMainWindow):
     def closeEvent(self, event):
         self.history_panel.shutdown()
         self.flashcard_store.shutdown()
-        self.pdf_panel.close_doc()
+        self.book_panel.close_doc()
         super().closeEvent(event)
