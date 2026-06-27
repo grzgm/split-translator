@@ -1,7 +1,7 @@
 """Loads a book file (PDF or EPUB) into normalised HTML with stable block ids.
 
 Pure logic, no Qt. EPUB is unzipped and its spine HTML concatenated; PDF is
-converted with pymupdf. A single pass then assigns id="b0", "b1", ... to each
+converted with pymupdf. A single pass then assigns data-stid="b0", "b1", ... to each
 block-level element in document order, so saved anchors stay valid across
 sessions (same file in, same ids out)."""
 
