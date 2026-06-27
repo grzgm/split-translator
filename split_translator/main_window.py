@@ -196,7 +196,7 @@ class TranslationTool(QMainWindow):
         for i in range(1, 10):
             shortcut = QShortcut(QKeySequence(f"Alt+{i}"), self)
             shortcut.activated.connect(
-                lambda num=i: self.dictionary_panel.play_cambridge_audio(num)
+                lambda num=i: self.play_audio_shortcut(num)
             )
 
         # Ctrl+Shift+F (Flashcard) and Ctrl+Shift+A (Sync Editor) live on their
@@ -224,6 +224,15 @@ class TranslationTool(QMainWindow):
             self.book_panel.go_to_next()
         else:
             self.focus_search()
+
+    def play_audio_shortcut(self, num: int):
+        # While the flashcard editor is focused, Alt+1 / Alt+2 play that card's
+        # UK / US pronunciation; every other case (and Alt+3..9) plays the
+        # dictionary's Cambridge audio as before.
+        if num in (1, 2) and self.flashcard_panel.has_focus():
+            self.flashcard_panel.play_audio("uk" if num == 1 else "us")
+            return
+        self.dictionary_panel.play_cambridge_audio(num)
 
     def focus_search(self):
         self.dictionary_panel.focus_search()

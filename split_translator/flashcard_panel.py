@@ -588,6 +588,15 @@ class FlashcardPanel(QWidget):
             QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier
         )
 
+    def has_focus(self) -> bool:
+        """True when keyboard focus is on this panel or one of its descendants.
+        Used by the main window to route Alt+1 / Alt+2 to the card pronunciations
+        when the editor is in use rather than to the dictionary audio."""
+        focused = QApplication.focusWidget()
+        return focused is not None and (
+            focused is self or self.isAncestorOf(focused)
+        )
+
     def new_card(self, word: str, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
         to discard unsaved content. ``force`` skips the confirmation. The headword

@@ -45,6 +45,30 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(row.english_input.text(), long_text)
         self.assertEqual(row.english_input.cursorPosition(), 0)
 
+    def test_has_focus_true_when_a_child_has_focus(self):
+        panel, _ = self._panel()
+        # The panel must be shown for a child to actually take keyboard focus.
+        panel.show()
+        panel.headword_input.setFocus()
+        QApplication.processEvents()
+        self.assertTrue(panel.has_focus())
+        panel.hide()
+
+    def test_has_focus_false_when_nothing_focused(self):
+        panel, _ = self._panel()
+        panel.clearFocus()
+        QApplication.processEvents()
+        self.assertFalse(panel.has_focus())
+
+    def test_play_audio_is_noop_without_url(self):
+        # No pronunciation grabbed yet: play_audio must not raise and must not
+        # build a player. This is what makes Alt+1 / Alt+2 safe on an empty card.
+        panel, _ = self._panel()
+        self.assertIsNone(panel.player)
+        panel.play_audio("uk")
+        panel.play_audio("us")
+        self.assertIsNone(panel.player)
+
     def test_add_sense_makes_new_row_active(self):
         panel, _ = self._panel()
         panel.add_sense()
