@@ -57,7 +57,7 @@ class TranslationTool(QMainWindow):
         history_container.setMaximumWidth(200)
         main_layout.addWidget(history_container)
 
-        # Content splitter: dictionary panel + PDF panel.
+        # Content splitter: dictionary panel + book panel.
         content_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.dictionary_panel = DictionaryPanel(self.profile)
@@ -83,7 +83,7 @@ class TranslationTool(QMainWindow):
         self.flashcard_dock.hide()
 
     def connect_signals(self):
-        # A dictionary lookup records history and drives the PDF search.
+        # A dictionary lookup records history and drives the book search.
         self.dictionary_panel.word_searched.connect(self.on_word_searched)
 
         # Selecting a word from history runs a fresh lookup.
