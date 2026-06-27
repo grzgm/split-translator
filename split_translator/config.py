@@ -37,10 +37,13 @@ def load_config(config_path: Path = CONFIG_PATH) -> Config:
         sys.exit(f"Could not read config file {config_path}: {exc}")
 
     try:
+        # page_anchors is legacy and optional: content anchors now live in the
+        # per-book-pair anchor store, so a config without it loads fine.
+        page_anchors = [tuple(anchor) for anchor in raw.get("page_anchors", [])]
         return Config(
             pdf_original_path=raw["pdf_original_path"],
             pdf_translation_path=raw["pdf_translation_path"],
-            page_anchors=[tuple(anchor) for anchor in raw["page_anchors"]],
+            page_anchors=page_anchors,
         )
     except (KeyError, TypeError) as exc:
         sys.exit(f"Config file {config_path} is missing required keys: {exc}")
