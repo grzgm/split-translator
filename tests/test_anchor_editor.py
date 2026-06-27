@@ -5,6 +5,7 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 
 from split_translator.book_loader import BookDocument
 from split_translator.book_view import BookView
+from split_translator.anchor_click_bridge import AnchorClickBridge
 
 app = QApplication.instance() or QApplication([])
 
@@ -75,3 +76,12 @@ class AnchorEditorTests(unittest.TestCase):
         editor.anchor_list.setCurrentRow(0)
         editor._remove_selected()
         self.assertEqual(store.anchors, [])
+
+
+class AnchorClickBridgeTests(unittest.TestCase):
+    def test_clicked_emits_block_clicked(self):
+        bridge = AnchorClickBridge()
+        received = []
+        bridge.block_clicked.connect(received.append)
+        bridge.clicked("b7")
+        self.assertEqual(received, ["b7"])
