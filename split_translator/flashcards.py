@@ -147,6 +147,17 @@ class FlashcardStore:
         self.cards.insert(0, card)
         self.save()
 
+    def update_card(self, card: Card) -> bool:
+        """Replace the stored card sharing this card's id (used when a saved card
+        is loaded into the editor, edited and saved again). Returns True if a
+        match was found and replaced, False otherwise."""
+        for i, existing in enumerate(self.cards):
+            if existing.id == card.id:
+                self.cards[i] = card
+                self.save()
+                return True
+        return False
+
     def save(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
             self.save_worker.wait()

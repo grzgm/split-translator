@@ -4,6 +4,7 @@ from pathlib import Path
 
 from split_translator.flashcards import (
     Card,
+    FlashcardStore,
     Sense,
     load_cards,
     serialise_cards,
@@ -95,6 +96,39 @@ class StorageTests(unittest.TestCase):
 
     def test_serialise_has_version(self):
         self.assertEqual(serialise_cards([])["version"], 1)
+
+
+class StoreUpdateTests(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.TemporaryDirectory()
+        store = FlashcardStore(Path(tmp.name) / "cards.json")
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(store.shutdown)
+        return store
+
+    def test_update_card_replaces_in_place(self):
+        store = self._store()
+        store.cards = [
+            Card(headword="address", id="a", senses=[Sense(polish="adres")]),
+            Card(headword="receive", id="b"),
+        ]
+        edited = Card(headword="address", id="a", senses=[Sense(polish="adres2")])
+        self.assertTrue(store.update_card(edited))
+        self.assertEqual(len(store.cards), 2)  # no duplicate added
+        self.assertEqual(store.cards[0].senses[0].polish, "adres2")
+
+    def test_update_card_keeps_position(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+        store.update_card(Card(headword="b-edited", id="b"))
+        # The edited card stays where it was, not moved to the top.
+        self.assertEqual([c.headword for c in store.cards], ["a", "b-edited"])
+
+    def test_update_card_returns_false_when_id_missing(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a")]
+        self.assertFalse(store.update_card(Card(headword="x", id="zzz")))
+        self.assertEqual(len(store.cards), 1)
 
 
 if __name__ == "__main__":

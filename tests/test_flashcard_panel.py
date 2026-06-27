@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLineEdit
 
 from split_translator.flashcard_panel import FlashcardPanel
-from split_translator.flashcards import FlashcardStore
+from split_translator.flashcards import Card, FlashcardStore, Sense
 
 app = QApplication.instance() or QApplication([])
 
@@ -302,6 +302,108 @@ class FlashcardPanelTests(unittest.TestCase):
         new_row = panel.active_row
         self.assertTrue(self._marked(new_row.polish_input))
         self.assertTrue(self._marked(new_row.english_input))
+
+    # --- saved-cards list -----------------------------------------------
+
+    def _seed(self, panel, store):
+        store.cards = [
+            Card(
+                headword="address",
+                ipa_uk="/adres/",
+                id="id-addr",
+                created_at="2026-01-01T00:00:00",
+                senses=[
+                    Sense(pos="n", polish="adres", english="a place",
+                          examples=["my address"])
+                ],
+            ),
+            Card(headword="receive", id="id-recv", starred=True,
+                 created_at="2026-01-02T00:00:00"),
+        ]
+        panel._refresh_saved_list()
+
+    def _labels(self, panel):
+        return [
+            panel.saved_list.item(i).text()
+            for i in range(panel.saved_list.count())
+        ]
+
+    def test_saved_list_lists_cards_with_star_marker(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        self.assertEqual(self._labels(panel), ["address", "Starred: receive"])
+
+    def test_saved_list_starts_from_stored_cards(self):
+        # The list is built at construction from whatever the store already holds.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "cards.json")
+        store.cards = [Card(headword="preexisting", id="p")]
+        panel = FlashcardPanel(store)
+        self.assertEqual(self._labels(panel), ["preexisting"])
+
+    def test_clicking_saved_card_loads_it(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertEqual(panel.headword_input.text(), "address")
+        self.assertEqual(panel.ipa_uk_input.text(), "/adres/")
+        self.assertEqual(panel._loaded_card_id, "id-addr")
+        row = panel.active_row
+        self.assertEqual(row.pos_combo.currentText(), "n")
+        self.assertEqual(row.polish_input.text(), "adres")
+        self.assertEqual(row.english_input.text(), "a place")
+        self.assertEqual(row.examples(), ["my address"])
+
+    def test_loading_starred_card_reflects_star(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel._on_saved_clicked(panel.saved_list.item(1))  # receive (starred)
+        self.assertTrue(panel.is_starred())
+
+    def test_editing_loaded_card_saves_in_place(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.active_row.polish_input.setText("adres pocztowy")
+        panel.save_card()
+        store.shutdown()
+        self.assertEqual(len(store.cards), 2)  # updated, not duplicated
+        addr = next(c for c in store.cards if c.id == "id-addr")
+        self.assertEqual(addr.senses[0].polish, "adres pocztowy")
+        self.assertEqual(addr.created_at, "2026-01-01T00:00:00")  # preserved
+        # Editor reset and back to creating a fresh card.
+        self.assertEqual(panel.headword_input.text(), "")
+        self.assertIsNone(panel._loaded_card_id)
+
+    def test_save_after_new_card_adds_not_updates(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel._on_saved_clicked(panel.saved_list.item(0))  # load address
+        panel.new_card("fresh", force=True)  # forget the loaded id
+        self.assertIsNone(panel._loaded_card_id)
+        panel.headword_input.setText("fresh")
+        panel.save_card()
+        store.shutdown()
+        self.assertEqual(len(store.cards), 3)  # a brand new card
+        self.assertEqual(store.cards[0].headword, "fresh")
+
+    def test_saved_list_refreshes_after_save(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel.headword_input.setText("brandnew")
+        panel.save_card()
+        self.assertIn("brandnew", self._labels(panel))
+
+    def test_load_declined_keeps_current_editor(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel.headword_input.setText("inprogress")
+        panel.ctrl_held = lambda: False
+        panel._confirm_discard = lambda: False  # decline the discard
+        self.assertFalse(panel.load_card(store.cards[0]))
+        self.assertEqual(panel.headword_input.text(), "inprogress")
+        self.assertIsNone(panel._loaded_card_id)
 
 
 if __name__ == "__main__":

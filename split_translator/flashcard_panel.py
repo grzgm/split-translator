@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QStyle,
@@ -212,10 +214,16 @@ class FlashcardPanel(QWidget):
         self.active_row = None
         self._audio_uk_url = None
         self._audio_us_url = None
+        # When a saved card is loaded for editing, its id and original creation
+        # time are remembered so that Save updates it in place instead of adding
+        # a duplicate. Cleared whenever the editor is reset to a blank card.
+        self._loaded_card_id = None
+        self._loaded_created_at = None
         self.player = None
         self.audio_output = None
         self.init_ui()
         self.add_sense()
+        self._refresh_saved_list()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -335,7 +343,14 @@ class FlashcardPanel(QWidget):
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
 
-        layout.addStretch()
+        # Saved cards: a list of every stored card (newest first). Clicking a row
+        # loads that card into the editor so it can be reviewed or edited.
+        layout.addWidget(QLabel("Saved cards"))
+        self.saved_list = QListWidget()
+        self.saved_list.setToolTip("Click a saved card to load it for editing")
+        self.saved_list.itemClicked.connect(self._on_saved_clicked)
+        layout.addWidget(self.saved_list, stretch=1)
+
         self._update_play_buttons()
 
     # --- sense rows -----------------------------------------------------
@@ -518,7 +533,9 @@ class FlashcardPanel(QWidget):
         senses = [row.to_sense() for row in self._rows()]
         senses = [sense for sense in senses if not sense.is_empty]
         now = datetime.now().isoformat(timespec="seconds")
-        return Card(
+        # Editing a loaded card keeps its id and original creation time so Save
+        # updates that card in place; a fresh card gets a new id and timestamps.
+        card = Card(
             headword=headword,
             spelling_uk=self.spelling_uk_input.text().strip() or None,
             spelling_us=self.spelling_us_input.text().strip() or None,
@@ -529,18 +546,27 @@ class FlashcardPanel(QWidget):
             audio_us_url=self._audio_us_url,
             senses=senses,
             starred=self.is_starred(),
-            created_at=now,
+            created_at=self._loaded_created_at or now,
             updated_at=now,
         )
+        if self._loaded_card_id:
+            card.id = self._loaded_card_id
+        return card
 
     def save_card(self):
         card = self.build_card()
         if card is None:
             self.save_rejected.emit("Cannot save flashcard: headword is empty")
             return
-        self.store.add_card(card)
+        # Update the loaded card in place when editing; otherwise add a new one.
+        # If the loaded card has since gone, fall back to adding it.
+        if self._loaded_card_id and self.store.update_card(card):
+            pass
+        else:
+            self.store.add_card(card)
         headword = card.headword
         self._reset_editor()
+        self._refresh_saved_list()
         self.card_saved.emit(headword)
 
     @staticmethod
@@ -590,6 +616,76 @@ class FlashcardPanel(QWidget):
             row.deleteLater()
         self.active_row = None
         self.add_sense()
+        # Back to building a fresh card: forget any loaded card and drop the
+        # selection highlight on the saved-cards list.
+        self._loaded_card_id = None
+        self._loaded_created_at = None
+        self.saved_list.clearSelection()
+
+    # --- saved cards list -----------------------------------------------
+
+    def _refresh_saved_list(self):
+        """Rebuild the saved-cards list from the store (newest first). Each row
+        shows the headword, marked with a leading star for starred cards, and
+        carries its card id so a click can load it."""
+        self.saved_list.clear()
+        for card in self.store.cards:
+            label = card.headword
+            if card.starred:
+                label = f"{self._STAR_SET}: {label}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, card.id)
+            self.saved_list.addItem(item)
+
+    def _on_saved_clicked(self, item):
+        card_id = item.data(Qt.ItemDataRole.UserRole)
+        card = next((c for c in self.store.cards if c.id == card_id), None)
+        if card is not None:
+            self.load_card(card)
+
+    def load_card(self, card: Card) -> bool:
+        """Load a saved card into the editor for review or editing. Asks to
+        discard unsaved content first (unless Ctrl is held); a later Save updates
+        this card in place. Returns False if the user declined to discard."""
+        if (
+            not self.ctrl_held()
+            and self.has_content()
+            and not self._confirm_discard()
+        ):
+            return False
+        self._reset_editor()  # clears fields and any previous loaded id
+        self.headword_input.setText(card.headword)
+        self.spelling_uk_input.setText(card.spelling_uk or "")
+        self.spelling_us_input.setText(card.spelling_us or "")
+        self.ipa_uk_input.setText(card.ipa_uk or "")
+        self.ipa_us_input.setText(card.ipa_us or "")
+        self.own_notation_input.setText(card.own_notation or "")
+        self._audio_uk_url = card.audio_uk_url
+        self._audio_us_url = card.audio_us_url
+        self._update_play_buttons()
+        self.set_starred(card.starred)
+
+        # Rebuild the sense rows from the card (drop the blank starter row first).
+        for row in self._rows():
+            self.senses_container.removeWidget(row)
+            row.deleteLater()
+        self.active_row = None
+        if card.senses:
+            for sense in card.senses:
+                self.add_sense()
+                row = self.active_row
+                row.pos_combo.setCurrentText(sense.pos)
+                row.polish_input.setText(sense.polish)
+                row.english_input.setText(sense.english)
+                for example in sense.examples:
+                    row.add_example(example)
+            self.set_active_index(1)
+        else:
+            self.add_sense()
+
+        self._loaded_card_id = card.id
+        self._loaded_created_at = card.created_at or None
+        return True
 
     def _confirm_discard(self) -> bool:
         reply = QMessageBox.question(
