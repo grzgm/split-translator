@@ -80,6 +80,9 @@ class TranslationTool(QMainWindow):
         self.addDockWidget(
             Qt.DockWidgetArea.RightDockWidgetArea, self.flashcard_dock
         )
+        # Open detached: float it as a separate window from the start. It stays
+        # re-dockable, so dragging it back into the main window keeps it there.
+        self.flashcard_dock.setFloating(True)
         self.flashcard_dock.hide()
 
     def connect_signals(self):
