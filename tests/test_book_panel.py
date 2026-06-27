@@ -28,3 +28,40 @@ class BookViewConstructionTests(unittest.TestCase):
         self.assertTrue(callable(view.scroll_to))
         self.assertTrue(callable(view.request_scroll_state))
         self.assertTrue(callable(view.find))
+
+
+import tempfile
+
+from split_translator.config import Config
+from split_translator.book_panel import BookPanel
+from tests.fixtures.make_fixtures import make_epub
+
+
+def _config(d):
+    epub = make_epub(d)
+    return Config(
+        pdf_original_path=epub,
+        pdf_translation_path=epub,
+        page_anchors=[],
+    )
+
+
+class BookPanelContractTests(unittest.TestCase):
+    def test_constructs_and_exposes_the_main_window_contract(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            for name in ("search", "go_to_next", "go_to_previous", "close_doc"):
+                self.assertTrue(callable(getattr(panel, name)), name)
+
+    def test_sync_checkbox_defaults_on(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            self.assertTrue(panel.sync_checkbox.isChecked())
+
+    def test_search_with_blank_term_is_a_noop(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            panel.search("   ")  # must not raise
