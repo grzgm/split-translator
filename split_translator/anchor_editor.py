@@ -189,7 +189,18 @@ class AnchorEditor(QWidget):
 
     def refresh(self) -> None:
         self.anchor_list.clear()
-        for original_id, translation_id in self.anchor_store.anchors:
+        # Show the anchors lowest-first by the original block's position in the
+        # document. Sorting by block index (not the id string) keeps "b100" after
+        # "b7". Anchors whose id is no longer in the document sort to the end.
+        # This orders the display only; the stored order is untouched.
+        block_index = {
+            bid: i for i, bid in enumerate(self.original_document.block_ids)
+        }
+        ordered = sorted(
+            self.anchor_store.anchors,
+            key=lambda pair: block_index.get(pair[0], len(block_index)),
+        )
+        for original_id, translation_id in ordered:
             item = QListWidgetItem(f"{original_id}  =  {translation_id}")
             item.setData(_ORIGINAL_ID_ROLE, original_id)
             item.setData(_TRANSLATION_ID_ROLE, translation_id)

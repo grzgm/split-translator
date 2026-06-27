@@ -176,6 +176,33 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         editor._remove_selected()
         self.assertEqual(store.anchors, [])
 
+    def test_list_is_ordered_lowest_first_by_block_index(self):
+        # Build an editor over a document large enough to expose the b7 vs b100
+        # case (lexical sort would wrongly put b100 before b7).
+        tmp = tempfile.TemporaryDirectory()
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        ids = [f"b{i}" for i in range(120)]
+        html = "".join(f"<p data-stid='{x}'>p</p>" for x in ids)
+        doc = BookDocument(html=html, block_ids=ids, title="T")
+        book_sync = BookSync(len(ids), len(ids))
+        editor = AnchorEditor(
+            doc, doc, store, book_sync, QWebEngineProfile(), lambda: None
+        )
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(store.shutdown)
+
+        store.anchors = [("b100", "b100"), ("b7", "b7"), ("b0", "b0")]
+        editor.refresh()
+        shown = [
+            editor.anchor_list.item(i).data(256)
+            for i in range(editor.anchor_list.count())
+        ]
+        self.assertEqual(shown, ["b0", "b7", "b100"])
+        # The stored order is left untouched (display-only sort).
+        self.assertEqual(
+            [p[0] for p in store.anchors], ["b100", "b7", "b0"]
+        )
+
     def test_sync_defaults_on(self):
         editor, _ = self._editor()
         self.assertTrue(editor.sync_enabled)
