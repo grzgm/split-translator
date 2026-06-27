@@ -2,14 +2,16 @@
 
 from pathlib import Path
 
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +39,7 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
 
         self.init_ui()
+        self.setup_menu()
         self.setup_shortcuts()
         self.connect_signals()
 
@@ -84,6 +87,38 @@ class TranslationTool(QMainWindow):
         # re-dockable, so dragging it back into the main window keeps it there.
         self.flashcard_dock.setFloating(True)
         self.flashcard_dock.hide()
+
+    def setup_menu(self):
+        # A View menu reachable without keyboard shortcuts. PySide6's bundled Qt
+        # ships no KDE platform-theme plugin, so a top menu bar cannot export to
+        # the Plasma Global Menu and would just take a strip at the top. Instead
+        # the menu is a single button living in the status bar, so it shares that
+        # bottom row and adds no extra strip.
+        #
+        # The actions also own their Ctrl+Shift+F / Ctrl+Shift+A shortcuts (the
+        # matching QShortcuts are removed from setup_shortcuts to avoid an
+        # ambiguous binding), so the sequences keep working and show in the menu.
+        flashcard_action = QAction("Flashcard Editor", self)
+        flashcard_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        flashcard_action.triggered.connect(self.toggle_flashcard)
+
+        anchor_action = QAction("Sync Editor", self)
+        anchor_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        anchor_action.triggered.connect(self.book_panel.open_anchor_editor)
+
+        view_menu = QMenu("View", self)
+        view_menu.addAction(flashcard_action)
+        view_menu.addAction(anchor_action)
+
+        view_button = QToolButton()
+        view_button.setText("View")
+        view_button.setMenu(view_menu)
+        view_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+
+        # A permanent widget sits on the right of the status bar and is never
+        # hidden by showMessage. (A normal addWidget would be covered the moment
+        # a status notice is shown, which is why the button kept disappearing.)
+        self.statusBar().addPermanentWidget(view_button)
 
     def connect_signals(self):
         # A dictionary lookup records history and drives the book search.
@@ -164,8 +199,10 @@ class TranslationTool(QMainWindow):
                 lambda num=i: self.dictionary_panel.play_cambridge_audio(num)
             )
 
-        shortcut_toggle_card = QShortcut(QKeySequence("Ctrl+Shift+F"), self)
-        shortcut_toggle_card.activated.connect(self.toggle_flashcard)
+        # Ctrl+Shift+F (Flashcard) and Ctrl+Shift+A (Sync Editor) live on their
+        # View-menu actions in setup_menu, which provide the application-wide
+        # shortcut. Defining a QShortcut here too would make the sequence
+        # ambiguous and neither would fire.
 
         shortcut_new_card = QShortcut(QKeySequence("Ctrl+N"), self)
         shortcut_new_card.activated.connect(self.new_flashcard)
@@ -181,11 +218,6 @@ class TranslationTool(QMainWindow):
 
         shortcut_to_example = QShortcut(QKeySequence("Alt+X"), self)
         shortcut_to_example.activated.connect(self.capture_to_example)
-
-        shortcut_anchor_editor = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
-        shortcut_anchor_editor.activated.connect(
-            self.book_panel.open_anchor_editor
-        )
 
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():
