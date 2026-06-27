@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
-    QPushButton,
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
@@ -95,10 +94,6 @@ class HistoryPanel(QWidget):
             self.show_history_context_menu
         )
         layout.addWidget(self.history_list)
-
-        clear_button = QPushButton("Clear History")
-        clear_button.clicked.connect(self.clear_history)
-        layout.addWidget(clear_button)
 
     def load_history(self):
         if self.history_file.exists():
@@ -185,11 +180,6 @@ class HistoryPanel(QWidget):
     def on_history_click(self, item):
         word = item.data(Qt.ItemDataRole.UserRole)["word"]
         self.word_selected.emit(word)
-
-    def clear_history(self):
-        self.history = []
-        self.save_history()
-        self.update_history_list()
 
     def shutdown(self):
         """Wait for any in-flight save so the worker thread is not destroyed mid-write."""
