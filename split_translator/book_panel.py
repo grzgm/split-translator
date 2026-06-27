@@ -1,8 +1,6 @@
 """Tabbed book panel showing original and translation editions in web views, with
 native full-text search and content-anchor scroll sync."""
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
