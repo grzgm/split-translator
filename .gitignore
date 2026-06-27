@@ -182,6 +182,7 @@ adhoc*
 # Custom
 .translation_tool_history.json
 .translation_tool_flashcards.json
+.translation_tool_anchors_*.json
 todo.md
 
 # Config
