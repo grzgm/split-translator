@@ -5,8 +5,12 @@ converted with pymupdf. A single pass then assigns data-stid="b0", "b1", ... to 
 block-level element in document order, so saved anchors stay valid across
 sessions (same file in, same ids out)."""
 
+import re
+import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
+from xml.etree import ElementTree
 
 BLOCK_TAGS = frozenset(
     {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"}
@@ -78,3 +82,55 @@ def assign_block_ids(body_html: str) -> tuple[str, list[str]]:
     assigner.feed(body_html)
     assigner.close()
     return "".join(assigner.parts), assigner.ids
+
+
+_CONTAINER_PATH = "META-INF/container.xml"
+_OPF_NS = {"opf": "http://www.idpf.org/2007/opf"}
+_DC_NS = {"dc": "http://purl.org/dc/elements/1.1/"}
+_CONTAINER_NS = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+
+
+def _extract_body(xhtml: str) -> str:
+    """Return the inner HTML of the <body> element, or the whole string if none."""
+    match = re.search(r"<body[^>]*>(.*)</body>", xhtml, re.IGNORECASE | re.DOTALL)
+    return match.group(1) if match else xhtml
+
+
+def _load_epub(path: str) -> tuple[str, str]:
+    with zipfile.ZipFile(path) as z:
+        container = ElementTree.fromstring(z.read(_CONTAINER_PATH))
+        rootfile = container.find(".//c:rootfile", _CONTAINER_NS)
+        opf_path = rootfile.get("full-path")
+        opf_dir = str(Path(opf_path).parent)
+
+        opf = ElementTree.fromstring(z.read(opf_path))
+        title_el = opf.find(".//dc:title", _DC_NS)
+        title = title_el.text if title_el is not None and title_el.text else Path(path).stem
+
+        # Map manifest id -> href.
+        manifest = {}
+        for item in opf.findall(".//opf:manifest/opf:item", _OPF_NS):
+            manifest[item.get("id")] = item.get("href")
+
+        bodies = []
+        for itemref in opf.findall(".//opf:spine/opf:itemref", _OPF_NS):
+            href = manifest.get(itemref.get("idref"))
+            if not href:
+                continue
+            full = href if not opf_dir or opf_dir == "." else f"{opf_dir}/{href}"
+            xhtml = z.read(full).decode("utf-8", errors="replace")
+            bodies.append(_extract_body(xhtml))
+
+    return "".join(bodies), title
+
+
+def load_book(path: str) -> BookDocument:
+    """Load a book file to normalised HTML with block ids. Raises ValueError on
+    an unsupported or unreadable file."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".epub":
+        body, title = _load_epub(path)
+    else:
+        raise ValueError(f"Unsupported book format: {path}")
+    html, ids = assign_block_ids(body)
+    return BookDocument(html=html, block_ids=ids, title=title)

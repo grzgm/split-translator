@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from split_translator.book_loader import BookDocument, assign_block_ids
+from split_translator.book_loader import BookDocument, assign_block_ids, load_book
 from tests.fixtures.make_fixtures import make_epub, make_pdf
 
 
@@ -68,3 +68,27 @@ class FixtureBuilderTests(unittest.TestCase):
             doc = pymupdf.open(path)
             self.assertEqual(doc.page_count, 1)
             doc.close()
+
+
+class EpubLoadTests(unittest.TestCase):
+    def test_loads_both_chapters_in_spine_order(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = make_epub(d)
+            doc = load_book(path)
+            # Both chapter bodies are present, chapter one before chapter two.
+            self.assertIn("Chapter One", doc.html)
+            self.assertIn("Chapter Two", doc.html)
+            self.assertLess(
+                doc.html.index("Chapter One"), doc.html.index("Chapter Two")
+            )
+
+    def test_blocks_get_sequential_ids(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub(d))
+            # 2 h1 + 2 p = 4 block ids, in order.
+            self.assertEqual(doc.block_ids, ["b0", "b1", "b2", "b3"])
+
+    def test_title_comes_from_opf(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub(d))
+            self.assertEqual(doc.title, "Test Book")
