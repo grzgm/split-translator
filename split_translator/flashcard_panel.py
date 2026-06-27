@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -252,29 +253,41 @@ class FlashcardPanel(QWidget):
         spelling_row.addWidget(self.spelling_us_input)
         form.addRow("Spelling", spelling_row)
 
+        # IPA row: each IPA field is followed by a compact speaker button that
+        # plays that region's Cambridge pronunciation. A built-in style icon is
+        # used (no theme dependency and no non-standard glyph in code).
+        speaker_icon = self.style().standardIcon(
+            QStyle.StandardPixmap.SP_MediaVolume
+        )
+
         ipa_row = QHBoxLayout()
         self.ipa_uk_input = QLineEdit()
         self.ipa_uk_input.setPlaceholderText("IPA UK")
         self.ipa_uk_input.setToolTip(
             "New from word: filled from the Cambridge page"
         )
+        self.play_uk_button = QPushButton()
+        self.play_uk_button.setIcon(speaker_icon)
+        self.play_uk_button.setMaximumWidth(32)
+        self.play_uk_button.setToolTip("Play UK pronunciation")
+        self.play_uk_button.clicked.connect(lambda: self.play_audio("uk"))
+
         self.ipa_us_input = QLineEdit()
         self.ipa_us_input.setPlaceholderText("IPA US")
         self.ipa_us_input.setToolTip(
             "New from word: filled from the Cambridge page"
         )
-        ipa_row.addWidget(self.ipa_uk_input)
-        ipa_row.addWidget(self.ipa_us_input)
-        form.addRow("IPA", ipa_row)
-
-        audio_row = QHBoxLayout()
-        self.play_uk_button = QPushButton("play UK")
-        self.play_uk_button.clicked.connect(lambda: self.play_audio("uk"))
-        self.play_us_button = QPushButton("play US")
+        self.play_us_button = QPushButton()
+        self.play_us_button.setIcon(speaker_icon)
+        self.play_us_button.setMaximumWidth(32)
+        self.play_us_button.setToolTip("Play US pronunciation")
         self.play_us_button.clicked.connect(lambda: self.play_audio("us"))
-        audio_row.addWidget(self.play_uk_button)
-        audio_row.addWidget(self.play_us_button)
-        form.addRow("Audio", audio_row)
+
+        ipa_row.addWidget(self.ipa_uk_input)
+        ipa_row.addWidget(self.play_uk_button)
+        ipa_row.addWidget(self.ipa_us_input)
+        ipa_row.addWidget(self.play_us_button)
+        form.addRow("IPA", ipa_row)
 
         self.own_notation_input = QLineEdit()
         form.addRow("Own notation", self.own_notation_input)
