@@ -55,6 +55,21 @@ _SCROLL_TO_JS = """
 })();
 """
 
+_TOPMOST_ID_JS = """
+(function() {
+    var blocks = Array.prototype.slice.call(
+        document.querySelectorAll('[data-stid]'));
+    if (!blocks.length) return "";
+    var y = window.scrollY;
+    var current = blocks[0];
+    for (var i = 0; i < blocks.length; i++) {
+        if (blocks[i].offsetTop <= y) current = blocks[i];
+        else break;
+    }
+    return current.getAttribute("data-stid");
+})();
+"""
+
 
 class BookView(QWebEngineView):
     """Renders one edition's HTML; exposes scroll position as (block_id, fraction)."""
@@ -111,3 +126,9 @@ class BookView(QWebEngineView):
             callback(result.numberOfMatches())
 
         self.page().findText(term, flags, _on_result)
+
+    def topmost_block_id(self, callback) -> None:
+        """Read the topmost visible block id and pass it to callback(str)."""
+        self.page().runJavaScript(
+            _TOPMOST_ID_JS, lambda value: callback(value or "")
+        )
