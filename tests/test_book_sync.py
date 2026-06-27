@@ -41,3 +41,34 @@ class BookSyncTests(unittest.TestCase):
         s.remove_anchor(99)
         self.assertEqual(s.get_anchors()[0], (0, 0))
         self.assertEqual(s.get_anchors()[-1], (99, 79))
+
+    def test_set_anchors_forces_start_to_zero_zero(self):
+        s = BookSync(100, 80)
+        s.set_anchors([(0, 50)])
+        self.assertEqual(s.get_anchors()[0], (0, 0))
+
+    def test_add_anchor_cannot_overwrite_start(self):
+        s = BookSync(100, 80)
+        s.add_anchor(0, 50)
+        self.assertEqual(s.get_anchors()[0], (0, 0))
+
+    def test_add_anchor_cannot_overwrite_end(self):
+        s = BookSync(100, 80)
+        s.add_anchor(99, 50)
+        self.assertEqual(s.get_anchors()[-1], (99, 79))
+
+    def test_add_anchor_midpoint_changes_mapping(self):
+        s = BookSync(100, 80)
+        index_before, _ = s.original_to_translation(50, 0.0)
+        s.add_anchor(50, 10)
+        index_after, _ = s.original_to_translation(50, 0.0)
+        self.assertNotEqual(index_before, index_after)
+
+    def test_translation_to_original_midpoint(self):
+        s = BookSync(100, 80)
+        s.set_anchors([(0, 0), (10, 20)])
+        # translation index 10 is the midpoint of 0..20, so it should map back
+        # to original index 5 (the midpoint of 0..10).
+        index, fraction = s.translation_to_original(10, 0.0)
+        self.assertEqual(index, 5)
+        self.assertAlmostEqual(fraction, 0.0, places=6)

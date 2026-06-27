@@ -33,17 +33,22 @@ class BookSync:
         ]
 
     def set_anchors(self, anchors: list[tuple[int, int]]) -> None:
-        merged = sorted(anchors, key=lambda a: a[0]) if anchors else []
-        if not merged or merged[0][0] != 0:
-            merged.insert(0, (0, 0))
-        if merged[-1][0] != self.original_last:
-            merged.append((self.original_last, self.translation_last))
+        # Drop any caller-supplied pairs at the reserved endpoint positions (0
+        # and original_last) before inserting the canonical fixed endpoints.
+        filtered = [
+            a for a in anchors if a[0] != 0 and a[0] != self.original_last
+        ]
+        merged = sorted(filtered, key=lambda a: a[0])
+        merged.insert(0, (0, 0))
+        merged.append((self.original_last, self.translation_last))
         self.anchors = merged
 
     def get_anchors(self) -> list[tuple[int, int]]:
         return self.anchors.copy()
 
     def add_anchor(self, original_index: int, translation_index: int) -> None:
+        if original_index in (0, self.original_last):
+            return
         self.anchors = [a for a in self.anchors if a[0] != original_index]
         self.anchors.append((original_index, translation_index))
         self.anchors.sort(key=lambda a: a[0])
