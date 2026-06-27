@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .anchor_editor import AnchorEditor
 from .anchor_store import AnchorStore, anchor_path_for
 from .book_loader import load_book
 from .book_sync import BookSync
@@ -51,6 +52,8 @@ class BookPanel(QFrame):
                 self.translation_document.block_ids,
             )
         )
+
+        self.anchor_editor = None
 
         self.init_ui()
 
@@ -178,6 +181,28 @@ class BookPanel(QFrame):
         self.current_match = (self.current_match - 2) % self.match_count + 1
         self.current_view().find(self.search_term, False, lambda _c: None)
         self.update_match_label()
+
+    def _reseed_sync(self) -> None:
+        self.book_sync.set_anchors(
+            self.anchor_store.resolve(
+                self.original_document.block_ids,
+                self.translation_document.block_ids,
+            )
+        )
+
+    def open_anchor_editor(self) -> None:
+        if self.anchor_editor is None:
+            self.anchor_editor = AnchorEditor(
+                self.original_document,
+                self.translation_document,
+                self.anchor_store,
+                self.profile,
+                self._reseed_sync,
+            )
+            self.anchor_editor.setWindowTitle("Anchor editor")
+            self.anchor_editor.resize(1200, 800)
+        self.anchor_editor.show()
+        self.anchor_editor.raise_()
 
     def close_doc(self) -> None:
         # Web views own no file handles to close; clear any active find so the

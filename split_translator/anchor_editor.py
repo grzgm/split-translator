@@ -34,7 +34,6 @@ class AnchorEditor(QWidget):
         self.anchor_store = anchor_store
         self._profile_ref = profile
         self._on_changed = on_changed
-        self._pending_original_id = ""
 
         self.init_ui()
         self.refresh()
@@ -75,8 +74,6 @@ class AnchorEditor(QWidget):
         # Read each view's topmost block id, then capture the pair once both are
         # known. The reads are asynchronous, so chain them.
         def got_original(original_id: str) -> None:
-            self._pending_original_id = original_id
-
             def got_translation(translation_id: str) -> None:
                 if original_id and translation_id:
                     self._capture_pair(original_id, translation_id)

@@ -86,3 +86,23 @@ class BookPanelSyncWiringTests(unittest.TestCase):
             self.addCleanup(panel.anchor_store.shutdown)
             panel.sync_enabled = False
             panel._sync_from(panel.original_view, "b0", 0.0)  # must not raise
+
+
+class BookPanelEditorTests(unittest.TestCase):
+    def test_open_anchor_editor_is_callable_and_reseeds_sync(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            self.addCleanup(panel.anchor_store.shutdown)
+            self.assertTrue(callable(panel.open_anchor_editor))
+            # Simulate an anchor change and confirm sync re-seeds without error.
+            panel.anchor_store.anchors = [
+                (
+                    panel.original_document.block_ids[0],
+                    panel.translation_document.block_ids[0],
+                )
+            ]
+            panel._reseed_sync()
+            self.assertIn(
+                (0, 0), panel.book_sync.get_anchors()
+            )
