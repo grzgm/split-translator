@@ -196,6 +196,7 @@ class BookPanel(QFrame):
                 self.original_document,
                 self.translation_document,
                 self.anchor_store,
+                self.book_sync,
                 self.profile,
                 self._reseed_sync,
             )

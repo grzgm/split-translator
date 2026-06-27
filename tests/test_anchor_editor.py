@@ -32,6 +32,7 @@ from pathlib import Path
 
 from split_translator.anchor_store import AnchorStore
 from split_translator.anchor_editor import AnchorEditor
+from split_translator.book_sync import BookSync
 
 
 class AnchorEditorTests(unittest.TestCase):
@@ -43,8 +44,18 @@ class AnchorEditorTests(unittest.TestCase):
         def on_changed():
             self.changed += 1
 
+        original_doc = _doc("b")
+        translation_doc = _doc("b")
+        book_sync = BookSync(
+            len(original_doc.block_ids), len(translation_doc.block_ids)
+        )
         editor = AnchorEditor(
-            _doc("b"), _doc("b"), store, QWebEngineProfile(), on_changed
+            original_doc,
+            translation_doc,
+            store,
+            book_sync,
+            QWebEngineProfile(),
+            on_changed,
         )
         self.addCleanup(tmp.cleanup)
         self.addCleanup(store.shutdown)
@@ -100,8 +111,18 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         def on_changed():
             self.changed += 1
 
+        original_doc = _doc("b")
+        translation_doc = _doc("b")
+        book_sync = BookSync(
+            len(original_doc.block_ids), len(translation_doc.block_ids)
+        )
         editor = AnchorEditor(
-            _doc("b"), _doc("b"), store, QWebEngineProfile(), on_changed
+            original_doc,
+            translation_doc,
+            store,
+            book_sync,
+            QWebEngineProfile(),
+            on_changed,
         )
         self.addCleanup(tmp.cleanup)
         self.addCleanup(store.shutdown)
@@ -154,3 +175,20 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         editor.anchor_list.setCurrentRow(0)
         editor._remove_selected()
         self.assertEqual(store.anchors, [])
+
+    def test_sync_defaults_on(self):
+        editor, _ = self._editor()
+        self.assertTrue(editor.sync_enabled)
+        self.assertTrue(editor.sync_checkbox.isChecked())
+
+    def test_sync_from_disabled_is_a_noop(self):
+        editor, _ = self._editor()
+        editor.sync_enabled = False
+        # Must not raise and must not move the other view (no mapping applied).
+        editor._sync_from(editor.original_view, "b0", 0.0)
+
+    def test_sync_from_unknown_block_does_not_raise(self):
+        editor, _ = self._editor()
+        editor.sync_enabled = True
+        # A block id absent from the document is guarded by try/except ValueError.
+        editor._sync_from(editor.original_view, "nonexistent", 0.0)

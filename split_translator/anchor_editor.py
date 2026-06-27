@@ -5,6 +5,7 @@ both views; clicking an anchor in the list jumps both views to it."""
 from PySide6.QtCore import Qt
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 from .anchor_book_view import AnchorBookView
 from .anchor_store import AnchorStore
 from .book_loader import BookDocument
+from .book_sync import BookSync
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
 _TRANSLATION_ID_ROLE = 257  # Qt.UserRole + 1
@@ -30,6 +32,7 @@ class AnchorEditor(QWidget):
         original_document: BookDocument,
         translation_document: BookDocument,
         anchor_store: AnchorStore,
+        book_sync: BookSync,
         profile: QWebEngineProfile,
         on_changed,
         parent=None,
@@ -38,11 +41,13 @@ class AnchorEditor(QWidget):
         self.original_document = original_document
         self.translation_document = translation_document
         self.anchor_store = anchor_store
+        self.book_sync = book_sync
         self._profile_ref = profile
         self._on_changed = on_changed
 
         self._selected_original: str | None = None
         self._selected_translation: str | None = None
+        self.sync_enabled = True
 
         self.init_ui()
         self.refresh()
@@ -67,6 +72,15 @@ class AnchorEditor(QWidget):
         )
         self.original_view.block_clicked.connect(self._on_original_clicked)
         self.translation_view.block_clicked.connect(self._on_translation_clicked)
+        # Optional synced scrolling between the two sides (anchor-based, like the
+        # main reader). The `scrolled` signal is separate from `block_clicked`,
+        # so syncing never interferes with click-to-select.
+        self.original_view.scrolled.connect(
+            lambda bid, frac: self._sync_from(self.original_view, bid, frac)
+        )
+        self.translation_view.scrolled.connect(
+            lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
+        )
         views.addWidget(self.original_view)
         views.addWidget(self.translation_view)
         splitter.addWidget(views_container)
@@ -83,8 +97,12 @@ class AnchorEditor(QWidget):
         self.add_button.clicked.connect(self._on_add_clicked)
         self.remove_button = QPushButton("Remove selected")
         self.remove_button.clicked.connect(self._remove_selected)
+        self.sync_checkbox = QCheckBox("Sync")
+        self.sync_checkbox.setChecked(True)
+        self.sync_checkbox.stateChanged.connect(self.toggle_sync)
         controls.addWidget(self.add_button)
         controls.addWidget(self.remove_button)
+        controls.addWidget(self.sync_checkbox)
         controls.addStretch()
         bottom.addLayout(controls)
 
@@ -101,6 +119,36 @@ class AnchorEditor(QWidget):
         splitter.setSizes([640, 160])
 
         layout.addWidget(splitter)
+
+    def toggle_sync(self, state) -> None:
+        self.sync_enabled = state == Qt.CheckState.Checked.value
+
+    def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
+        """Mirror a scroll on one side to the other through the anchor mapping.
+        Mirrors BookPanel._sync_from; the scroll_to echo guard in AnchorBookView
+        prevents the mirrored scroll from bouncing back."""
+        if not self.sync_enabled:
+            return
+        if source_view is self.original_view:
+            try:
+                index = self.original_document.block_ids.index(block_id)
+            except ValueError:
+                return
+            dst_index, dst_fraction = self.book_sync.original_to_translation(
+                index, fraction
+            )
+            target_id = self.translation_document.block_ids[dst_index]
+            self.translation_view.scroll_to(target_id, dst_fraction)
+        else:
+            try:
+                index = self.translation_document.block_ids.index(block_id)
+            except ValueError:
+                return
+            dst_index, dst_fraction = self.book_sync.translation_to_original(
+                index, fraction
+            )
+            target_id = self.original_document.block_ids[dst_index]
+            self.original_view.scroll_to(target_id, dst_fraction)
 
     def _on_original_clicked(self, block_id: str) -> None:
         self._selected_original = block_id
