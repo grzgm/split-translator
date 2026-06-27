@@ -72,6 +72,7 @@ class BookView(QWebEngineView):
         self._suppress_scroll = False
         self.setPage(QWebEnginePage(profile, self))
         self.setHtml(document.html, QUrl("about:blank"))
+        self.page().scrollPositionChanged.connect(self.request_scroll_state)
 
     def request_scroll_state(self) -> None:
         """Read the current scroll position and emit `scrolled`."""

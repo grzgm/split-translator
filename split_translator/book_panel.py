@@ -1,6 +1,7 @@
 """Tabbed book panel showing original and translation editions in web views, with
-native full-text search. Scroll sync is added in a later change; this panel keeps
-the Sync checkbox state but does not yet mirror scrolling."""
+native full-text search and content-anchor scroll sync."""
+
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWebEngineCore import QWebEngineProfile
@@ -14,9 +15,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .anchor_store import AnchorStore, anchor_path_for
 from .book_loader import load_book
+from .book_sync import BookSync
 from .book_view import BookView
-from .config import Config
+from .config import Config, PROJECT_ROOT
 
 
 class BookPanel(QFrame):
@@ -32,6 +35,24 @@ class BookPanel(QFrame):
 
         self.original_document = load_book(config.pdf_original_path)
         self.translation_document = load_book(config.pdf_translation_path)
+
+        self.anchor_store = AnchorStore(
+            anchor_path_for(
+                config.pdf_original_path,
+                config.pdf_translation_path,
+                PROJECT_ROOT,
+            )
+        )
+        self.book_sync = BookSync(
+            len(self.original_document.block_ids),
+            len(self.translation_document.block_ids),
+        )
+        self.book_sync.set_anchors(
+            self.anchor_store.resolve(
+                self.original_document.block_ids,
+                self.translation_document.block_ids,
+            )
+        )
 
         self.init_ui()
 
@@ -70,6 +91,51 @@ class BookPanel(QFrame):
         self.tabs.addTab(self.original_view, "Original")
         self.tabs.addTab(self.translation_view, "Translation")
         layout.addWidget(self.tabs)
+
+        self.original_view.scrolled.connect(
+            lambda bid, frac: self._sync_from(self.original_view, bid, frac)
+        )
+        self.translation_view.scrolled.connect(
+            lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
+        )
+        self.tabs.currentChanged.connect(self._update_position_label)
+
+    def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
+        self._update_position_label()
+        if not self.sync_enabled:
+            return
+        # Only mirror from the active tab.
+        if source_view is not self.current_view():
+            return
+
+        if source_view is self.original_view:
+            try:
+                index = self.original_document.block_ids.index(block_id)
+            except ValueError:
+                return
+            dst_index, dst_fraction = self.book_sync.original_to_translation(
+                index, fraction
+            )
+            target_id = self.translation_document.block_ids[dst_index]
+            self.translation_view.scroll_to(target_id, dst_fraction)
+        else:
+            try:
+                index = self.translation_document.block_ids.index(block_id)
+            except ValueError:
+                return
+            dst_index, dst_fraction = self.book_sync.translation_to_original(
+                index, fraction
+            )
+            target_id = self.original_document.block_ids[dst_index]
+            self.original_view.scroll_to(target_id, dst_fraction)
+
+    def _update_position_label(self) -> None:
+        view = self.current_view()
+        if view is self.original_view:
+            total = len(self.original_document.block_ids)
+        else:
+            total = len(self.translation_document.block_ids)
+        self.position_label.setText(f"{total} blocks")
 
     def toggle_sync(self, state):
         self.sync_enabled = state == Qt.CheckState.Checked.value

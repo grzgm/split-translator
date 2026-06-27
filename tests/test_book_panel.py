@@ -65,3 +65,24 @@ class BookPanelContractTests(unittest.TestCase):
             profile = QWebEngineProfile()
             panel = BookPanel(_config(d), profile)
             panel.search("   ")  # must not raise
+
+
+from split_translator.book_sync import BookSync
+
+
+class BookPanelSyncWiringTests(unittest.TestCase):
+    def test_panel_builds_a_book_sync_and_anchor_store(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            self.addCleanup(panel.anchor_store.shutdown)
+            self.assertIsInstance(panel.book_sync, BookSync)
+            self.assertTrue(callable(panel._sync_from))
+
+    def test_sync_disabled_does_not_raise_on_scroll(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            self.addCleanup(panel.anchor_store.shutdown)
+            panel.sync_enabled = False
+            panel._sync_from(panel.original_view, "b0", 0.0)  # must not raise
