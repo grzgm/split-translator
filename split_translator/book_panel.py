@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from .anchor_editor import AnchorEditor
-from .anchor_store import AnchorStore, anchor_path_for
+from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
 from .book_loader import load_book
 from .book_sync import BookSync
 from .book_view import BookView
@@ -58,8 +58,10 @@ class BookPanel(QFrame):
         # Latest scroll position per edition, updated as the views scroll and
         # written on close so the next launch reopens where reading stopped.
         # Seeded from the store so an unchanged session re-saves the same spot.
-        self._original_scroll = self.anchor_store.original_scroll
-        self._translation_scroll = self.anchor_store.translation_scroll
+        # The reader and the anchor editor track their positions separately.
+        self._original_scroll, self._translation_scroll = (
+            self.anchor_store.get_scroll(READER_SURFACE)
+        )
 
         self.init_ui()
 
@@ -96,12 +98,12 @@ class BookPanel(QFrame):
         self.original_view = BookView(
             self.original_document,
             self.profile,
-            initial_scroll=self.anchor_store.original_scroll,
+            initial_scroll=self._original_scroll,
         )
         self.translation_view = BookView(
             self.translation_document,
             self.profile,
-            initial_scroll=self.anchor_store.translation_scroll,
+            initial_scroll=self._translation_scroll,
         )
         self.tabs.addTab(self.original_view, "Original")
         self.tabs.addTab(self.translation_view, "Translation")
@@ -240,7 +242,7 @@ class BookPanel(QFrame):
         # reopens where reading stopped. Uses the cached positions (updated as
         # the views scrolled), so no async page read is needed at close time.
         self.anchor_store.set_scroll(
-            self._original_scroll, self._translation_scroll
+            READER_SURFACE, self._original_scroll, self._translation_scroll
         )
         # Await any in-flight anchor write so anchors are not lost on quit.
         self.anchor_store.shutdown()

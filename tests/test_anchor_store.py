@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from split_translator.anchor_store import AnchorStore, anchor_path_for
+from split_translator.anchor_store import (
+    EDITOR_SURFACE,
+    READER_SURFACE,
+    AnchorStore,
+    anchor_path_for,
+)
 
 
 class AnchorStoreTests(unittest.TestCase):
@@ -62,20 +67,36 @@ class AnchorStoreTests(unittest.TestCase):
 
     def test_scroll_defaults_to_none_for_both_sides(self):
         store = self._store()
-        self.assertIsNone(store.original_scroll)
-        self.assertIsNone(store.translation_scroll)
+        self.assertEqual(store.get_scroll(READER_SURFACE), (None, None))
+        self.assertEqual(store.get_scroll(EDITOR_SURFACE), (None, None))
 
     def test_set_scroll_then_reload_round_trips(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "anchors.json"
         store = AnchorStore(path)
-        store.set_scroll(("b3", 0.25), ("b7", 0.5))
+        store.set_scroll(READER_SURFACE, ("b3", 0.25), ("b7", 0.5))
         store.shutdown()  # flush
         reloaded = AnchorStore(path)
         self.addCleanup(reloaded.shutdown)
-        self.assertEqual(reloaded.original_scroll, ("b3", 0.25))
-        self.assertEqual(reloaded.translation_scroll, ("b7", 0.5))
+        self.assertEqual(reloaded.get_scroll(READER_SURFACE), (("b3", 0.25), ("b7", 0.5)))
+
+    def test_reader_and_editor_scroll_are_independent(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.set_scroll(READER_SURFACE, ("b3", 0.25), ("b7", 0.5))
+        store.set_scroll(EDITOR_SURFACE, ("b10", 0.1), ("b20", 0.2))
+        store.shutdown()
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(
+            reloaded.get_scroll(READER_SURFACE), (("b3", 0.25), ("b7", 0.5))
+        )
+        self.assertEqual(
+            reloaded.get_scroll(EDITOR_SURFACE), (("b10", 0.1), ("b20", 0.2))
+        )
 
     def test_set_scroll_keeps_existing_anchors(self):
         tmp = tempfile.TemporaryDirectory()
@@ -83,18 +104,17 @@ class AnchorStoreTests(unittest.TestCase):
         path = Path(tmp.name) / "anchors.json"
         store = AnchorStore(path)
         store.add("b1", "b2")
-        store.set_scroll(("b1", 0.0), ("b2", 0.0))
+        store.set_scroll(READER_SURFACE, ("b1", 0.0), ("b2", 0.0))
         store.shutdown()
         reloaded = AnchorStore(path)
         self.addCleanup(reloaded.shutdown)
         self.assertEqual(reloaded.anchors, [("b1", "b2")])
-        self.assertEqual(reloaded.original_scroll, ("b1", 0.0))
+        self.assertEqual(reloaded.get_scroll(READER_SURFACE)[0], ("b1", 0.0))
 
     def test_set_scroll_with_none_clears_that_side(self):
         store = self._store()
-        store.set_scroll(("b3", 0.25), None)
-        self.assertEqual(store.original_scroll, ("b3", 0.25))
-        self.assertIsNone(store.translation_scroll)
+        store.set_scroll(READER_SURFACE, ("b3", 0.25), None)
+        self.assertEqual(store.get_scroll(READER_SURFACE), (("b3", 0.25), None))
 
     def test_load_old_file_without_scroll_starts_none(self):
         tmp = tempfile.TemporaryDirectory()
@@ -108,5 +128,24 @@ class AnchorStoreTests(unittest.TestCase):
         store = AnchorStore(path)
         self.addCleanup(store.shutdown)
         self.assertEqual(store.anchors, [("b1", "b2")])
-        self.assertIsNone(store.original_scroll)
-        self.assertIsNone(store.translation_scroll)
+        self.assertEqual(store.get_scroll(READER_SURFACE), (None, None))
+        self.assertEqual(store.get_scroll(EDITOR_SURFACE), (None, None))
+
+    def test_flat_scroll_shape_loads_as_reader(self):
+        # A file written by the first scroll-memory version stored the position
+        # flat under "scroll" (no surface key). It must load as the reader's.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        path.write_text(
+            '{"version": 1, "anchors": [], "scroll": '
+            '{"original": {"id": "b3", "fraction": 0.25}, '
+            '"translation": {"id": "b7", "fraction": 0.5}}}',
+            encoding="utf-8",
+        )
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        self.assertEqual(
+            store.get_scroll(READER_SURFACE), (("b3", 0.25), ("b7", 0.5))
+        )
+        self.assertEqual(store.get_scroll(EDITOR_SURFACE), (None, None))

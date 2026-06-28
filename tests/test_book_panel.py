@@ -180,12 +180,13 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
             store_path = panel.anchor_store.filepath
             panel.close_doc()  # writes and shuts down
 
-            from split_translator.anchor_store import AnchorStore
+            from split_translator.anchor_store import AnchorStore, READER_SURFACE
 
             reloaded = AnchorStore(store_path)
             self.addCleanup(reloaded.shutdown)
-            self.assertEqual(reloaded.original_scroll, ("b3", 0.25))
-            self.assertEqual(reloaded.translation_scroll, ("b7", 0.5))
+            self.assertEqual(
+                reloaded.get_scroll(READER_SURFACE), (("b3", 0.25), ("b7", 0.5))
+            )
 
     def test_load_top_emit_then_restore_emit_leaves_cache_at_restored(self):
         # Reproduces the load-time clobber: during load the view emits the top
@@ -208,14 +209,18 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
             profile = QWebEngineProfile()
             cfg = _config(d)
             # Prime the store file before the panel reads it.
-            from split_translator.anchor_store import AnchorStore, anchor_path_for
+            from split_translator.anchor_store import (
+                AnchorStore,
+                READER_SURFACE,
+                anchor_path_for,
+            )
             from split_translator.config import PROJECT_ROOT
 
             path = anchor_path_for(
                 cfg.pdf_original_path, cfg.pdf_translation_path, PROJECT_ROOT
             )
             seed = AnchorStore(path)
-            seed.set_scroll(("b1", 0.0), ("b1", 0.0))
+            seed.set_scroll(READER_SURFACE, ("b1", 0.0), ("b1", 0.0))
             seed.shutdown()
             self.addCleanup(path.unlink, missing_ok=True)
 

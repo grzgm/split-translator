@@ -57,19 +57,51 @@ def _parse_scroll(value) -> tuple[str, float] | None:
     return (block_id, fraction)
 
 
-def load_scroll(filepath: Path) -> tuple[
-    tuple[str, float] | None, tuple[str, float] | None
-]:
-    """Load the saved (original, translation) scroll positions, each or None.
-    A file written before scroll positions existed has no "scroll" key, so both
-    sides come back None."""
-    scroll = _load_raw(filepath).get("scroll", {})
-    if not isinstance(scroll, dict):
+# Each surface that remembers a position (the reading panel and the anchor
+# editor) keeps its own original/translation pair so they scroll independently.
+READER_SURFACE = "reader"
+EDITOR_SURFACE = "editor"
+
+_ScrollPair = tuple[tuple[str, float] | None, tuple[str, float] | None]
+
+
+def _parse_scroll_pair(value) -> _ScrollPair:
+    """Parse one surface's {"original": ..., "translation": ...} block."""
+    if not isinstance(value, dict):
         return (None, None)
     return (
-        _parse_scroll(scroll.get("original")),
-        _parse_scroll(scroll.get("translation")),
+        _parse_scroll(value.get("original")),
+        _parse_scroll(value.get("translation")),
     )
+
+
+def load_scroll(filepath: Path) -> dict[str, _ScrollPair]:
+    """Load each surface's saved (original, translation) scroll positions.
+    Returns a dict keyed by surface name; a surface with no saved data is absent.
+
+    Back-compat: a file written before per-surface scroll existed stored the
+    position flat under "scroll" ({"original": ..., "translation": ...}); that
+    shape is read as the reader's position. A file with no "scroll" key yields an
+    empty dict."""
+    scroll = _load_raw(filepath).get("scroll", {})
+    if not isinstance(scroll, dict):
+        return {}
+    result: dict[str, _ScrollPair] = {}
+    # New per-surface shape: scroll[surface][original|translation].
+    for surface in (READER_SURFACE, EDITOR_SURFACE):
+        pair = _parse_scroll_pair(scroll.get(surface))
+        if pair != (None, None):
+            result[surface] = pair
+    # Old flat shape (no surface key): treat as the reader, unless a per-surface
+    # reader entry already supplied one.
+    if READER_SURFACE not in result:
+        flat = (
+            _parse_scroll(scroll.get("original")),
+            _parse_scroll(scroll.get("translation")),
+        )
+        if flat != (None, None):
+            result[READER_SURFACE] = flat
+    return result
 
 
 def write_anchors(filepath: Path, data: dict) -> None:
@@ -96,8 +128,9 @@ class AnchorStore:
         self.filepath = filepath
         self.save_worker = None
         self.anchors: list[tuple[str, str]] = load_anchors(filepath)
-        # Last-known scroll position per edition, restored on the next launch.
-        self.original_scroll, self.translation_scroll = load_scroll(filepath)
+        # Last-known scroll position per surface (reader / editor), each an
+        # (original, translation) pair, restored on the next launch.
+        self.scroll: dict[str, _ScrollPair] = load_scroll(filepath)
 
     def add(self, original_id: str, translation_id: str) -> None:
         self.anchors.append((original_id, translation_id))
@@ -120,15 +153,24 @@ class AnchorStore:
                 pairs.append((orig_index[original_id], trans_index[translation_id]))
         return pairs
 
+    def get_scroll(self, surface: str) -> _ScrollPair:
+        """Return a surface's saved (original, translation) positions, each or
+        None if not stored."""
+        return self.scroll.get(surface, (None, None))
+
     def set_scroll(
         self,
+        surface: str,
         original: tuple[str, float] | None,
         translation: tuple[str, float] | None,
     ) -> None:
-        """Store both editions' scroll positions and persist. Pass None for a
-        side whose position is unknown (it is then not restored)."""
-        self.original_scroll = original
-        self.translation_scroll = translation
+        """Store a surface's scroll positions and persist. Pass None for a side
+        whose position is unknown (it is then not restored). The two surfaces
+        (reader / editor) are kept independent."""
+        if original is None and translation is None:
+            self.scroll.pop(surface, None)
+        else:
+            self.scroll[surface] = (original, translation)
         self.save()
 
     @staticmethod
@@ -145,12 +187,16 @@ class AnchorStore:
             ],
         }
         scroll = {}
-        original = self._scroll_dict(self.original_scroll)
-        translation = self._scroll_dict(self.translation_scroll)
-        if original is not None:
-            scroll["original"] = original
-        if translation is not None:
-            scroll["translation"] = translation
+        for surface, (original, translation) in self.scroll.items():
+            side = {}
+            original_dict = self._scroll_dict(original)
+            translation_dict = self._scroll_dict(translation)
+            if original_dict is not None:
+                side["original"] = original_dict
+            if translation_dict is not None:
+                side["translation"] = translation_dict
+            if side:
+                scroll[surface] = side
         if scroll:
             data["scroll"] = scroll
         return data

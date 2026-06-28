@@ -105,8 +105,14 @@ class AnchorBookView(BookView):
 
     block_clicked = Signal(str)
 
-    def __init__(self, document: BookDocument, profile: QWebEngineProfile, parent=None):
-        super().__init__(document, profile, parent)
+    def __init__(
+        self,
+        document: BookDocument,
+        profile: QWebEngineProfile,
+        parent=None,
+        initial_scroll: tuple[str, float] | None = None,
+    ):
+        super().__init__(document, profile, parent, initial_scroll=initial_scroll)
         self._bridge = AnchorClickBridge(self)
         self._bridge.block_clicked.connect(self.block_clicked)
 

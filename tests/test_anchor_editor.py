@@ -219,3 +219,72 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         editor.sync_enabled = True
         # A block id absent from the document is guarded by try/except ValueError.
         editor._sync_from(editor.original_view, "nonexistent", 0.0)
+
+
+from split_translator.anchor_store import EDITOR_SURFACE, READER_SURFACE
+
+
+class AnchorEditorScrollMemoryTests(unittest.TestCase):
+    def _editor_with_store(self, store):
+        original_doc = _doc("b")
+        translation_doc = _doc("b")
+        book_sync = BookSync(
+            len(original_doc.block_ids), len(translation_doc.block_ids)
+        )
+        editor = AnchorEditor(
+            original_doc,
+            translation_doc,
+            store,
+            book_sync,
+            QWebEngineProfile(),
+            lambda: None,
+        )
+        return editor
+
+    def test_sync_from_caches_scroll_even_with_sync_off(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        editor = self._editor_with_store(store)
+        editor.sync_enabled = False
+        editor._sync_from(editor.original_view, "b0", 0.3)
+        editor._sync_from(editor.translation_view, "b1", 0.4)
+        self.assertEqual(editor._original_scroll, ("b0", 0.3))
+        self.assertEqual(editor._translation_scroll, ("b1", 0.4))
+
+    def test_close_persists_to_editor_surface_only(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        editor = self._editor_with_store(store)
+        editor.sync_enabled = False
+        editor._sync_from(editor.original_view, "b0", 0.3)
+        editor._sync_from(editor.translation_view, "b1", 0.4)
+        editor.close()  # fires closeEvent -> set_scroll(EDITOR_SURFACE, ...)
+        store.shutdown()
+
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(
+            reloaded.get_scroll(EDITOR_SURFACE), (("b0", 0.3), ("b1", 0.4))
+        )
+        # The reader surface is left untouched by the editor.
+        self.assertEqual(reloaded.get_scroll(READER_SURFACE), (None, None))
+
+    def test_editor_seeds_views_from_editor_surface(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        seed = AnchorStore(path)
+        # Reader and editor stored at different spots; the editor must use its own.
+        seed.set_scroll(READER_SURFACE, ("b1", 0.9), ("b1", 0.9))
+        seed.set_scroll(EDITOR_SURFACE, ("b0", 0.2), ("b1", 0.7))
+        seed.shutdown()
+
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        editor = self._editor_with_store(store)
+        self.assertEqual(editor.original_view._initial_scroll, ("b0", 0.2))
+        self.assertEqual(editor.translation_view._initial_scroll, ("b1", 0.7))

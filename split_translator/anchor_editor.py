@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .anchor_book_view import AnchorBookView
-from .anchor_store import AnchorStore
+from .anchor_store import EDITOR_SURFACE, AnchorStore
 from .book_loader import BookDocument
 from .book_sync import BookSync
 
@@ -49,6 +49,12 @@ class AnchorEditor(QWidget):
         self._selected_translation: str | None = None
         self.sync_enabled = True
 
+        # The editor remembers its own scroll position, separate from the
+        # reader. Seed from the editor surface and write it back on close.
+        self._original_scroll, self._translation_scroll = (
+            self.anchor_store.get_scroll(EDITOR_SURFACE)
+        )
+
         self.init_ui()
         self.refresh()
         self._refresh_highlights()
@@ -65,10 +71,14 @@ class AnchorEditor(QWidget):
         views = QHBoxLayout(views_container)
         views.setContentsMargins(0, 0, 0, 0)
         self.original_view = AnchorBookView(
-            self.original_document, self._profile_ref
+            self.original_document,
+            self._profile_ref,
+            initial_scroll=self._original_scroll,
         )
         self.translation_view = AnchorBookView(
-            self.translation_document, self._profile_ref
+            self.translation_document,
+            self._profile_ref,
+            initial_scroll=self._translation_scroll,
         )
         self.original_view.block_clicked.connect(self._on_original_clicked)
         self.translation_view.block_clicked.connect(self._on_translation_clicked)
@@ -127,6 +137,13 @@ class AnchorEditor(QWidget):
         """Mirror a scroll on one side to the other through the anchor mapping.
         Mirrors BookPanel._sync_from; the scroll_to echo guard in AnchorBookView
         prevents the mirrored scroll from bouncing back."""
+        # Remember the latest position of whichever side moved so the editor
+        # reopens here next time (independent of the reader). Cache before the
+        # sync-enabled check so positions are tracked even with sync off.
+        if source_view is self.original_view:
+            self._original_scroll = (block_id, fraction)
+        else:
+            self._translation_scroll = (block_id, fraction)
         if not self.sync_enabled:
             return
         if source_view is self.original_view:
@@ -225,3 +242,12 @@ class AnchorEditor(QWidget):
         self.refresh()
         self._refresh_highlights()
         self._on_changed()
+
+    def closeEvent(self, event) -> None:
+        # Persist the editor's own scroll position so it reopens here next time,
+        # separately from the reader. The shared store flushes in-flight writes
+        # on app shutdown (BookPanel.close_doc -> anchor_store.shutdown).
+        self.anchor_store.set_scroll(
+            EDITOR_SURFACE, self._original_scroll, self._translation_scroll
+        )
+        super().closeEvent(event)
