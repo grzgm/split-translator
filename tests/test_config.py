@@ -17,12 +17,12 @@ class ConfigTests(unittest.TestCase):
             path = self._write(
                 d,
                 {
-                    "pdf_original_path": "/books/a.epub",
-                    "pdf_translation_path": "/books/b.epub",
+                    "original_path": "/books/a.epub",
+                    "translation_path": "/books/b.epub",
                 },
             )
             config = load_config(path)
-            self.assertEqual(config.pdf_original_path, "/books/a.epub")
+            self.assertEqual(config.original_path, "/books/a.epub")
             self.assertEqual(config.page_anchors, [])
 
     def test_still_reads_page_anchors_when_present(self):
@@ -30,8 +30,8 @@ class ConfigTests(unittest.TestCase):
             path = self._write(
                 d,
                 {
-                    "pdf_original_path": "/books/a.epub",
-                    "pdf_translation_path": "/books/b.epub",
+                    "original_path": "/books/a.epub",
+                    "translation_path": "/books/b.epub",
                     "page_anchors": [[0, 0], [10, 8]],
                 },
             )

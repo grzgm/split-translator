@@ -14,8 +14,8 @@ CONFIG_PATH = PROJECT_ROOT / "config.json"
 class Config:
     """Resolved application configuration."""
 
-    pdf_original_path: str
-    pdf_translation_path: str
+    original_path: str
+    translation_path: str
     page_anchors: list[tuple[int, int]]
 
 
@@ -41,8 +41,8 @@ def load_config(config_path: Path = CONFIG_PATH) -> Config:
         # per-book-pair anchor store, so a config without it loads fine.
         page_anchors = [tuple(anchor) for anchor in raw.get("page_anchors", [])]
         return Config(
-            pdf_original_path=raw["pdf_original_path"],
-            pdf_translation_path=raw["pdf_translation_path"],
+            original_path=raw["original_path"],
+            translation_path=raw["translation_path"],
             page_anchors=page_anchors,
         )
     except (KeyError, TypeError) as exc:

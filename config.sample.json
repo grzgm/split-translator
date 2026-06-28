@@ -1,4 +1,4 @@
 {
-  "pdf_original_path": "/path/to/original-book.epub",
-  "pdf_translation_path": "/path/to/translated-book.epub"
+  "original_path": "/path/to/original-book.epub",
+  "translation_path": "/path/to/translated-book.epub"
 }

@@ -32,13 +32,13 @@ class BookPanel(QFrame):
         self.current_match = 0
         self.sync_enabled = True
 
-        self.original_document = load_book(config.pdf_original_path)
-        self.translation_document = load_book(config.pdf_translation_path)
+        self.original_document = load_book(config.original_path)
+        self.translation_document = load_book(config.translation_path)
 
         self.anchor_store = AnchorStore(
             anchor_path_for(
-                config.pdf_original_path,
-                config.pdf_translation_path,
+                config.original_path,
+                config.translation_path,
                 PROJECT_ROOT,
             )
         )

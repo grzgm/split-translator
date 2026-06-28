@@ -77,8 +77,8 @@ from tests.fixtures.make_fixtures import make_epub
 def _config(d):
     epub = make_epub(d)
     return Config(
-        pdf_original_path=epub,
-        pdf_translation_path=epub,
+        original_path=epub,
+        translation_path=epub,
         page_anchors=[],
     )
 
@@ -217,7 +217,7 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
             from split_translator.config import PROJECT_ROOT
 
             path = anchor_path_for(
-                cfg.pdf_original_path, cfg.pdf_translation_path, PROJECT_ROOT
+                cfg.original_path, cfg.translation_path, PROJECT_ROOT
             )
             seed = AnchorStore(path)
             seed.set_scroll(READER_SURFACE, ("b1", 0.0), ("b1", 0.0))
