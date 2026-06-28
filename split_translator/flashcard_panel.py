@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSplitter,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -259,7 +261,18 @@ class FlashcardPanel(QWidget):
         self._dirty = False
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+
+        # The editor (card fields, senses and the action buttons) lives in its
+        # own widget so it can be put inside a scroll area: a card taller than
+        # the editor area scrolls instead of pushing the saved-cards list down.
+        # A vertical splitter below makes the boundary between the editor and the
+        # list user-draggable, so the editor height can be set once and stays put
+        # (no UI shift when a taller or shorter card is loaded). `layout` is the
+        # editor's own layout; every editor row below adds to it.
+        editor_widget = QWidget()
+        layout = QVBoxLayout(editor_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         form = QFormLayout()
 
@@ -376,14 +389,39 @@ class FlashcardPanel(QWidget):
         buttons.addWidget(self.clear_button)
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
+        # A stretch keeps the editor rows packed at the top of the scroll area so
+        # a short card does not leave the fields floating in the middle.
+        layout.addStretch()
+
+        # The editor scrolls when its content is taller than the area it is given;
+        # when shorter, the editor widget fills the area (widgetResizable).
+        self.editor_scroll = QScrollArea()
+        self.editor_scroll.setWidgetResizable(True)
+        self.editor_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.editor_scroll.setWidget(editor_widget)
 
         # Saved cards: a list of every stored card (newest first). Clicking a row
         # loads that card into the editor so it can be reviewed or edited.
-        layout.addWidget(QLabel("Saved cards"))
+        saved_widget = QWidget()
+        saved_layout = QVBoxLayout(saved_widget)
+        saved_layout.setContentsMargins(0, 0, 0, 0)
+        saved_layout.addWidget(QLabel("Saved cards"))
         self.saved_list = QListWidget()
         self.saved_list.setToolTip("Click a saved card to load it for editing")
         self.saved_list.itemClicked.connect(self._on_saved_clicked)
-        layout.addWidget(self.saved_list, stretch=1)
+        saved_layout.addWidget(self.saved_list, stretch=1)
+
+        # The splitter handle is the draggable boundary that sets the editor
+        # height. The editor pane gets most of the initial height; the list pane
+        # stretches to fill the rest. Neither pane collapses to zero.
+        self.editor_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.editor_splitter.addWidget(self.editor_scroll)
+        self.editor_splitter.addWidget(saved_widget)
+        self.editor_splitter.setChildrenCollapsible(False)
+        self.editor_splitter.setStretchFactor(0, 3)
+        self.editor_splitter.setStretchFactor(1, 1)
+        self.editor_splitter.setSizes([480, 160])
+        outer.addWidget(self.editor_splitter)
 
         self._update_play_buttons()
 
@@ -685,6 +723,15 @@ class FlashcardPanel(QWidget):
         finally:
             self._suppress_dirty = False
         self._dirty = False
+        self._scroll_editor_to_top()
+
+    def _scroll_editor_to_top(self) -> None:
+        """Reset the editor scroll so a freshly loaded or cleared card shows from
+        the headword down, rather than keeping the previous card's scroll offset.
+        Guarded so it is safe to call before init_ui has built the scroll area."""
+        scroll = getattr(self, "editor_scroll", None)
+        if scroll is not None:
+            scroll.verticalScrollBar().setValue(0)
 
     # --- saved cards list -----------------------------------------------
 

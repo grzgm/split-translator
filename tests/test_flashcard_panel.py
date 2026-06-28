@@ -513,6 +513,53 @@ class FlashcardPanelTests(unittest.TestCase):
         )
         self.assertTrue(panel._dirty)
 
+    # --- editor / saved-list splitter -----------------------------------
+    # The editor sits in a scroll area above the saved-cards list, separated by
+    # a draggable splitter, so the editor height can be fixed and a taller card
+    # scrolls instead of pushing the list down.
+
+    def test_editor_splitter_holds_scroll_then_list(self):
+        from PySide6.QtWidgets import QScrollArea
+
+        panel, _ = self._panel()
+        splitter = panel.editor_splitter
+        self.assertEqual(splitter.count(), 2)
+        self.assertIsInstance(splitter.widget(0), QScrollArea)
+        # The saved-cards list lives in the bottom pane.
+        self.assertTrue(splitter.widget(1).isAncestorOf(panel.saved_list))
+
+    def test_editor_scroll_is_resizable_and_not_collapsible(self):
+        panel, _ = self._panel()
+        self.assertTrue(panel.editor_scroll.widgetResizable())
+        self.assertFalse(panel.editor_splitter.childrenCollapsible())
+
+    def test_reset_scrolls_editor_to_top(self):
+        panel, _ = self._panel()
+        # Force a small size so the editor content overflows and the scroll bar
+        # has a usable range to move within.
+        panel.resize(400, 250)
+        panel.show()
+        QApplication.processEvents()
+        self.addCleanup(panel.hide)
+        bar = panel.editor_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        self.assertGreater(bar.value(), 0)  # actually scrolled down
+        panel._reset_editor()
+        self.assertEqual(bar.value(), 0)
+
+    def test_loading_a_card_scrolls_editor_to_top(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel.resize(400, 250)
+        panel.show()
+        QApplication.processEvents()
+        self.addCleanup(panel.hide)
+        bar = panel.editor_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        self.assertGreater(bar.value(), 0)
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertEqual(bar.value(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
