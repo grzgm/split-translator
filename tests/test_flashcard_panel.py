@@ -439,6 +439,80 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "inprogress")
         self.assertIsNone(panel._loaded_card_id)
 
+    # --- unsaved-changes prompt gating ----------------------------------
+    # The discard prompt is gated on actual edits, not just on content: a
+    # freshly loaded (or reset) card reads as clean, so viewing a different
+    # card does not prompt; only a genuine edit re-arms the prompt.
+
+    def test_empty_editor_is_not_dirty(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel._dirty)
+
+    def test_typing_marks_dirty(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        self.assertTrue(panel._dirty)
+
+    def test_loading_a_card_leaves_it_clean(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel._on_saved_clicked(panel.saved_list.item(0))  # load "address"
+        self.assertFalse(panel._dirty)
+
+    def test_loading_then_loading_again_does_not_prompt(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel.ctrl_held = lambda: False
+        asked = []
+        panel._confirm_discard = lambda: asked.append(True) or False
+        panel._on_saved_clicked(panel.saved_list.item(0))  # load "address"
+        # Switching to another card without editing must not prompt.
+        self.assertTrue(panel.load_card(store.cards[1]))
+        self.assertEqual(asked, [])
+        self.assertEqual(panel.headword_input.text(), "receive")
+
+    def test_editing_loaded_card_then_loading_prompts(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel.ctrl_held = lambda: False
+        panel._on_saved_clicked(panel.saved_list.item(0))  # load "address"
+        panel.active_row.polish_input.setText("adres pocztowy")  # a real edit
+        self.assertTrue(panel._dirty)
+        asked = []
+        panel._confirm_discard = lambda: asked.append(True) or False
+        self.assertFalse(panel.load_card(store.cards[1]))  # declined
+        self.assertEqual(asked, [True])  # prompted because edited
+
+    def test_save_leaves_editor_clean(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        self.assertTrue(panel._dirty)
+        panel.save_card()
+        self.assertFalse(panel._dirty)
+
+    def test_starring_marks_dirty(self):
+        panel, _ = self._panel()
+        panel.set_starred(True)
+        self.assertTrue(panel._dirty)
+
+    def test_adding_an_example_marks_dirty(self):
+        panel, _ = self._panel()
+        panel.active_row.add_example("an example", focus=False)
+        self.assertTrue(panel._dirty)
+
+    def test_capturing_audio_only_marks_dirty(self):
+        # A grab that fills only audio (no headword/IPA/spelling) sets the URLs
+        # by direct assignment, which fires no textChanged; it must still mark
+        # the card dirty so the captured audio is not silently discarded.
+        panel, _ = self._panel()
+        panel.set_pronunciation(
+            ipa_uk=None,
+            ipa_us=None,
+            audio_uk_url="https://example/uk.mp3",
+            audio_us_url=None,
+        )
+        self.assertTrue(panel._dirty)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,6 +60,7 @@ class SenseRow(QFrame):
 
     activated = Signal(object)
     remove_requested = Signal(object)
+    edited = Signal()
 
     POS_OPTIONS = ["n", "v", "adj", "adv", "prep", "conj", "pron", "phrase"]
 
@@ -91,9 +92,11 @@ class SenseRow(QFrame):
         self.pos_combo.currentTextChanged.connect(
             lambda _=None: _mark_empty(self.pos_combo)
         )
+        self.pos_combo.currentTextChanged.connect(lambda _=None: self.edited.emit())
         _mark_empty(self.pos_combo)
         for field in (self.polish_input, self.english_input):
             field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
+            field.textChanged.connect(lambda _=None: self.edited.emit())
             _mark_empty(field)
 
         self.remove_button = QPushButton("x")
@@ -167,6 +170,7 @@ class SenseRow(QFrame):
         field_input.textChanged.connect(
             lambda _=None, f=field_input: _mark_empty(f)
         )
+        field_input.textChanged.connect(lambda _=None: self.edited.emit())
         _mark_empty(field_input)
         row.example_input = field_input
 
@@ -177,6 +181,12 @@ class SenseRow(QFrame):
         row_layout.addWidget(field_input)
         row_layout.addWidget(remove)
         self.examples_container.addWidget(row)
+
+        # Adding an example row is itself an edit. The pre-fill above happens
+        # before the textChanged hook is wired, so announce it explicitly here.
+        # During a programmatic load the panel suppresses the dirty flag, so this
+        # is harmless then.
+        self.edited.emit()
 
         if focus:
             field_input.setFocus()
@@ -190,6 +200,7 @@ class SenseRow(QFrame):
     def _remove_example(self, row) -> None:
         self.examples_container.removeWidget(row)
         row.deleteLater()
+        self.edited.emit()
 
     def examples(self) -> list:
         result = []
@@ -230,11 +241,22 @@ class FlashcardPanel(QWidget):
         # a duplicate. Cleared whenever the editor is reset to a blank card.
         self._loaded_card_id = None
         self._loaded_created_at = None
+        # Tracks whether the editor has unsaved user edits since it was last
+        # loaded, cleared or saved. Programmatic fills (load, reset, capture)
+        # run with `_suppress_dirty` set so they do not mark the card dirty;
+        # only genuine user edits flip the flag. The discard confirmation is
+        # gated on this, so viewing a freshly loaded card and clicking another
+        # never prompts.
+        self._dirty = False
+        self._suppress_dirty = False
         self.player = None
         self.audio_output = None
         self.init_ui()
         self.add_sense()
         self._refresh_saved_list()
+        # Sense rows added during init_ui/add_sense seeded the active row before
+        # the flag existed; the card is clean at startup.
+        self._dirty = False
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -322,6 +344,7 @@ class FlashcardPanel(QWidget):
             self.own_notation_input,
         ):
             field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
+            field.textChanged.connect(self._mark_dirty)
             _mark_empty(field)
 
         layout.addLayout(form)
@@ -378,6 +401,7 @@ class FlashcardPanel(QWidget):
         row = SenseRow()
         row.activated.connect(self.set_active_row)
         row.remove_requested.connect(self.remove_sense)
+        row.edited.connect(self._mark_dirty)
         self.senses_container.addWidget(row)
         self.set_active_row(row)
         self.sense_count_changed.emit(len(self._rows()))
@@ -394,6 +418,7 @@ class FlashcardPanel(QWidget):
             self.set_active_row(rows[index - 1])
 
     def remove_sense(self, row):
+        self._mark_dirty()
         rows = self._rows()
         if len(rows) <= 1:
             row.pos_combo.setCurrentText("")
@@ -482,6 +507,11 @@ class FlashcardPanel(QWidget):
         if audio_us_url:
             self._audio_us_url = audio_us_url
         self._update_play_buttons()
+        # Audio URLs are set by direct assignment (no textChanged signal), so a
+        # grab that captures only audio would not otherwise mark the card dirty.
+        # Capturing pronunciation is intent to build a card, so flag it here.
+        if audio_uk_url or audio_us_url:
+            self._mark_dirty()
 
     def _update_play_buttons(self):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
@@ -490,6 +520,7 @@ class FlashcardPanel(QWidget):
     # --- star -----------------------------------------------------------
 
     def _on_star_toggled(self, checked: bool):
+        self._mark_dirty()
         self.star_button.setText(self._STAR_SET if checked else self._STAR_EMPTY)
         self.star_button.setStyleSheet(
             "background-color: #f0b400; color: #000; font-weight: bold;"
@@ -521,6 +552,12 @@ class FlashcardPanel(QWidget):
         self.player.play()
 
     # --- card lifecycle -------------------------------------------------
+
+    def _mark_dirty(self) -> None:
+        """Record a genuine user edit. No-op while `_suppress_dirty` is set, so
+        programmatic fills (load, reset, capture) never mark the card dirty."""
+        if not self._suppress_dirty:
+            self._dirty = True
 
     def has_content(self) -> bool:
         text_inputs = (
@@ -602,7 +639,7 @@ class FlashcardPanel(QWidget):
         to discard unsaved content. ``force`` skips the confirmation. The headword
         and pronunciation are filled by the grab (see ``set_pronunciation``), not
         here, so the all-or-nothing gate sees a fully empty editor."""
-        if not force and self.has_content() and not self._confirm_discard():
+        if not force and self._dirty and not self._confirm_discard():
             return False
         self._reset_editor()
         return True
@@ -611,36 +648,43 @@ class FlashcardPanel(QWidget):
         # Ctrl+click skips the discard confirmation.
         if (
             not self.ctrl_held()
-            and self.has_content()
+            and self._dirty
             and not self._confirm_discard()
         ):
             return
         self._reset_editor()
 
     def _reset_editor(self):
-        for widget in (
-            self.headword_input,
-            self.spelling_uk_input,
-            self.spelling_us_input,
-            self.ipa_uk_input,
-            self.ipa_us_input,
-            self.own_notation_input,
-        ):
-            widget.clear()
-        self._audio_uk_url = None
-        self._audio_us_url = None
-        self._update_play_buttons()
-        self.star_button.setChecked(False)
-        for row in self._rows():
-            self.senses_container.removeWidget(row)
-            row.deleteLater()
-        self.active_row = None
-        self.add_sense()
-        # Back to building a fresh card: forget any loaded card and drop the
-        # selection highlight on the saved-cards list.
-        self._loaded_card_id = None
-        self._loaded_created_at = None
-        self.saved_list.clearSelection()
+        # Clearing fields fires textChanged/toggled which would otherwise mark
+        # the card dirty; suppress that so a reset leaves a clean editor.
+        self._suppress_dirty = True
+        try:
+            for widget in (
+                self.headword_input,
+                self.spelling_uk_input,
+                self.spelling_us_input,
+                self.ipa_uk_input,
+                self.ipa_us_input,
+                self.own_notation_input,
+            ):
+                widget.clear()
+            self._audio_uk_url = None
+            self._audio_us_url = None
+            self._update_play_buttons()
+            self.star_button.setChecked(False)
+            for row in self._rows():
+                self.senses_container.removeWidget(row)
+                row.deleteLater()
+            self.active_row = None
+            self.add_sense()
+            # Back to building a fresh card: forget any loaded card and drop the
+            # selection highlight on the saved-cards list.
+            self._loaded_card_id = None
+            self._loaded_created_at = None
+            self.saved_list.clearSelection()
+        finally:
+            self._suppress_dirty = False
+        self._dirty = False
 
     # --- saved cards list -----------------------------------------------
 
@@ -669,42 +713,51 @@ class FlashcardPanel(QWidget):
         this card in place. Returns False if the user declined to discard."""
         if (
             not self.ctrl_held()
-            and self.has_content()
+            and self._dirty
             and not self._confirm_discard()
         ):
             return False
         self._reset_editor()  # clears fields and any previous loaded id
-        _fill(self.headword_input, card.headword)
-        _fill(self.spelling_uk_input, card.spelling_uk or "")
-        _fill(self.spelling_us_input, card.spelling_us or "")
-        _fill(self.ipa_uk_input, card.ipa_uk or "")
-        _fill(self.ipa_us_input, card.ipa_us or "")
-        _fill(self.own_notation_input, card.own_notation or "")
-        self._audio_uk_url = card.audio_uk_url
-        self._audio_us_url = card.audio_us_url
-        self._update_play_buttons()
-        self.set_starred(card.starred)
+        # Filling the editor from a saved card is not a user edit; suppress the
+        # dirty flag for the whole load so the just-loaded card reads as clean
+        # and switching to another card does not prompt to discard.
+        self._suppress_dirty = True
+        try:
+            _fill(self.headword_input, card.headword)
+            _fill(self.spelling_uk_input, card.spelling_uk or "")
+            _fill(self.spelling_us_input, card.spelling_us or "")
+            _fill(self.ipa_uk_input, card.ipa_uk or "")
+            _fill(self.ipa_us_input, card.ipa_us or "")
+            _fill(self.own_notation_input, card.own_notation or "")
+            self._audio_uk_url = card.audio_uk_url
+            self._audio_us_url = card.audio_us_url
+            self._update_play_buttons()
+            self.set_starred(card.starred)
 
-        # Rebuild the sense rows from the card (drop the blank starter row first).
-        for row in self._rows():
-            self.senses_container.removeWidget(row)
-            row.deleteLater()
-        self.active_row = None
-        if card.senses:
-            for sense in card.senses:
+            # Rebuild the sense rows from the card (drop the blank starter row
+            # first).
+            for row in self._rows():
+                self.senses_container.removeWidget(row)
+                row.deleteLater()
+            self.active_row = None
+            if card.senses:
+                for sense in card.senses:
+                    self.add_sense()
+                    row = self.active_row
+                    row.pos_combo.setCurrentText(sense.pos)
+                    _fill(row.polish_input, sense.polish)
+                    _fill(row.english_input, sense.english)
+                    for example in sense.examples:
+                        row.add_example(example)
+                self.set_active_index(1)
+            else:
                 self.add_sense()
-                row = self.active_row
-                row.pos_combo.setCurrentText(sense.pos)
-                _fill(row.polish_input, sense.polish)
-                _fill(row.english_input, sense.english)
-                for example in sense.examples:
-                    row.add_example(example)
-            self.set_active_index(1)
-        else:
-            self.add_sense()
 
-        self._loaded_card_id = card.id
-        self._loaded_created_at = card.created_at or None
+            self._loaded_card_id = card.id
+            self._loaded_created_at = card.created_at or None
+        finally:
+            self._suppress_dirty = False
+        self._dirty = False
         return True
 
     def _confirm_discard(self) -> bool:
