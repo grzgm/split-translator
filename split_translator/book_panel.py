@@ -55,6 +55,12 @@ class BookPanel(QFrame):
 
         self.anchor_editor = None
 
+        # Latest scroll position per edition, updated as the views scroll and
+        # written on close so the next launch reopens where reading stopped.
+        # Seeded from the store so an unchanged session re-saves the same spot.
+        self._original_scroll = self.anchor_store.original_scroll
+        self._translation_scroll = self.anchor_store.translation_scroll
+
         self.init_ui()
 
     def init_ui(self):
@@ -87,8 +93,16 @@ class BookPanel(QFrame):
         layout.addLayout(nav_layout)
 
         self.tabs = QTabWidget()
-        self.original_view = BookView(self.original_document, self.profile)
-        self.translation_view = BookView(self.translation_document, self.profile)
+        self.original_view = BookView(
+            self.original_document,
+            self.profile,
+            initial_scroll=self.anchor_store.original_scroll,
+        )
+        self.translation_view = BookView(
+            self.translation_document,
+            self.profile,
+            initial_scroll=self.anchor_store.translation_scroll,
+        )
         self.tabs.addTab(self.original_view, "Original")
         self.tabs.addTab(self.translation_view, "Translation")
         layout.addWidget(self.tabs)
@@ -103,6 +117,13 @@ class BookPanel(QFrame):
 
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         self._update_position_label()
+        # Remember the latest position of whichever view moved, so it can be
+        # persisted on close. This fires for both user scrolls and mirrored
+        # (synced) scrolls, so both editions stay current.
+        if source_view is self.original_view:
+            self._original_scroll = (block_id, fraction)
+        else:
+            self._translation_scroll = (block_id, fraction)
         if not self.sync_enabled:
             return
         # Only mirror from the active tab.
@@ -215,5 +236,11 @@ class BookPanel(QFrame):
         # not deleted" warning).
         if self.anchor_editor is not None:
             self.anchor_editor.close()
+        # Persist the last scroll position of each edition so the next launch
+        # reopens where reading stopped. Uses the cached positions (updated as
+        # the views scrolled), so no async page read is needed at close time.
+        self.anchor_store.set_scroll(
+            self._original_scroll, self._translation_scroll
+        )
         # Await any in-flight anchor write so anchors are not lost on quit.
         self.anchor_store.shutdown()

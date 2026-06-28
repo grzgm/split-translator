@@ -59,3 +59,54 @@ class AnchorStoreTests(unittest.TestCase):
         b = anchor_path_for("/books/orig.epub", "/books/trans.pdf", root)
         self.assertEqual(a, b)
         self.assertEqual(a.parent, root)
+
+    def test_scroll_defaults_to_none_for_both_sides(self):
+        store = self._store()
+        self.assertIsNone(store.original_scroll)
+        self.assertIsNone(store.translation_scroll)
+
+    def test_set_scroll_then_reload_round_trips(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.set_scroll(("b3", 0.25), ("b7", 0.5))
+        store.shutdown()  # flush
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(reloaded.original_scroll, ("b3", 0.25))
+        self.assertEqual(reloaded.translation_scroll, ("b7", 0.5))
+
+    def test_set_scroll_keeps_existing_anchors(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.add("b1", "b2")
+        store.set_scroll(("b1", 0.0), ("b2", 0.0))
+        store.shutdown()
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(reloaded.anchors, [("b1", "b2")])
+        self.assertEqual(reloaded.original_scroll, ("b1", 0.0))
+
+    def test_set_scroll_with_none_clears_that_side(self):
+        store = self._store()
+        store.set_scroll(("b3", 0.25), None)
+        self.assertEqual(store.original_scroll, ("b3", 0.25))
+        self.assertIsNone(store.translation_scroll)
+
+    def test_load_old_file_without_scroll_starts_none(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        # A file written before scroll positions existed (anchors only).
+        path.write_text(
+            '{"version": 1, "anchors": [{"original": "b1", "translation": "b2"}]}',
+            encoding="utf-8",
+        )
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        self.assertEqual(store.anchors, [("b1", "b2")])
+        self.assertIsNone(store.original_scroll)
+        self.assertIsNone(store.translation_scroll)

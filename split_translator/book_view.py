@@ -81,13 +81,37 @@ class BookView(QWebEngineView):
         document: BookDocument,
         profile: QWebEngineProfile,
         parent=None,
+        initial_scroll: tuple[str, float] | None = None,
     ):
         super().__init__(parent)
         self._document = document
         self._suppress_scroll = False
+        self._initial_scroll = initial_scroll
         self.setPage(QWebEnginePage(profile, self))
+        # Restore the saved scroll position once the page has laid out: offsets
+        # are only correct after load, so scrolling before loadFinished would
+        # land at the top. Connect before setHtml so the signal is not missed.
+        if initial_scroll is not None:
+            self.loadFinished.connect(self._restore_initial_scroll)
         self.setHtml(document.html, QUrl("about:blank"))
         self.page().scrollPositionChanged.connect(self.request_scroll_state)
+
+    def _restore_initial_scroll(self, ok: bool) -> None:
+        # Wait for a successful load before restoring: a failed (ok=False) load
+        # leaves the handler connected so a later good load still restores.
+        if not ok:
+            return
+        self.loadFinished.disconnect(self._restore_initial_scroll)
+        if self._initial_scroll is None:
+            return
+        block_id, fraction = self._initial_scroll
+        self.scroll_to(block_id, fraction)
+        # Re-announce the restored position. The scroll_to above suppresses the
+        # echoed scrollPositionChanged, so without this the only position a
+        # listener (the panel's scroll cache) ever sees from load is the top of
+        # the document, which would then be persisted on close, wiping the saved
+        # spot. Emitting here keeps that cache at the genuine restored position.
+        self.scrolled.emit(block_id, fraction)
 
     def request_scroll_state(self) -> None:
         """Read the current scroll position and emit `scrolled`."""

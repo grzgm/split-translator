@@ -21,20 +21,55 @@ def anchor_path_for(
     return root / f".translation_tool_anchors_{key}.json"
 
 
-def load_anchors(filepath: Path) -> list[tuple[str, str]]:
-    """Load anchor pairs, tolerating a missing or malformed file by returning []."""
+def _load_raw(filepath: Path) -> dict:
+    """Read and parse the file, tolerating a missing or malformed one ({})."""
     if not filepath.exists():
-        return []
+        return {}
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             raw = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return []
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_anchors(filepath: Path) -> list[tuple[str, str]]:
+    """Load anchor pairs, tolerating a missing or malformed file by returning []."""
+    raw = _load_raw(filepath)
     return [
         (pair["original"], pair["translation"])
         for pair in raw.get("anchors", [])
         if "original" in pair and "translation" in pair
     ]
+
+
+def _parse_scroll(value) -> tuple[str, float] | None:
+    """Parse one side's saved scroll ({"id": str, "fraction": float}) or None."""
+    if not isinstance(value, dict):
+        return None
+    block_id = value.get("id")
+    if not block_id:
+        return None
+    try:
+        fraction = float(value.get("fraction", 0.0))
+    except (TypeError, ValueError):
+        fraction = 0.0
+    return (block_id, fraction)
+
+
+def load_scroll(filepath: Path) -> tuple[
+    tuple[str, float] | None, tuple[str, float] | None
+]:
+    """Load the saved (original, translation) scroll positions, each or None.
+    A file written before scroll positions existed has no "scroll" key, so both
+    sides come back None."""
+    scroll = _load_raw(filepath).get("scroll", {})
+    if not isinstance(scroll, dict):
+        return (None, None)
+    return (
+        _parse_scroll(scroll.get("original")),
+        _parse_scroll(scroll.get("translation")),
+    )
 
 
 def write_anchors(filepath: Path, data: dict) -> None:
@@ -61,6 +96,8 @@ class AnchorStore:
         self.filepath = filepath
         self.save_worker = None
         self.anchors: list[tuple[str, str]] = load_anchors(filepath)
+        # Last-known scroll position per edition, restored on the next launch.
+        self.original_scroll, self.translation_scroll = load_scroll(filepath)
 
     def add(self, original_id: str, translation_id: str) -> None:
         self.anchors.append((original_id, translation_id))
@@ -83,13 +120,40 @@ class AnchorStore:
                 pairs.append((orig_index[original_id], trans_index[translation_id]))
         return pairs
 
+    def set_scroll(
+        self,
+        original: tuple[str, float] | None,
+        translation: tuple[str, float] | None,
+    ) -> None:
+        """Store both editions' scroll positions and persist. Pass None for a
+        side whose position is unknown (it is then not restored)."""
+        self.original_scroll = original
+        self.translation_scroll = translation
+        self.save()
+
+    @staticmethod
+    def _scroll_dict(position: tuple[str, float] | None) -> dict | None:
+        if position is None:
+            return None
+        return {"id": position[0], "fraction": position[1]}
+
     def _serialise(self) -> dict:
-        return {
+        data = {
             "version": SCHEMA_VERSION,
             "anchors": [
                 {"original": o, "translation": t} for o, t in self.anchors
             ],
         }
+        scroll = {}
+        original = self._scroll_dict(self.original_scroll)
+        translation = self._scroll_dict(self.translation_scroll)
+        if original is not None:
+            scroll["original"] = original
+        if translation is not None:
+            scroll["translation"] = translation
+        if scroll:
+            data["scroll"] = scroll
+        return data
 
     def save(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
