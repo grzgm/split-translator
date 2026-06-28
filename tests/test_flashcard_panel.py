@@ -533,6 +533,21 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.editor_scroll.widgetResizable())
         self.assertFalse(panel.editor_splitter.childrenCollapsible())
 
+    def test_resizing_panel_grows_the_list_not_the_editor(self):
+        # Making the whole panel taller must keep the editor at its set height
+        # and give all the new space to the saved-cards list.
+        panel, _ = self._panel()
+        panel.resize(400, 700)
+        panel.show()
+        QApplication.processEvents()
+        self.addCleanup(panel.hide)
+        editor_before, list_before = panel.editor_splitter.sizes()
+        panel.resize(400, 1000)
+        QApplication.processEvents()
+        editor_after, list_after = panel.editor_splitter.sizes()
+        self.assertEqual(editor_after, editor_before)  # editor height unchanged
+        self.assertGreater(list_after, list_before)  # list took the new space
+
     def test_reset_scrolls_editor_to_top(self):
         panel, _ = self._panel()
         # Force a small size so the editor content overflows and the scroll bar

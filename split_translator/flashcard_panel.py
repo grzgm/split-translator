@@ -412,13 +412,15 @@ class FlashcardPanel(QWidget):
         saved_layout.addWidget(self.saved_list, stretch=1)
 
         # The splitter handle is the draggable boundary that sets the editor
-        # height. The editor pane gets most of the initial height; the list pane
-        # stretches to fill the rest. Neither pane collapses to zero.
+        # height. Stretch factor 0 on the editor and 1 on the list means that
+        # when the whole panel is resized, the editor keeps its set height and
+        # the saved-cards list absorbs all the extra (or lost) space. Neither
+        # pane collapses to zero. setSizes seeds the initial split.
         self.editor_splitter = QSplitter(Qt.Orientation.Vertical)
         self.editor_splitter.addWidget(self.editor_scroll)
         self.editor_splitter.addWidget(saved_widget)
         self.editor_splitter.setChildrenCollapsible(False)
-        self.editor_splitter.setStretchFactor(0, 3)
+        self.editor_splitter.setStretchFactor(0, 0)
         self.editor_splitter.setStretchFactor(1, 1)
         self.editor_splitter.setSizes([480, 160])
         outer.addWidget(self.editor_splitter)
