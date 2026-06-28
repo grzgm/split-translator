@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from .config import Config, PROJECT_ROOT
+from .config import Config, CONFIG_DIR
 from .dictionary_panel import DictionaryPanel
 from .flashcard_panel import FlashcardPanel
 from .flashcards import FlashcardStore
@@ -31,10 +31,10 @@ class TranslationTool(QMainWindow):
         self.config = config
         self.profile = profile
 
-        history_file = PROJECT_ROOT / ".translation_tool_history.json"
+        history_file = CONFIG_DIR / "history.json"
         self.history_panel = HistoryPanel(history_file)
 
-        flashcards_file = PROJECT_ROOT / ".translation_tool_flashcards.json"
+        flashcards_file = CONFIG_DIR / "flashcards.json"
         self.flashcard_store = FlashcardStore(flashcards_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
 

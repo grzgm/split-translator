@@ -119,6 +119,7 @@ def load_cards(filepath: Path) -> list[Card]:
 
 def write_cards(filepath: Path, data: dict) -> None:
     """Write the serialised structure to disk (runs on the worker thread)."""
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 

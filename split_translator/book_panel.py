@@ -18,7 +18,7 @@ from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
 from .book_loader import load_book
 from .book_sync import BookSync
 from .book_view import BookView
-from .config import Config, PROJECT_ROOT
+from .config import Config, CONFIG_DIR
 
 
 class BookPanel(QFrame):
@@ -39,7 +39,7 @@ class BookPanel(QFrame):
             anchor_path_for(
                 config.original_path,
                 config.translation_path,
-                PROJECT_ROOT,
+                CONFIG_DIR,
             )
         )
         self.book_sync = BookSync(

@@ -57,6 +57,7 @@ class SaveWorker(QThread):
         self.data = data
 
     def run(self):
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
         with open(self.filepath, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
 

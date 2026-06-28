@@ -18,7 +18,7 @@ def anchor_path_for(
     key = hashlib.sha1(
         f"{original_path}\n{translation_path}".encode("utf-8")
     ).hexdigest()[:16]
-    return root / f".translation_tool_anchors_{key}.json"
+    return root / f"anchors_{key}.json"
 
 
 def _load_raw(filepath: Path) -> dict:
@@ -105,6 +105,7 @@ def load_scroll(filepath: Path) -> dict[str, _ScrollPair]:
 
 
 def write_anchors(filepath: Path, data: dict) -> None:
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 

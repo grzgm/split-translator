@@ -5,9 +5,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# config.json lives next to the project root, one level above this package.
+# All personal config and storage lives in a hidden .config dir at the project
+# root, one level above this package, so the project root stays uncluttered.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config.json"
+CONFIG_DIR = PROJECT_ROOT / ".config"
+CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
 @dataclass(frozen=True)
@@ -24,10 +26,14 @@ def load_config(config_path: Path = CONFIG_PATH) -> Config:
 
     Exits with a helpful message if the config file is missing or malformed.
     """
+    # Ensure the .config dir exists so the storage workers can write into it.
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
     if not config_path.exists():
         sys.exit(
             f"Config file not found: {config_path}\n"
-            "Copy config.sample.json to config.json and fill in your book paths."
+            "Copy config.sample.json to .config/config.json and fill in your "
+            "book paths."
         )
 
     try:

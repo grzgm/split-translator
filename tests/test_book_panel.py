@@ -130,7 +130,7 @@ class BookPanelCloseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = BookPanel(_config(d), profile)
-            # close_doc writes the store under PROJECT_ROOT; remove it after.
+            # close_doc writes the store under the .config dir; remove it after.
             self.addCleanup(
                 panel.anchor_store.filepath.unlink, missing_ok=True
             )
@@ -151,7 +151,7 @@ class BookPanelCloseTests(unittest.TestCase):
 
 class BookPanelScrollMemoryTests(unittest.TestCase):
     def _panel(self, cfg, profile):
-        # BookPanel writes its anchor store under the real PROJECT_ROOT, so
+        # BookPanel writes its anchor store under the real .config dir, so
         # register both the in-flight-write wait and removal of the store file
         # to keep the repo directory clean after the test.
         panel = BookPanel(cfg, profile)
@@ -214,10 +214,10 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
                 READER_SURFACE,
                 anchor_path_for,
             )
-            from split_translator.config import PROJECT_ROOT
+            from split_translator.config import CONFIG_DIR
 
             path = anchor_path_for(
-                cfg.original_path, cfg.translation_path, PROJECT_ROOT
+                cfg.original_path, cfg.translation_path, CONFIG_DIR
             )
             seed = AnchorStore(path)
             seed.set_scroll(READER_SURFACE, ("b1", 0.0), ("b1", 0.0))
