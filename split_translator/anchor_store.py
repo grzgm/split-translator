@@ -4,6 +4,7 @@ SaveWorker, in-flight write awaited on shutdown)."""
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QThread
@@ -125,9 +126,23 @@ class SaveWorker(QThread):
 class AnchorStore:
     """Owns the in-memory anchor list and persists it to a JSON file."""
 
-    def __init__(self, filepath: Path):
+    def __init__(
+        self,
+        filepath: Path,
+        original_path: str | None = None,
+        translation_path: str | None = None,
+    ):
         self.filepath = filepath
         self.save_worker = None
+        # Informational only: the two books' file names, recorded so the
+        # hash-named anchor file can be told apart at a glance. Just the
+        # basename, never the full path, so no machine path lands in the file.
+        self.original_file = (
+            os.path.basename(original_path) if original_path else None
+        )
+        self.translation_file = (
+            os.path.basename(translation_path) if translation_path else None
+        )
         self.anchors: list[tuple[str, str]] = load_anchors(filepath)
         # Last-known scroll position per surface (reader / editor), each an
         # (original, translation) pair, restored on the next launch.
@@ -183,10 +198,17 @@ class AnchorStore:
     def _serialise(self) -> dict:
         data = {
             "version": SCHEMA_VERSION,
-            "anchors": [
-                {"original": o, "translation": t} for o, t in self.anchors
-            ],
         }
+        # Informational book file names, written near the top so the file is
+        # self-identifying. Omitted when unknown (e.g. a store built without
+        # paths in a test) to keep the file clean.
+        if self.original_file is not None:
+            data["original_file"] = self.original_file
+        if self.translation_file is not None:
+            data["translation_file"] = self.translation_file
+        data["anchors"] = [
+            {"original": o, "translation": t} for o, t in self.anchors
+        ]
         scroll = {}
         for surface, (original, translation) in self.scroll.items():
             side = {}

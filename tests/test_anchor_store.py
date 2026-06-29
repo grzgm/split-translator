@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,6 +131,51 @@ class AnchorStoreTests(unittest.TestCase):
         self.assertEqual(store.anchors, [("b1", "b2")])
         self.assertEqual(store.get_scroll(READER_SURFACE), (None, None))
         self.assertEqual(store.get_scroll(EDITOR_SURFACE), (None, None))
+
+    def test_writes_book_basenames_for_information(self):
+        # The two book file names are written near the top so the hash-named
+        # file can be identified at a glance. Only the basename, never a path.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(
+            path, "/books/library/Dune.epub", "/books/library/Diuna.epub"
+        )
+        store.add("b1", "b2")
+        store.shutdown()  # flush
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(raw["original_file"], "Dune.epub")
+        self.assertEqual(raw["translation_file"], "Diuna.epub")
+        # The full path must never leak into the file.
+        self.assertNotIn("/books/library", path.read_text(encoding="utf-8"))
+
+    def test_omits_filename_fields_when_paths_unknown(self):
+        # A store built without paths (e.g. in a test) writes no filename keys.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.add("b1", "b2")
+        store.shutdown()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("original_file", raw)
+        self.assertNotIn("translation_file", raw)
+
+    def test_filename_fields_are_ignored_on_load(self):
+        # The fields are informational; loading a file that has them must work
+        # and must not disturb anchors or scroll.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        path.write_text(
+            '{"version": 1, "original_file": "A.epub", '
+            '"translation_file": "B.epub", '
+            '"anchors": [{"original": "b1", "translation": "b2"}]}',
+            encoding="utf-8",
+        )
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        self.assertEqual(store.anchors, [("b1", "b2")])
 
     def test_flat_scroll_shape_loads_as_reader(self):
         # A file written by the first scroll-memory version stored the position

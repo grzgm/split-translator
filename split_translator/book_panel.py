@@ -40,7 +40,9 @@ class BookPanel(QFrame):
                 config.original_path,
                 config.translation_path,
                 CONFIG_DIR,
-            )
+            ),
+            config.original_path,
+            config.translation_path,
         )
         self.book_sync = BookSync(
             len(self.original_document.block_ids),
