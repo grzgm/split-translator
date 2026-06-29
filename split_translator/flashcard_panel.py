@@ -251,6 +251,12 @@ class FlashcardPanel(QWidget):
         # never prompts.
         self._dirty = False
         self._suppress_dirty = False
+        # Snapshot of the grab fields exactly as the last autofill left them
+        # (the six text fields plus the two audio URLs). A later search re-fills
+        # the card only while the fields still match this; the moment the user
+        # edits any grab field the card no longer matches and is left alone.
+        # None means no autofill has run on the current (empty) editor yet.
+        self._last_autofill = None
         self.player = None
         self.audio_output = None
         self.init_ui()
@@ -516,6 +522,32 @@ class FlashcardPanel(QWidget):
                 return False
         return not (self._audio_uk_url or self._audio_us_url)
 
+    def _grab_fields_snapshot(self) -> tuple:
+        """Current value of every grab field, in the order the snapshot stores
+        them. Compared against ``_last_autofill`` to tell an untouched autofill
+        from one the user has edited."""
+        return (
+            self.headword_input.text(),
+            self.ipa_uk_input.text(),
+            self.ipa_us_input.text(),
+            self.spelling_uk_input.text(),
+            self.spelling_us_input.text(),
+            self._audio_uk_url,
+            self._audio_us_url,
+        )
+
+    def _grab_fields_unchanged_by_user(self) -> bool:
+        """True when the grab fields may be overwritten by a fresh autofill:
+        either every field is still empty (no autofill yet, or a cleared card),
+        or they all still hold exactly what the last autofill wrote. Returns
+        False once the user has edited any grab field."""
+        if self._grab_fields_empty():
+            return True
+        return (
+            self._last_autofill is not None
+            and self._grab_fields_snapshot() == self._last_autofill
+        )
+
     def set_pronunciation(
         self,
         ipa_uk,
@@ -526,26 +558,33 @@ class FlashcardPanel(QWidget):
         spelling_us=None,
         word=None,
     ):
-        # All-or-nothing: fill the headword, IPA, spelling and audio only when
-        # every one of those fields is still empty. If anything is already
-        # filled (a manual edit or an earlier grab), leave the whole card
-        # untouched so a later search never clobbers in-progress work.
-        if not self._grab_fields_empty():
+        # All-or-nothing as a group: fill the headword, IPA, spelling and audio
+        # only while every one of those fields is either still empty or still
+        # holds exactly what the previous autofill wrote. The moment the user
+        # edits any grab field the card no longer matches and a later search
+        # leaves it untouched, so in-progress work is never clobbered. While the
+        # fields are still the untouched autofill, a new search replaces them
+        # with the new word's data.
+        if not self._grab_fields_unchanged_by_user():
             return
-        if word:
-            _fill(self.headword_input, word)
-        if ipa_uk:
-            _fill(self.ipa_uk_input, ipa_uk)
-        if ipa_us:
-            _fill(self.ipa_us_input, ipa_us)
-        if spelling_uk:
-            _fill(self.spelling_uk_input, spelling_uk)
-        if spelling_us:
-            _fill(self.spelling_us_input, spelling_us)
-        if audio_uk_url:
-            self._audio_uk_url = audio_uk_url
-        if audio_us_url:
-            self._audio_us_url = audio_us_url
+        # Write every grab field (even to empty) so a re-fill clears values the
+        # previous word had but the new one lacks; otherwise the snapshot would
+        # not match on the next search. These are programmatic fills, so suppress
+        # the dirty flag here and restore the "capture is intent" mark below.
+        self._suppress_dirty = True
+        try:
+            _fill(self.headword_input, word or "")
+            _fill(self.ipa_uk_input, ipa_uk or "")
+            _fill(self.ipa_us_input, ipa_us or "")
+            _fill(self.spelling_uk_input, spelling_uk or "")
+            _fill(self.spelling_us_input, spelling_us or "")
+            self._audio_uk_url = audio_uk_url or None
+            self._audio_us_url = audio_us_url or None
+        finally:
+            self._suppress_dirty = False
+        # Remember exactly what this autofill left so the next search can tell an
+        # untouched autofill from one the user has since edited.
+        self._last_autofill = self._grab_fields_snapshot()
         self._update_play_buttons()
         # Audio URLs are set by direct assignment (no textChanged signal), so a
         # grab that captures only audio would not otherwise mark the card dirty.
@@ -721,6 +760,10 @@ class FlashcardPanel(QWidget):
             # selection highlight on the saved-cards list.
             self._loaded_card_id = None
             self._loaded_created_at = None
+            # Forget the previous autofill snapshot; the empty editor is then
+            # open to a fresh autofill (and a later load cannot be mistaken for
+            # an untouched autofill and overwritten).
+            self._last_autofill = None
             self.saved_list.clearSelection()
         finally:
             self._suppress_dirty = False

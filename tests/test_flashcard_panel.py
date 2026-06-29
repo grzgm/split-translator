@@ -214,6 +214,43 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "")
         self.assertEqual(panel.ipa_uk_input.text(), "")
 
+    def test_second_grab_replaces_untouched_autofill(self):
+        # Autofill once, then a new search re-fills every grab field with the
+        # new word's data because the user has not touched the autofilled ones.
+        panel, _ = self._panel()
+        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", "ax.mp3", "uk", "us", word="run")
+        panel.set_pronunciation("/cc/", None, "c.mp3", None, "uk2", None, word="walk")
+        self.assertEqual(panel.headword_input.text(), "walk")
+        self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
+        self.assertEqual(panel.spelling_uk_input.text(), "uk2")
+        self.assertEqual(panel._audio_uk_url, "c.mp3")
+        # Fields the new word lacks are cleared, not left from the first word.
+        self.assertEqual(panel.ipa_us_input.text(), "")
+        self.assertEqual(panel.spelling_us_input.text(), "")
+        self.assertIsNone(panel._audio_us_url)
+
+    def test_second_grab_blocked_after_user_edits_a_grab_field(self):
+        # Autofill once, the user edits one grab field, then a new search must
+        # leave the whole card alone (the edit is in-progress work).
+        panel, _ = self._panel()
+        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.headword_input.setText("my own word")  # user edit
+        panel.set_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
+        self.assertEqual(panel.headword_input.text(), "my own word")
+        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")  # unchanged
+        self.assertEqual(panel.spelling_uk_input.text(), "uk")
+        self.assertEqual(panel._audio_uk_url, "a.mp3")
+
+    def test_grab_does_not_overwrite_a_loaded_card(self):
+        # Loading a saved card clears the autofill snapshot, so a later grab
+        # (e.g. an in-flight Cambridge page finishing) must not overwrite it.
+        panel, _ = self._panel()
+        card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
+        panel.load_card(card)
+        panel.set_pronunciation("/cc/", None, "c.mp3", None, word="walk")
+        self.assertEqual(panel.headword_input.text(), "loaded")
+        self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
+
     def test_new_card_clears_without_setting_headword(self):
         panel, _ = self._panel()
         # Empty editor: no discard prompt, returns True, clears.
