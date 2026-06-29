@@ -68,6 +68,30 @@ class BookSync:
     ) -> tuple[int, float]:
         return self._map(index, fraction, from_original=False)
 
+    def original_block_to_translation(self, index: int) -> int:
+        """Map a whole original block to the single best-matching translation
+        block index. Unlike the scroll mappers (which map a top-edge position and
+        keep the fraction), this maps the block's centre, so a block whose top
+        maps to, say, 60.8 picks the block its body sits in (61) rather than
+        truncating its top edge to 60. Use this for block-level marking."""
+        return self._map_block(index, from_original=True)
+
+    def translation_block_to_original(self, index: int) -> int:
+        """Map a whole translation block to the best-matching original block
+        index (see `original_block_to_translation`)."""
+        return self._map_block(index, from_original=False)
+
+    def _map_block(self, index: int, from_original: bool) -> int:
+        # Map the block CENTRE (fraction 0.5), not its top edge, and take the
+        # block that centre lands in (the floor of the mapped scalar, which is
+        # exactly what _map returns as its index). Mapping the top edge biases
+        # the result one block early when a block maps high into a destination
+        # block (e.g. original block 51's top maps to 60.8, truncating to 60);
+        # mapping the centre lands inside the block the source block overlaps
+        # (61). No extra rounding: _map already floors to the containing block.
+        dst_index, _ = self._map(index, 0.5, from_original)
+        return dst_index
+
     def _map(
         self, index: int, fraction: float, from_original: bool
     ) -> tuple[int, float]:

@@ -244,6 +244,9 @@ class BookPanel(QFrame):
     def search(self, term: str) -> None:
         self.search_term = term.strip()
         if not self.search_term:
+            # Clearing the term clears the section marks in both editions.
+            self.original_view.clear_search_mark()
+            self.translation_view.clear_search_mark()
             return
         self.current_match = 0
         self.current_view().find(
@@ -256,20 +259,78 @@ class BookPanel(QFrame):
         self.prev_button.setEnabled(count > 0)
         self.next_button.setEnabled(count > 0)
         self.update_match_label()
+        self._mark_current_match(count)
 
     def go_to_next(self) -> None:
         if not self.match_count:
             return
         self.current_match = self.current_match % self.match_count + 1
-        self.current_view().find(self.search_term, True, lambda _c: None)
+        self.current_view().find(
+            self.search_term, True, lambda _c: self._mark_current_match(1)
+        )
         self.update_match_label()
 
     def go_to_previous(self) -> None:
         if not self.match_count:
             return
         self.current_match = (self.current_match - 2) % self.match_count + 1
-        self.current_view().find(self.search_term, False, lambda _c: None)
+        self.current_view().find(
+            self.search_term, False, lambda _c: self._mark_current_match(1)
+        )
         self.update_match_label()
+
+    def _mark_current_match(self, count: int) -> None:
+        # Highlight the section holding the current match in the active edition,
+        # and the anchor-equivalent section in the other edition. With no match
+        # (or a blank term) clear both marks. The find has just located and
+        # scrolled the match into view, so the active view can name the block.
+        active = self.current_view()
+        other = (
+            self.translation_view
+            if active is self.original_view
+            else self.original_view
+        )
+        if not count or not self.search_term:
+            active.clear_search_mark()
+            other.clear_search_mark()
+            return
+        active.matched_block_id(
+            self.search_term,
+            lambda block_id: self._on_matched_block(active, other, block_id),
+        )
+
+    def _on_matched_block(self, active, other, block_id: str) -> None:
+        if not block_id:
+            active.clear_search_mark()
+            other.clear_search_mark()
+            return
+        active.mark_search_block(block_id)
+        # Mirror the mark to the anchor-equivalent block in the other edition.
+        # Marking is a layout-independent CSS toggle, so it is safe on the hidden
+        # tab (unlike a scroll, it cannot drift); the mark is already in place
+        # when the user switches to it. Only mirror when sync is on, consistent
+        # with scroll sync; otherwise clear the other side's stale mark.
+        if not self.sync_enabled:
+            other.clear_search_mark()
+            return
+        if active is self.original_view:
+            src_ids = self.original_document.block_ids
+            dst_ids = self.translation_document.block_ids
+            mapper = self.book_sync.original_block_to_translation
+        else:
+            src_ids = self.translation_document.block_ids
+            dst_ids = self.original_document.block_ids
+            mapper = self.book_sync.translation_block_to_original
+        try:
+            index = src_ids.index(block_id)
+        except ValueError:
+            other.clear_search_mark()
+            return
+        # Map whole-block to whole-block (centre + round), so the marked
+        # translation section is the one the original section overlaps, not the
+        # block before it that a top-edge + truncate mapping would pick.
+        dst_index = mapper(index)
+        other.mark_search_block(dst_ids[dst_index])
 
     def _reseed_sync(self) -> None:
         self.book_sync.set_anchors(

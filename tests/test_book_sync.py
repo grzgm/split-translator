@@ -72,3 +72,28 @@ class BookSyncTests(unittest.TestCase):
         index, fraction = s.translation_to_original(10, 0.0)
         self.assertEqual(index, 5)
         self.assertAlmostEqual(fraction, 0.0, places=6)
+
+    def test_block_mapper_maps_an_exact_anchor_block(self):
+        s = BookSync(100, 100)
+        s.set_anchors([(50, 60)])
+        self.assertEqual(s.original_block_to_translation(50), 60)
+        self.assertEqual(s.translation_block_to_original(60), 50)
+
+    def test_block_mapper_rounds_instead_of_truncating_early(self):
+        # The bug this fixes: a block whose mapped position lands high in a
+        # destination block (here original 51 maps to ~60.8) must pick the block
+        # it mostly overlaps (61), not truncate down to 60.
+        s = BookSync(100, 100)
+        s.set_anchors([(50, 60)])
+        self.assertEqual(s.original_block_to_translation(51), 61)
+        # The fraction-carrying scroll mapper still returns 60 + a high fraction;
+        # confirm the block mapper diverges from a naive truncation of that.
+        dst_index, dst_fraction = s.original_to_translation(51, 0.0)
+        self.assertEqual(dst_index, 60)
+        self.assertGreater(dst_fraction, 0.5)
+
+    def test_block_mapper_clamps_to_last_block(self):
+        s = BookSync(100, 100)
+        # The end anchor is (99, 99); mapping the last block must not round past
+        # it into a non-existent block 100.
+        self.assertEqual(s.original_block_to_translation(99), 99)

@@ -163,6 +163,52 @@ class BookViewReapplyScrollTests(unittest.TestCase):
         self.assertEqual(view._pending_reapply, ("b1", 0.5))
 
 
+class BookViewSearchMarkTests(unittest.TestCase):
+    def test_mark_search_block_runs_the_toggle_js_with_the_id(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view.mark_search_block("b1")
+        self.assertEqual(len(calls), 1)
+        self.assertIn("st-search-block", calls[0])
+        self.assertIn('"b1"', calls[0])  # id JSON-quoted into the IIFE arg
+
+    def test_clear_search_mark_runs_the_toggle_js_with_empty_id(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view.clear_search_mark()
+        self.assertEqual(len(calls), 1)
+        self.assertIn("st-search-block", calls[0])
+        self.assertIn('("")', calls[0])  # cleared: empty id passed to the IIFE
+
+    def test_matched_block_id_forwards_the_blocks_id_to_the_callback(self):
+        # The nearest-term JS returns the block id; matched_block_id forwards it
+        # (or "" for no match). Stub runJavaScript to invoke the callback with a
+        # canned id, so no real page read runs.
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+
+        def fake_run(js, callback):
+            self.assertIn('"needle"', js)  # term is JSON-quoted into the JS
+            callback("b1")
+
+        view.page().runJavaScript = fake_run
+        got = []
+        view.matched_block_id("needle", got.append)
+        self.assertEqual(got, ["b1"])
+
+    def test_matched_block_id_passes_empty_string_when_no_block(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        view.page().runJavaScript = lambda js, callback: callback(None)
+        got = []
+        view.matched_block_id("needle", got.append)
+        self.assertEqual(got, [""])  # None becomes ""
+
+
 import tempfile
 
 from split_translator.config import Config
@@ -437,6 +483,86 @@ class BookPanelTabSwitchTests(unittest.TestCase):
             bid = panel.original_document.block_ids[2]
             panel._sync_from(panel.original_view, bid, 0.5)  # user scrolls
             self.assertIsNone(panel._original_sync_target)
+
+
+class BookPanelSearchMarkTests(unittest.TestCase):
+    def _panel(self, cfg, profile):
+        panel = BookPanel(cfg, profile)
+        self.addCleanup(panel.anchor_store.shutdown)
+        self.addCleanup(panel.anchor_store.filepath.unlink, missing_ok=True)
+        return panel
+
+    def _stub_marks(self, panel):
+        # Record mark/clear calls per view; stub matched_block_id so the active
+        # view reports a canned block without running real page JS.
+        marks = {"orig": [], "trans": []}
+        panel.original_view.mark_search_block = lambda bid: marks["orig"].append(bid)
+        panel.translation_view.mark_search_block = lambda bid: marks["trans"].append(bid)
+        panel.original_view.clear_search_mark = lambda: marks["orig"].append(None)
+        panel.translation_view.clear_search_mark = lambda: marks["trans"].append(None)
+        return marks
+
+    def test_match_marks_active_block_and_mapped_block_in_the_other(self):
+        # A find with a match marks the matched block in the active edition and
+        # the anchor-equivalent block in the other. Same book for both editions,
+        # so the mapping is identity: marking b1 in the original marks b1 too.
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            marks = self._stub_marks(panel)
+            bid = panel.original_document.block_ids[1]
+            panel.original_view.matched_block_id = (
+                lambda term, cb: cb(bid)
+            )
+            panel.search_term = "needle"
+            panel._mark_current_match(1)
+            self.assertEqual(marks["orig"], [bid])
+            self.assertEqual(marks["trans"], [bid])  # identity mapping
+
+    def test_no_match_clears_both_marks(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            marks = self._stub_marks(panel)
+            panel.search_term = "needle"
+            panel._mark_current_match(0)  # zero matches
+            self.assertEqual(marks["orig"], [None])
+            self.assertEqual(marks["trans"], [None])
+
+    def test_empty_matched_block_clears_both_marks(self):
+        # A match count but no resolvable block (the term spans nodes oddly)
+        # clears rather than marking nothing.
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            marks = self._stub_marks(panel)
+            panel.original_view.matched_block_id = lambda term, cb: cb("")
+            panel.search_term = "needle"
+            panel._mark_current_match(1)
+            self.assertEqual(marks["orig"], [None])
+            self.assertEqual(marks["trans"], [None])
+
+    def test_sync_off_marks_only_the_active_view(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            marks = self._stub_marks(panel)
+            panel.sync_enabled = False
+            bid = panel.original_document.block_ids[1]
+            panel.original_view.matched_block_id = lambda term, cb: cb(bid)
+            panel.search_term = "needle"
+            panel._mark_current_match(1)
+            self.assertEqual(marks["orig"], [bid])
+            self.assertEqual(marks["trans"], [None])  # other side cleared, not marked
+
+    def test_blank_search_clears_both_marks(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            marks = self._stub_marks(panel)
+            panel.search("   ")  # blank term
+            self.assertEqual(marks["orig"], [None])
+            self.assertEqual(marks["trans"], [None])
 
 
 class BookPanelEditorTests(unittest.TestCase):

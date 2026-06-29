@@ -71,6 +71,65 @@ _TOPMOST_ID_JS = """
 })();
 """
 
+# Injected once per load: adds the search-block overlay style. The reader marks
+# the section holding the current find match (and its anchor-equivalent in the
+# other edition) by toggling this class. The class name is distinct from the
+# anchor editor's classes so the two never clash if a view ever carries both.
+_SEARCH_STYLE_JS = """
+(function() {
+    if (document.getElementById('st-search-style')) return;
+    var style = document.createElement('style');
+    style.id = 'st-search-style';
+    style.textContent =
+        '.st-search-block { background: #fff3a8; outline: 2px solid #e0b400; }';
+    (document.head || document.documentElement).appendChild(style);
+})();
+"""
+
+# Toggles the search-block class. Self-contained (no dependency on a pre-injected
+# helper), so a mark or clear issued before the style injection still works; it
+# just lacks the colour until the style lands on load. %(id)s is a JSON-quoted
+# block id, or '""' to only clear.
+_MARK_BLOCK_JS = """
+(function(id) {
+    var els = document.querySelectorAll('.st-search-block');
+    for (var i = 0; i < els.length; i++) {
+        els[i].classList.remove('st-search-block');
+    }
+    if (!id) return;
+    var el = document.querySelector('[data-stid=' + JSON.stringify(id) + ']');
+    if (el) el.classList.add('st-search-block');
+})(%(id)s);
+"""
+
+# Finds the block holding the current find match. findText does not update
+# window.getSelection (Chromium highlights via the find controller, not the DOM
+# selection), so the match is located by content instead: among blocks whose
+# text contains the term, the one whose top is nearest the current scroll
+# position. findText scrolls the match into view, so that block is the match.
+# %(term)s is a JSON-quoted search string.
+_MATCH_BLOCK_JS = """
+(function(term) {
+    if (!term) return "";
+    term = term.toLowerCase();
+    var blocks = Array.prototype.slice.call(
+        document.querySelectorAll('[data-stid]'));
+    var y = window.scrollY;
+    var best = "";
+    var bestDist = Infinity;
+    for (var i = 0; i < blocks.length; i++) {
+        var b = blocks[i];
+        if ((b.textContent || "").toLowerCase().indexOf(term) === -1) continue;
+        var dist = Math.abs(b.offsetTop - y);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = b.getAttribute("data-stid");
+        }
+    }
+    return best;
+})(%(term)s);
+"""
+
 
 class BookView(QWebEngineView):
     """Renders one edition's HTML; exposes scroll position as (block_id, fraction)."""
@@ -100,6 +159,10 @@ class BookView(QWebEngineView):
         # lets the panel delete it eagerly on close.
         self._rendered = RenderedBook(document)
         self.setPage(QWebEnginePage(profile, self))
+        # Inject the search-block overlay helpers once the page loads, so a book
+        # search can mark the section holding the current match. Connect before
+        # loading so the signal is not missed.
+        self.loadFinished.connect(self._inject_search_mark)
         # Restore the saved scroll position once the page has laid out: offsets
         # are only correct after load, so scrolling before loadFinished would
         # land at the top. Connect before loading so the signal is not missed.
@@ -183,6 +246,30 @@ class BookView(QWebEngineView):
             return
         block_id, fraction = self._pending_reapply
         self.scroll_to(block_id, fraction)
+
+    def _inject_search_mark(self, ok: bool) -> None:
+        # Add the overlay style on every successful load (idempotent: the style
+        # element is added once). The mark/clear JS is self-contained, so it does
+        # not depend on this having run.
+        if not ok:
+            return
+        self.page().runJavaScript(_SEARCH_STYLE_JS)
+
+    def mark_search_block(self, block_id: str) -> None:
+        """Highlight the block holding the current search match (clears any prior
+        mark first). An empty id just clears."""
+        self.page().runJavaScript(_MARK_BLOCK_JS % {"id": json.dumps(block_id)})
+
+    def clear_search_mark(self) -> None:
+        """Remove the search-block highlight."""
+        self.page().runJavaScript(_MARK_BLOCK_JS % {"id": '""'})
+
+    def matched_block_id(self, term: str, callback) -> None:
+        """Find the block holding the current match for `term` and pass its id
+        (or "") to callback(str). See _MATCH_BLOCK_JS for how the block is
+        located (findText leaves no DOM selection to read)."""
+        js = _MATCH_BLOCK_JS % {"term": json.dumps(term)}
+        self.page().runJavaScript(js, lambda value: callback(value or ""))
 
     def find(self, term: str, forward: bool, callback) -> None:
         """Run a native find; report the match count to callback(int)."""
