@@ -61,19 +61,43 @@ class BookSync:
     def original_to_translation(
         self, index: int, fraction: float
     ) -> tuple[int, float]:
-        return self._map(index, fraction, from_original=True)
+        return self._map_scroll(index, fraction, from_original=True)
 
     def translation_to_original(
         self, index: int, fraction: float
     ) -> tuple[int, float]:
-        return self._map(index, fraction, from_original=False)
+        return self._map_scroll(index, fraction, from_original=False)
+
+    def _map_scroll(
+        self, index: int, fraction: float, from_original: bool
+    ) -> tuple[int, float]:
+        # Map a scroll position. The destination BLOCK is the block the source
+        # position lands in (the interpolation between anchors decides this), but
+        # the destination FRACTION is the source's own in-block fraction, NOT the
+        # interpolated sub-block fraction.
+        #
+        # The interpolated sub-block fraction is an artefact of where the scalar
+        # lands between anchors: scrolling the original to a clean block top
+        # (fraction 0.0) between anchors yields a non-zero destination fraction,
+        # which then scrolls the translation a couple hundred pixels PAST the top
+        # of the matching block (the "translation is a bit too far up/ahead"
+        # drift). Carrying the source fraction instead maps top to top and middle
+        # to middle; at an exact anchor it is unchanged (the interpolated
+        # fraction there already equals the source fraction at the boundary).
+        dst_index, _ = self._map(index, fraction, from_original)
+        bounded = fraction
+        if bounded < 0.0:
+            bounded = 0.0
+        elif bounded > 1.0:
+            bounded = 1.0
+        return dst_index, bounded
 
     def original_block_to_translation(self, index: int) -> int:
         """Map a whole original block to the single best-matching translation
-        block index. Unlike the scroll mappers (which map a top-edge position and
-        keep the fraction), this maps the block's centre, so a block whose top
-        maps to, say, 60.8 picks the block its body sits in (61) rather than
-        truncating its top edge to 60. Use this for block-level marking."""
+        block index. Where the scroll mappers map a point (a block plus a scroll
+        fraction), this maps the block's centre, so a block whose top maps to,
+        say, 60.8 picks the block its body sits in (61) rather than its top edge
+        alone pointing at 60. Use this for block-level marking."""
         return self._map_block(index, from_original=True)
 
     def translation_block_to_original(self, index: int) -> int:

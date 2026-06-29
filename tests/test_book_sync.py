@@ -79,21 +79,35 @@ class BookSyncTests(unittest.TestCase):
         self.assertEqual(s.original_block_to_translation(50), 60)
         self.assertEqual(s.translation_block_to_original(60), 50)
 
-    def test_block_mapper_rounds_instead_of_truncating_early(self):
-        # The bug this fixes: a block whose mapped position lands high in a
-        # destination block (here original 51 maps to ~60.8) must pick the block
-        # it mostly overlaps (61), not truncate down to 60.
+    def test_block_mapper_lands_on_the_overlapping_block(self):
+        # A block whose body mostly overlaps a destination block (here original
+        # 51's centre maps into translation 61) must pick that block, not the
+        # block its top edge alone would point at (60).
         s = BookSync(100, 100)
         s.set_anchors([(50, 60)])
         self.assertEqual(s.original_block_to_translation(51), 61)
-        # The fraction-carrying scroll mapper still returns 60 + a high fraction;
-        # confirm the block mapper diverges from a naive truncation of that.
-        dst_index, dst_fraction = s.original_to_translation(51, 0.0)
-        self.assertEqual(dst_index, 60)
-        self.assertGreater(dst_fraction, 0.5)
 
     def test_block_mapper_clamps_to_last_block(self):
         s = BookSync(100, 100)
         # The end anchor is (99, 99); mapping the last block must not round past
         # it into a non-existent block 100.
         self.assertEqual(s.original_block_to_translation(99), 99)
+
+    def test_scroll_mapper_carries_the_source_fraction_between_anchors(self):
+        # The drift fix: between anchors the destination fraction must be the
+        # SOURCE's in-block fraction, not the interpolation artefact. Scrolling
+        # to a clean block top (0.0) must land at the matching block's top (0.0),
+        # not part way into it.
+        s = BookSync(100, 100)
+        s.set_anchors([(50, 60)])
+        _, fraction = s.original_to_translation(51, 0.0)
+        self.assertEqual(fraction, 0.0)  # top maps to top, no carried artefact
+        _, mid_fraction = s.original_to_translation(51, 0.5)
+        self.assertEqual(mid_fraction, 0.5)  # middle maps to middle
+
+    def test_scroll_mapper_clamps_carried_fraction(self):
+        s = BookSync(100, 100)
+        _, low = s.original_to_translation(10, -0.5)
+        _, high = s.original_to_translation(10, 1.5)
+        self.assertEqual(low, 0.0)
+        self.assertEqual(high, 1.0)

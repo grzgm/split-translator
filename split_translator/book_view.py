@@ -10,8 +10,11 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from .book_loader import BookDocument
 from .book_render import RenderedBook
 
-# Reports the topmost visible block id and how far the viewport top has scrolled
-# from it toward the next block (0.0 at its top, approaching 1.0 at the next).
+# Reports the block at the viewport CENTRE and how far the centre has scrolled
+# through it (0.0 at its top, approaching 1.0 at the next block). The centre, not
+# the top edge, is the reading position: aligning what the reader is looking at
+# (mid-screen) keeps the two editions matched even though their paragraphs differ
+# in length, whereas aligning the top edge only ever lines up the top line.
 # Returns a JSON string: runJavaScript delivers a bare JS object as an empty
 # string, so the payload must be stringified and parsed back in Python.
 _SCROLL_STATE_JS = """
@@ -19,10 +22,10 @@ _SCROLL_STATE_JS = """
     var blocks = Array.prototype.slice.call(
         document.querySelectorAll('[data-stid]'));
     if (!blocks.length) return JSON.stringify({id: "", fraction: 0});
-    var y = window.scrollY;
+    var anchorY = window.scrollY + window.innerHeight / 2;
     var current = blocks[0];
     for (var i = 0; i < blocks.length; i++) {
-        if (blocks[i].offsetTop <= y) current = blocks[i];
+        if (blocks[i].offsetTop <= anchorY) current = blocks[i];
         else break;
     }
     var idx = blocks.indexOf(current);
@@ -31,7 +34,7 @@ _SCROLL_STATE_JS = """
         ? blocks[idx + 1].offsetTop
         : document.body.scrollHeight;
     var span = nextTop - top;
-    var fraction = span > 0 ? (y - top) / span : 0;
+    var fraction = span > 0 ? (anchorY - top) / span : 0;
     if (fraction < 0) fraction = 0;
     if (fraction > 1) fraction = 1;
     return JSON.stringify({
@@ -40,6 +43,10 @@ _SCROLL_STATE_JS = """
 })();
 """
 
+# Scrolls so the given block-and-fraction point sits at the viewport CENTRE, the
+# inverse of _SCROLL_STATE_JS: the point that was mid-screen in the source is put
+# mid-screen here. Subtracting half the viewport height converts the point's
+# document position into a scrollY.
 _SCROLL_TO_JS = """
 (function() {
     var el = document.querySelector('[data-stid=' + %(id)s + ']');
@@ -51,8 +58,8 @@ _SCROLL_TO_JS = """
     var nextTop = (idx + 1 < blocks.length)
         ? blocks[idx + 1].offsetTop
         : document.body.scrollHeight;
-    var target = top + %(fraction)s * (nextTop - top);
-    window.scrollTo(0, target);
+    var point = top + %(fraction)s * (nextTop - top);
+    window.scrollTo(0, point - window.innerHeight / 2);
 })();
 """
 
