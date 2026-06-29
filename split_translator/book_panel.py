@@ -65,6 +65,16 @@ class BookPanel(QFrame):
             self.anchor_store.get_scroll(READER_SURFACE)
         )
 
+        # The anchor-mapped target the hidden tab SHOULD be at, set when a scroll
+        # on the active tab is mirrored. This is the source of truth for the
+        # hidden side on a tab switch: it is layout-independent (block id +
+        # fraction) and correct, unlike the hidden view's own self-reported
+        # scroll, which drifts because a hidden page lays out at a provisional
+        # width. None until the first mirror. Cleared once the user scrolls the
+        # tab themselves (their position then supersedes the mapped one).
+        self._original_sync_target: tuple[str, float] | None = None
+        self._translation_sync_target: tuple[str, float] | None = None
+
         self.init_ui()
 
     def init_ui(self):
@@ -117,10 +127,47 @@ class BookPanel(QFrame):
         self.translation_view.scrolled.connect(
             lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
         )
-        self.tabs.currentChanged.connect(self._update_position_label)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        self._update_position_label()
+        # The tab that just became visible was laid out against a provisional
+        # (hidden) height, so any scroll mirrored into it while hidden baked a
+        # wrong pixel offset, and the view's own self-reported position drifted
+        # to that wrong spot. Re-apply the right block-and-fraction against the
+        # now-visible layout; BookView re-runs it as the layout settles.
+        #
+        # Prefer the anchor-mapped sync target (what sync DECIDED this tab should
+        # show) over the view's drifted scroll cache: the mapped target is
+        # layout-independent and correct, whereas the cache can hold the hidden
+        # view's wrong landing. Fall back to the cache when there is no pending
+        # mapped target (sync off, or the user last moved this tab themselves).
+        view = self.current_view()
+        if view is self.original_view:
+            position = self._original_sync_target or self._original_scroll
+        else:
+            position = self._translation_sync_target or self._translation_scroll
+        if position is None:
+            return
+        block_id, fraction = position
+        if block_id:
+            view.reapply_scroll(block_id, fraction)
 
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         self._update_position_label()
+        # A scroll reported by the HIDDEN tab while it has a pending mapped sync
+        # target is a drift echo of the mirrored scroll: the hidden page laid out
+        # at a provisional width, so the position it reports is wrong. Ignore it
+        # entirely, so it neither corrupts the persisted cache nor bounces back
+        # as a reverse sync. The correct position is the mapped target, already
+        # recorded and re-applied on the next tab switch.
+        is_hidden = source_view is not self.current_view()
+        if source_view is self.original_view:
+            has_pending = self._original_sync_target is not None
+        else:
+            has_pending = self._translation_sync_target is not None
+        if is_hidden and has_pending:
+            return
         # Remember the latest position of whichever view moved, so it can be
         # persisted on close. This fires for both user scrolls and mirrored
         # (synced) scrolls, so both editions stay current.
@@ -133,6 +180,13 @@ class BookPanel(QFrame):
         # Only mirror from the active tab.
         if source_view is not self.current_view():
             return
+        # The active tab is the one the user is moving, so its own mapped sync
+        # target is now stale: their position supersedes it. Clear it so a later
+        # switch back re-applies the user's real spot, not an old mapped one.
+        if source_view is self.original_view:
+            self._original_sync_target = None
+        else:
+            self._translation_sync_target = None
 
         if source_view is self.original_view:
             try:
@@ -143,6 +197,14 @@ class BookPanel(QFrame):
                 index, fraction
             )
             target_id = self.translation_document.block_ids[dst_index]
+            # Record the intended (mapped) target for the hidden translation and
+            # scroll it there. The scroll itself may land wrong because the tab
+            # is hidden (provisional layout); the recorded target is what the
+            # switch re-applies against the settled layout, so it is correct.
+            # Also cache it as the side's scroll position so close-time
+            # persistence saves the right spot, not the hidden view's drift.
+            self._translation_sync_target = (target_id, dst_fraction)
+            self._translation_scroll = (target_id, dst_fraction)
             self.translation_view.scroll_to(target_id, dst_fraction)
         else:
             try:
@@ -153,6 +215,8 @@ class BookPanel(QFrame):
                 index, fraction
             )
             target_id = self.original_document.block_ids[dst_index]
+            self._original_sync_target = (target_id, dst_fraction)
+            self._original_scroll = (target_id, dst_fraction)
             self.original_view.scroll_to(target_id, dst_fraction)
 
     def _update_position_label(self) -> None:

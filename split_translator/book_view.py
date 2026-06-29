@@ -88,6 +88,10 @@ class BookView(QWebEngineView):
         self._document = document
         self._suppress_scroll = False
         self._initial_scroll = initial_scroll
+        # A pending (block_id, fraction) to re-apply once the layout settles. A
+        # hidden tab lays out against a provisional height, so a scroll computed
+        # then bakes a wrong pixel offset; this is re-run on the next reflow.
+        self._pending_reapply: tuple[str, float] | None = None
         # The book HTML is loaded from a temp file, not setHtml: a full novel's
         # HTML is larger than setHtml's ~2 MB data-URL cap and would silently
         # fail to render (loadFinished ok=False, blank view). See book_render.
@@ -103,6 +107,10 @@ class BookView(QWebEngineView):
             self.loadFinished.connect(self._restore_initial_scroll)
         self.page().load(self._rendered.url())
         self.page().scrollPositionChanged.connect(self.request_scroll_state)
+        # When a tab is shown, its content reflows to the now-correct width and
+        # the page height settles; re-apply any pending scroll against that
+        # settled layout (offsetTop/scrollHeight are wrong until then).
+        self.page().contentsSizeChanged.connect(self._on_contents_size_changed)
 
     def _restore_initial_scroll(self, ok: bool) -> None:
         # Wait for a successful load before restoring: a failed (ok=False) load
@@ -125,6 +133,10 @@ class BookView(QWebEngineView):
         """Read the current scroll position and emit `scrolled`."""
         if self._suppress_scroll:
             return
+        # A scroll this view did not suppress is a genuine user scroll, so any
+        # pending re-apply is stale: drop it rather than yank the user back on
+        # the next reflow.
+        self._pending_reapply = None
         self.page().runJavaScript(_SCROLL_STATE_JS, self._on_scroll_state)
 
     def _on_scroll_state(self, payload) -> None:
@@ -147,6 +159,30 @@ class BookView(QWebEngineView):
 
     def _release_suppress(self) -> None:
         self._suppress_scroll = False
+
+    def reapply_scroll(self, block_id: str, fraction: float) -> None:
+        """Re-scroll to a cached position once this view is shown. Scrolls now
+        as a best effort and re-runs on the next reflow, so the final offset is
+        computed against the settled (visible) layout, not a stale hidden one."""
+        self._pending_reapply = (block_id, fraction)
+        self.scroll_to(block_id, fraction)
+
+    def _on_contents_size_changed(self, _size) -> None:
+        # Fires whenever the page height changes, including the reflow when a
+        # hidden tab is shown. Re-run the pending scroll against the now-settled
+        # layout. Cleared on the matching scrollPositionChanged, not here, so a
+        # multi-step settle keeps re-applying until the height stops changing.
+        if self._pending_reapply is None:
+            return
+        # Only scroll while this view is the visible tab. A reflow can fire on a
+        # hidden tab (a window resize, or the tab being hidden again mid-settle);
+        # scrolling then would bake a wrong offset against the provisional hidden
+        # layout, the very fault this fix exists to avoid. The pending position
+        # stays armed, so the next time the tab is shown it is re-applied.
+        if not self.isVisible():
+            return
+        block_id, fraction = self._pending_reapply
+        self.scroll_to(block_id, fraction)
 
     def find(self, term: str, forward: bool, callback) -> None:
         """Run a native find; report the match count to callback(int)."""
