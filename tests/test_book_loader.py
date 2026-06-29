@@ -1,8 +1,18 @@
 import tempfile
 import unittest
 
-from split_translator.book_loader import BookDocument, assign_block_ids, load_book
-from tests.fixtures.make_fixtures import make_epub, make_pdf
+from split_translator.book_loader import (
+    BookDocument,
+    _resolve_epub_ref,
+    _rewrite_image_refs,
+    assign_block_ids,
+    load_book,
+)
+from tests.fixtures.make_fixtures import (
+    make_epub,
+    make_epub_with_images,
+    make_pdf,
+)
 
 
 class AssignBlockIdsTests(unittest.TestCase):
@@ -94,6 +104,94 @@ class EpubLoadTests(unittest.TestCase):
             self.assertEqual(doc.title, "Test Book")
 
 
+class ResolveEpubRefTests(unittest.TestCase):
+    def test_resolves_relative_ref_against_chapter_dir(self):
+        self.assertEqual(
+            _resolve_epub_ref("OEBPS/Text", "../Images/x.png"),
+            "OEBPS/Images/x.png",
+        )
+
+    def test_resolves_plain_ref_at_root(self):
+        self.assertEqual(_resolve_epub_ref(".", "cover.jpeg"), "cover.jpeg")
+
+    def test_leaves_absolute_and_special_refs_alone(self):
+        for ref in (
+            "https://example.com/x.png",
+            "http://example.com/x.png",
+            "data:image/png;base64,AAAA",
+            "#anchor",
+            "/abs/x.png",
+            "",
+        ):
+            self.assertIsNone(_resolve_epub_ref("OEBPS/Text", ref))
+
+
+class RewriteImageRefsTests(unittest.TestCase):
+    def test_rewrites_known_image_and_collects_it(self):
+        body = '<img src="../Images/pic.png"/>'
+        available = {"OEBPS/Images/pic.png"}
+        out, used = _rewrite_image_refs(body, "OEBPS/Text", available)
+        self.assertIn('src="OEBPS/Images/pic.png"', out)
+        self.assertEqual(used, {"OEBPS/Images/pic.png"})
+
+    def test_leaves_missing_image_ref_untouched(self):
+        body = '<img src="../Images/gone.png"/>'
+        out, used = _rewrite_image_refs(body, "OEBPS/Text", set())
+        self.assertEqual(out, body)
+        self.assertEqual(used, set())
+
+    def test_ignores_non_image_and_remote_refs(self):
+        body = (
+            '<link href="../style.css"/>'
+            '<img src="https://example.com/r.png"/>'
+        )
+        available = {"OEBPS/style.css"}
+        out, used = _rewrite_image_refs(body, "OEBPS/Text", available)
+        self.assertEqual(out, body)  # nothing rewritten
+        self.assertEqual(used, set())
+
+    def test_rewrites_svg_xlink_href_cover(self):
+        body = '<image xlink:href="cover.jpeg"/>'
+        out, used = _rewrite_image_refs(body, ".", {"cover.jpeg"})
+        self.assertIn('xlink:href="cover.jpeg"', out)
+        self.assertEqual(used, {"cover.jpeg"})
+
+
+class EpubImageTests(unittest.TestCase):
+    def test_collects_referenced_images_with_root_relative_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub_with_images(d))
+            self.assertEqual(
+                set(doc.images),
+                {"OEBPS/Images/pic.png", "OEBPS/Images/cover.png"},
+            )
+            for data in doc.images.values():
+                self.assertTrue(data.startswith(b"\x89PNG"))
+
+    def test_html_references_rewritten_root_relative_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub_with_images(d))
+            self.assertIn('src="OEBPS/Images/pic.png"', doc.html)
+            self.assertIn('src="OEBPS/Images/cover.png"', doc.html)
+            # The chapter-relative form of the real images is gone (only the
+            # missing image, which is not rewritten, still uses ../Images).
+            self.assertNotIn('src="../Images/pic.png"', doc.html)
+            self.assertNotIn('src="../Images/cover.png"', doc.html)
+
+    def test_missing_and_remote_refs_are_not_collected_or_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub_with_images(d))
+            self.assertNotIn("missing.png", "".join(doc.images))
+            # The missing local image keeps its original ref; the remote URL too.
+            self.assertIn('src="../Images/missing.png"', doc.html)
+            self.assertIn("https://example.com/remote.png", doc.html)
+
+    def test_image_less_epub_has_empty_images(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub(d))
+            self.assertEqual(doc.images, {})
+
+
 class PdfLoadTests(unittest.TestCase):
     def test_loads_pdf_text_as_html_blocks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -101,6 +199,11 @@ class PdfLoadTests(unittest.TestCase):
             self.assertIn("Chapter One", doc.html)
             self.assertIn("The first paragraph.", doc.html)
             self.assertTrue(doc.block_ids)  # at least one block id assigned
+
+    def test_pdf_has_no_external_images(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_pdf(d))
+            self.assertEqual(doc.images, {})
 
     def test_ids_are_stable_across_two_loads(self):
         with tempfile.TemporaryDirectory() as d:

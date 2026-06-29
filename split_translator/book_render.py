@@ -12,6 +12,7 @@ The temp file is owned by ``RenderedBook`` and removed when it is released, so
 nothing is left on disk and no machine path is ever persisted (anchors and
 config store block ids, not paths)."""
 
+import shutil
 import tempfile
 import weakref
 from pathlib import Path
@@ -37,17 +38,24 @@ def document_html(document: BookDocument) -> str:
 
 
 def _remove_dir(path: Path) -> None:
-    """Delete the temp file and its directory. Never raises: a leftover file in
+    """Delete the temp directory and everything in it (the HTML and any extracted
+    images, which may live in sub-directories). Never raises: a leftover file in
     the OS temp dir is harmless and is reclaimed by the system."""
-    try:
-        for child in path.iterdir():
-            child.unlink()
-    except OSError:
-        pass
-    try:
-        path.rmdir()
-    except OSError:
-        pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _write_images(root: Path, images: dict[str, bytes]) -> None:
+    """Write each image beside the HTML at its EPUB-root-relative path, creating
+    sub-directories as needed, so the HTML's rewritten src paths resolve. A path
+    that escapes the temp dir (defensive against ``..`` in a crafted EPUB) is
+    skipped."""
+    root = root.resolve()
+    for rel, data in images.items():
+        dest = (root / rel).resolve()
+        if not dest.is_relative_to(root):
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
 
 
 class RenderedBook:
@@ -59,13 +67,14 @@ class RenderedBook:
     idempotent and the finalizer is disarmed once either has run."""
 
     def __init__(self, document: BookDocument):
-        # A private per-book directory keeps the file isolated and lets a later
-        # images change drop sibling resources beside it without name clashes.
+        # A private per-book directory keeps the file and its images isolated, so
+        # the images sit beside the HTML at the paths its src attributes use.
         self._dir = Path(
             tempfile.mkdtemp(prefix="split-translator-book-")
         )
         self._path = self._dir / "book.html"
         self._path.write_text(document_html(document), encoding="utf-8")
+        _write_images(self._dir, document.images)
         # Finalizer bound to the directory path only (no reference back to self),
         # so it does not keep this object alive and runs at GC even if release()
         # is never called.

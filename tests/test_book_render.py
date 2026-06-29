@@ -8,8 +8,10 @@ from split_translator.book_render import (
 )
 
 
-def _doc(body="<p data-stid='b0'>Body.</p>"):
-    return BookDocument(html=body, block_ids=["b0"], title="T")
+def _doc(body="<p data-stid='b0'>Body.</p>", images=None):
+    return BookDocument(
+        html=body, block_ids=["b0"], title="T", images=images or {}
+    )
 
 
 class DocumentHtmlTests(unittest.TestCase):
@@ -64,6 +66,37 @@ class RenderedBookTests(unittest.TestCase):
         del rendered
         gc.collect()
         self.assertFalse(path.exists())
+
+    def test_writes_images_beside_the_html_at_their_relative_paths(self):
+        images = {
+            "cover.jpeg": b"\xff\xd8\xff-cover",
+            "OEBPS/Images/pic.png": b"\x89PNG-pic",
+        }
+        rendered = RenderedBook(_doc(images=images))
+        self.addCleanup(rendered.release)
+        root = rendered.path.parent
+        self.assertEqual((root / "cover.jpeg").read_bytes(), b"\xff\xd8\xff-cover")
+        self.assertEqual(
+            (root / "OEBPS/Images/pic.png").read_bytes(), b"\x89PNG-pic"
+        )
+
+    def test_release_removes_images_and_subdirs_too(self):
+        rendered = RenderedBook(
+            _doc(images={"OEBPS/Images/pic.png": b"\x89PNG"})
+        )
+        root = rendered.path.parent
+        self.assertTrue((root / "OEBPS/Images/pic.png").exists())
+        rendered.release()
+        self.assertFalse(root.exists())
+
+    def test_image_path_escaping_the_temp_dir_is_skipped(self):
+        # Defensive: a crafted ".." path must not write outside the temp dir.
+        rendered = RenderedBook(
+            _doc(images={"../escape.png": b"nope"})
+        )
+        self.addCleanup(rendered.release)
+        escaped = rendered.path.parent.parent / "escape.png"
+        self.assertFalse(escaped.exists())
 
 
 if __name__ == "__main__":
