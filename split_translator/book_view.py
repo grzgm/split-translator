@@ -3,11 +3,12 @@ content coordinates (a block id plus a fraction toward the next block)."""
 
 import json
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .book_loader import BookDocument
+from .book_render import RenderedBook
 
 # Reports the topmost visible block id and how far the viewport top has scrolled
 # from it toward the next block (0.0 at its top, approaching 1.0 at the next).
@@ -87,13 +88,20 @@ class BookView(QWebEngineView):
         self._document = document
         self._suppress_scroll = False
         self._initial_scroll = initial_scroll
+        # The book HTML is loaded from a temp file, not setHtml: a full novel's
+        # HTML is larger than setHtml's ~2 MB data-URL cap and would silently
+        # fail to render (loadFinished ok=False, blank view). See book_render.
+        # RenderedBook deletes its temp file when garbage-collected (a weakref
+        # finalizer), so holding it on the view is enough; release_rendered()
+        # lets the panel delete it eagerly on close.
+        self._rendered = RenderedBook(document)
         self.setPage(QWebEnginePage(profile, self))
         # Restore the saved scroll position once the page has laid out: offsets
         # are only correct after load, so scrolling before loadFinished would
-        # land at the top. Connect before setHtml so the signal is not missed.
+        # land at the top. Connect before loading so the signal is not missed.
         if initial_scroll is not None:
             self.loadFinished.connect(self._restore_initial_scroll)
-        self.setHtml(document.html, QUrl("about:blank"))
+        self.page().load(self._rendered.url())
         self.page().scrollPositionChanged.connect(self.request_scroll_state)
 
     def _restore_initial_scroll(self, ok: bool) -> None:
@@ -156,3 +164,8 @@ class BookView(QWebEngineView):
         self.page().runJavaScript(
             _TOPMOST_ID_JS, lambda value: callback(value or "")
         )
+
+    def release_rendered(self) -> None:
+        """Delete the backing temp file now (called on panel close). Cleanup
+        also happens at garbage collection, so this is an eager convenience."""
+        self._rendered.release()

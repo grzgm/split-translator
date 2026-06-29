@@ -29,6 +29,23 @@ class BookViewConstructionTests(unittest.TestCase):
         self.assertTrue(callable(view.request_scroll_state))
         self.assertTrue(callable(view.find))
 
+    def test_backs_onto_a_temp_file_and_loads_it_by_url(self):
+        # The view renders from a file:// URL, not setHtml, so a book larger
+        # than setHtml's ~2 MB cap still renders. The temp file exists while the
+        # view does.
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        self.assertTrue(view._rendered.path.exists())
+        self.assertTrue(view._rendered.url().isLocalFile())
+
+    def test_release_rendered_deletes_the_temp_file(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        path = view._rendered.path
+        self.assertTrue(path.exists())
+        view.release_rendered()
+        self.assertFalse(path.exists())
+
     def test_accepts_initial_scroll(self):
         profile = QWebEngineProfile()
         view = BookView(_doc(), profile, initial_scroll=("b1", 0.5))

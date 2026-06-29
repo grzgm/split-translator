@@ -246,3 +246,6 @@ class BookPanel(QFrame):
         )
         # Await any in-flight anchor write so anchors are not lost on quit.
         self.anchor_store.shutdown()
+        # Delete each edition's backing temp HTML file (see book_render).
+        self.original_view.release_rendered()
+        self.translation_view.release_rendered()
