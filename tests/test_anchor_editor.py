@@ -220,6 +220,62 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         # A block id absent from the document is guarded by try/except ValueError.
         editor._sync_from(editor.original_view, "nonexistent", 0.0)
 
+    def test_follower_echo_does_not_reverse_drive_the_source(self):
+        # The jitter bug: a genuine scroll on one side mirrors to the other, and
+        # the mirrored scroll echoes back a scrollPositionChanged. That echo must
+        # NOT map back and scroll the side the user is driving, or both views snap
+        # at once. The side being scrolled (the gesture owner) stays put.
+        editor, _ = self._editor()
+        editor.sync_enabled = True
+
+        original_calls = []
+        translation_calls = []
+        editor.original_view.scroll_to = (
+            lambda bid, frac: original_calls.append((bid, frac))
+        )
+        editor.translation_view.scroll_to = (
+            lambda bid, frac: translation_calls.append((bid, frac))
+        )
+
+        # Genuine user scroll on the original: it becomes the gesture owner and
+        # mirrors to the translation.
+        editor._sync_from(editor.original_view, "b0", 0.0)
+        self.assertEqual(len(translation_calls), 1)  # mirrored to follower
+        self.assertEqual(original_calls, [])  # owner not scrolled
+
+        # The mirror's echo: the translation reports a scroll it did not initiate.
+        # It is the follower, not the owner, so it must be ignored: the original
+        # (owner) must not be scrolled back.
+        editor._sync_from(editor.translation_view, "b0", 0.0)
+        self.assertEqual(original_calls, [])  # owner still never reverse-driven
+
+    def test_touching_the_other_view_transfers_ownership(self):
+        # "Last view the user touched" owns the gesture. After the in-flight
+        # window expires, a genuine scroll on the other side becomes the new owner
+        # and mirrors, so sync still works in both directions over time.
+        editor, _ = self._editor()
+        editor.sync_enabled = True
+
+        original_calls = []
+        translation_calls = []
+        editor.original_view.scroll_to = (
+            lambda bid, frac: original_calls.append((bid, frac))
+        )
+        editor.translation_view.scroll_to = (
+            lambda bid, frac: translation_calls.append((bid, frac))
+        )
+
+        editor._sync_from(editor.original_view, "b0", 0.0)
+        self.assertEqual(len(translation_calls), 1)
+
+        # Simulate the in-flight window having elapsed (the user paused, then
+        # grabbed the translation): clear the guard the timer would clear.
+        editor._end_sync_gesture()
+
+        # Now a genuine scroll on the translation must mirror to the original.
+        editor._sync_from(editor.translation_view, "b1", 0.0)
+        self.assertEqual(len(original_calls), 1)  # new owner mirrors to original
+
 
 from split_translator.anchor_store import EDITOR_SURFACE, READER_SURFACE
 
