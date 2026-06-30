@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .flashcards import Card, FlashcardStore, Sense
+from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
 
 # A light-blue border shown on a fillable field while it is still empty, so it is
 # easy to see at a glance what remains to be filled. It clears back to the default
@@ -259,6 +259,7 @@ class FlashcardPanel(QWidget):
         self._last_autofill = None
         self.player = None
         self.audio_output = None
+        self._staged_links = []
         self.init_ui()
         self.add_sense()
         self._refresh_saved_list()
@@ -377,6 +378,12 @@ class FlashcardPanel(QWidget):
         self.add_sense_button = QPushButton("+ Add sense")
         self.add_sense_button.clicked.connect(self.add_sense)
         layout.addWidget(self.add_sense_button)
+
+        layout.addWidget(QLabel("Links"))
+        self.links_container = QVBoxLayout()
+        links_widget = QWidget()
+        links_widget.setLayout(self.links_container)
+        layout.addWidget(links_widget)
 
         buttons = QHBoxLayout()
         self.new_button = QPushButton("New from word")
@@ -798,6 +805,8 @@ class FlashcardPanel(QWidget):
             # open to a fresh autofill (and a later load cannot be mistaken for
             # an untouched autofill and overwritten).
             self._last_autofill = None
+            self._staged_links = []
+            self._refresh_links_section()
             self.saved_list.clearSelection()
         finally:
             self._suppress_dirty = False
@@ -881,6 +890,8 @@ class FlashcardPanel(QWidget):
 
             self._loaded_card_id = card.id
             self._loaded_created_at = card.created_at or None
+            self._staged_links = list(self.store.links_for(card.id))
+            self._refresh_links_section()
         finally:
             self._suppress_dirty = False
         self._dirty = False
@@ -894,3 +905,75 @@ class FlashcardPanel(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
+
+    # --- links ----------------------------------------------------------
+
+    def _partner_id(self, link: Link) -> str:
+        """The id at the other end of a link from the loaded card."""
+        if self._loaded_card_id == link.a_id:
+            return link.b_id
+        return link.a_id
+
+    def _partner_headword(self, link: Link) -> str:
+        partner = self._partner_id(link)
+        card = next((c for c in self.store.cards if c.id == partner), None)
+        return card.headword if card is not None else partner
+
+    def _label_for_type(self, type_key: str) -> str:
+        for key, label, _colour in LINK_TYPES:
+            if key == type_key:
+                return label
+        return type_key  # unknown type: show its raw string
+
+    def _clear_links_container(self) -> None:
+        while self.links_container.count():
+            item = self.links_container.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _refresh_links_section(self) -> None:
+        """Rebuild the Links section from self._staged_links, grouped by type in
+        LINK_TYPES order (unknown types last, in first-seen order)."""
+        self._clear_links_container()
+        order = [key for key, _label, _colour in LINK_TYPES]
+        by_type = {}
+        for link in self._staged_links:
+            by_type.setdefault(link.type, []).append(link)
+        ordered_types = [k for k in order if k in by_type]
+        ordered_types += [k for k in by_type if k not in order]
+        for type_key in ordered_types:
+            heading = QLabel(self._label_for_type(type_key))
+            self.links_container.addWidget(heading)
+            for link in by_type[type_key]:
+                self.links_container.addWidget(self._build_link_row(link))
+
+    def _build_link_row(self, link: Link) -> QWidget:
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(2)
+        label = QLabel(self._partner_headword(link))
+        row.link_label = label  # for tests / removal
+        row.link = link
+        remove = QPushButton("x")
+        remove.setMaximumWidth(28)
+        remove.clicked.connect(lambda: self._remove_staged_link(link))
+        row_layout.addWidget(label)
+        row_layout.addStretch()
+        row_layout.addWidget(remove)
+        return row
+
+    def _remove_staged_link(self, link: Link) -> None:
+        self._staged_links = [l for l in self._staged_links if l != link]
+        self._mark_dirty()
+        self._refresh_links_section()
+
+    def _link_row_labels(self) -> list:
+        """Partner headwords currently shown in the Links section (test support)."""
+        labels = []
+        for i in range(self.links_container.count()):
+            widget = self.links_container.itemAt(i).widget()
+            if widget is not None and hasattr(widget, "link_label"):
+                labels.append(widget.link_label.text())
+        return labels
