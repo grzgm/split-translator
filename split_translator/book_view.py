@@ -109,32 +109,37 @@ _MARK_BLOCK_JS = """
 })(%(id)s);
 """
 
-# Finds the block holding the current find match. findText does not update
-# window.getSelection (Chromium highlights via the find controller, not the DOM
-# selection), so the match is located by content instead: among blocks whose
-# text contains the term, the one whose top is nearest the current scroll
-# position. findText scrolls the match into view, so that block is the match.
-# %(term)s is a JSON-quoted search string.
+# Finds the block holding the Nth find match (1-based, the find result's
+# activeMatch). findText does not update window.getSelection (Chromium highlights
+# via the find controller, not the DOM selection), so the match block is located
+# by counting term occurrences across blocks in document order and returning the
+# block whose running count first reaches the target index. This is independent
+# of the live scroll position: on a wrap-around the findText callback fires while
+# the scroll is still at the old place, so a scrollY-based guess would pick the
+# wrong block (and miss the first occurrence entirely). %(term)s is a JSON-quoted
+# search string; %(index)s is the 1-based match index.
 _MATCH_BLOCK_JS = """
-(function(term) {
-    if (!term) return "";
+(function(term, index) {
+    if (!term || index < 1) return "";
     term = term.toLowerCase();
     var blocks = Array.prototype.slice.call(
         document.querySelectorAll('[data-stid]'));
-    var y = window.scrollY;
-    var best = "";
-    var bestDist = Infinity;
+    var seen = 0;
     for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
-        if ((b.textContent || "").toLowerCase().indexOf(term) === -1) continue;
-        var dist = Math.abs(b.offsetTop - y);
-        if (dist < bestDist) {
-            bestDist = dist;
-            best = b.getAttribute("data-stid");
+        var text = (b.textContent || "").toLowerCase();
+        if (!text) continue;
+        var from = 0;
+        var hit = text.indexOf(term, from);
+        while (hit !== -1) {
+            seen++;
+            if (seen === index) return b.getAttribute("data-stid");
+            from = hit + term.length;
+            hit = text.indexOf(term, from);
         }
     }
-    return best;
-})(%(term)s);
+    return "";
+})(%(term)s, %(index)s);
 """
 
 
@@ -271,21 +276,25 @@ class BookView(QWebEngineView):
         """Remove the search-block highlight."""
         self.page().runJavaScript(_MARK_BLOCK_JS % {"id": '""'})
 
-    def matched_block_id(self, term: str, callback) -> None:
-        """Find the block holding the current match for `term` and pass its id
-        (or "") to callback(str). See _MATCH_BLOCK_JS for how the block is
-        located (findText leaves no DOM selection to read)."""
-        js = _MATCH_BLOCK_JS % {"term": json.dumps(term)}
+    def matched_block_id(self, term: str, index: int, callback) -> None:
+        """Find the block holding the `index`-th (1-based) match for `term` and
+        pass its id (or "") to callback(str). `index` is the find result's
+        activeMatch; see _MATCH_BLOCK_JS for why the block is located by
+        occurrence count rather than the live scroll (findText leaves no DOM
+        selection to read, and its callback can fire before the scroll settles)."""
+        js = _MATCH_BLOCK_JS % {"term": json.dumps(term), "index": int(index)}
         self.page().runJavaScript(js, lambda value: callback(value or ""))
 
     def find(self, term: str, forward: bool, callback) -> None:
-        """Run a native find; report the match count to callback(int)."""
+        """Run a native find; report (active_match, total) to callback(int, int).
+        active_match is the 1-based index of the highlighted match (0 when there
+        is none), so the caller can number it absolutely and locate its block."""
         flags = QWebEnginePage.FindFlag(0)
         if not forward:
             flags |= QWebEnginePage.FindFlag.FindBackward
 
         def _on_result(result):
-            callback(result.numberOfMatches())
+            callback(result.activeMatch(), result.numberOfMatches())
 
         self.page().findText(term, flags, _on_result)
 

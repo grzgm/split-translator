@@ -249,54 +249,51 @@ class BookPanel(QFrame):
             self.translation_view.clear_search_mark()
             return
         self.current_match = 0
-        self.current_view().find(
-            self.search_term, True, self._on_search_result
-        )
+        self.current_view().find(self.search_term, True, self._on_find_result)
 
-    def _on_search_result(self, count: int) -> None:
+    def _on_find_result(self, active: int, count: int) -> None:
+        # Single landing point for every find (initial search and Next/Prev). The
+        # displayed number and the marked block both come from Chromium's own
+        # activeMatch, so the counter is the match's absolute position in the
+        # book (not "1 of N") and can never disagree with the highlighted block.
         self.match_count = count
-        self.current_match = 1 if count else 0
+        self.current_match = active if count else 0
         self.prev_button.setEnabled(count > 0)
         self.next_button.setEnabled(count > 0)
         self.update_match_label()
-        self._mark_current_match(count)
+        self._mark_current_match(active, count)
 
     def go_to_next(self) -> None:
         if not self.match_count:
             return
-        self.current_match = self.current_match % self.match_count + 1
-        self.current_view().find(
-            self.search_term, True, lambda _c: self._mark_current_match(1)
-        )
-        self.update_match_label()
+        self.current_view().find(self.search_term, True, self._on_find_result)
 
     def go_to_previous(self) -> None:
         if not self.match_count:
             return
-        self.current_match = (self.current_match - 2) % self.match_count + 1
-        self.current_view().find(
-            self.search_term, False, lambda _c: self._mark_current_match(1)
-        )
-        self.update_match_label()
+        self.current_view().find(self.search_term, False, self._on_find_result)
 
-    def _mark_current_match(self, count: int) -> None:
-        # Highlight the section holding the current match in the active edition,
+    def _mark_current_match(self, active: int, count: int) -> None:
+        # Highlight the section holding the active match in the active edition,
         # and the anchor-equivalent section in the other edition. With no match
-        # (or a blank term) clear both marks. The find has just located and
-        # scrolled the match into view, so the active view can name the block.
-        active = self.current_view()
+        # (or a blank term) clear both marks. The block is located from `active`
+        # (the find's 1-based match index), not the scroll position, so a
+        # wrap-around to the first match marks the right block even though the
+        # findText callback can fire before the scroll has moved.
+        view = self.current_view()
         other = (
             self.translation_view
-            if active is self.original_view
+            if view is self.original_view
             else self.original_view
         )
-        if not count or not self.search_term:
-            active.clear_search_mark()
+        if not count or not active or not self.search_term:
+            view.clear_search_mark()
             other.clear_search_mark()
             return
-        active.matched_block_id(
+        view.matched_block_id(
             self.search_term,
-            lambda block_id: self._on_matched_block(active, other, block_id),
+            active,
+            lambda block_id: self._on_matched_block(view, other, block_id),
         )
 
     def _on_matched_block(self, active, other, block_id: str) -> None:
@@ -358,8 +355,8 @@ class BookPanel(QFrame):
     def close_doc(self) -> None:
         # Web views own no file handles to close; clear any active find so the
         # native highlight does not linger.
-        self.original_view.find("", True, lambda _c: None)
-        self.translation_view.find("", True, lambda _c: None)
+        self.original_view.find("", True, lambda _a, _c: None)
+        self.translation_view.find("", True, lambda _a, _c: None)
         # Close the anchor editor if open so its pages are released before the
         # shared web profile is torn down (avoids the "profile released but page
         # not deleted" warning).
