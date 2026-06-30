@@ -117,5 +117,28 @@ class AudioPlaybackTests(unittest.TestCase):
         self.assertEqual(played, [])
 
 
+class AudioCaptureBridgeTests(unittest.TestCase):
+    def test_bridge_captureAudio_emits_region_and_url(self):
+        from split_translator.capture_bridge import CaptureBridge
+
+        bridge = CaptureBridge()
+        got = []
+        bridge.audio_capture_requested.connect(
+            lambda region, url: got.append((region, url))
+        )
+        bridge.captureAudio("uk", "https://example/uk.mp3")
+        self.assertEqual(got, [("uk", "https://example/uk.mp3")])
+
+    def test_panel_relays_audio_capture(self):
+        panel = DictionaryPanel(QWebEngineProfile.defaultProfile())
+        got = []
+        panel.audio_capture_requested.connect(
+            lambda region, url: got.append((region, url))
+        )
+        # The page button would call captureAudio on the bridge; simulate it.
+        panel.capture_bridge.captureAudio("us", "https://example/us.mp3")
+        self.assertEqual(got, [("us", "https://example/us.mp3")])
+
+
 if __name__ == "__main__":
     unittest.main()

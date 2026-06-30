@@ -596,6 +596,28 @@ class FlashcardPanel(QWidget):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
         self.play_us_button.setEnabled(bool(self._audio_us_url))
 
+    def set_audio(self, region: str, url: str) -> None:
+        """Replace one region's pronunciation audio with a clip captured from the
+        Cambridge page. Sets just that region's URL (UK or US) and leaves the
+        IPA, headword, spelling and the other region untouched.
+
+        Unlike set_pronunciation this is a deliberate single-field edit, not an
+        autofill, so it marks the card dirty and does NOT update the autofill
+        snapshot. Leaving the snapshot stale is the point: the audio URLs are
+        part of it, so a changed URL makes the card count as user-edited. That is
+        what makes tapping another card and New-from-word prompt to discard, and
+        a later passive grab leave the edited card alone."""
+        if region == "uk":
+            self._audio_uk_url = url or None
+        elif region == "us":
+            self._audio_us_url = url or None
+        else:
+            return
+        # A genuine edit: mark dirty directly so the discard guards fire (do not
+        # route through _mark_dirty, which a suppress flag could swallow).
+        self._dirty = True
+        self._update_play_buttons()
+
     # --- star -----------------------------------------------------------
 
     def _on_star_toggled(self, checked: bool):

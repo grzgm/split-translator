@@ -550,6 +550,71 @@ class FlashcardPanelTests(unittest.TestCase):
         )
         self.assertTrue(panel._dirty)
 
+    # --- replace audio from the page (set_audio) ------------------------
+
+    def test_set_audio_sets_only_that_region(self):
+        # Replacing one region's audio sets just that URL and leaves the other
+        # region, the IPA and the headword untouched.
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        panel.ipa_uk_input.setText("/aa/")
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertEqual(panel._audio_uk_url, "https://example/new-uk.mp3")
+        self.assertIsNone(panel._audio_us_url)  # other region untouched
+        self.assertEqual(panel.headword_input.text(), "run")  # untouched
+        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")  # untouched
+
+    def test_set_audio_us_is_the_mirror(self):
+        panel, _ = self._panel()
+        panel.set_audio("us", "https://example/new-us.mp3")
+        self.assertEqual(panel._audio_us_url, "https://example/new-us.mp3")
+        self.assertIsNone(panel._audio_uk_url)
+
+    def test_set_audio_enables_that_speaker_button(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel.play_uk_button.isEnabled())  # no audio yet
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertTrue(panel.play_uk_button.isEnabled())
+        self.assertFalse(panel.play_us_button.isEnabled())  # us still empty
+
+    def test_set_audio_marks_the_card_dirty(self):
+        # Replacing audio is a genuine edit, so it must mark the card dirty (this
+        # is what makes tapping another card and New-from-word prompt to discard).
+        panel, _ = self._panel()
+        self.assertFalse(panel._dirty)
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertTrue(panel._dirty)
+
+    def test_set_audio_blocks_a_later_passive_grab(self):
+        # After replacing audio, the autofill snapshot no longer matches, so a
+        # passive auto-grab on a new search must leave the edited card untouched.
+        panel, _ = self._panel()
+        panel.set_pronunciation(
+            "/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run"
+        )
+        panel.set_audio("uk", "https://example/replaced.mp3")  # user replaces it
+        panel.set_pronunciation(
+            "/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk"
+        )
+        # The whole card is left alone: the replace counts as a user edit.
+        self.assertEqual(panel.headword_input.text(), "run")
+        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")
+        self.assertEqual(panel._audio_uk_url, "https://example/replaced.mp3")
+
+    def test_set_audio_unknown_region_is_a_noop(self):
+        panel, _ = self._panel()
+        panel.set_audio("xx", "https://example/x.mp3")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertIsNone(panel._audio_us_url)
+        self.assertFalse(panel._dirty)
+
+    def test_set_audio_empty_url_clears_that_region(self):
+        panel, _ = self._panel()
+        panel._audio_uk_url = "old.mp3"
+        panel.set_audio("uk", "")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertFalse(panel.play_uk_button.isEnabled())
+
     # --- editor / saved-list splitter -----------------------------------
     # The editor sits in a scroll area above the saved-cards list, separated by
     # a draggable splitter, so the editor height can be fixed and a taller card

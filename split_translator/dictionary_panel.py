@@ -80,6 +80,8 @@ class DictionaryPanel(QWidget):
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
     # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
     sense_capture_requested = Signal(str, str, str, str)
+    # A pronunciation clip captured from the page: region ("uk"/"us"), mp3 URL.
+    audio_capture_requested = Signal(str, str)
 
     def __init__(self, profile: QWebEngineProfile, parent=None):
         super().__init__(parent)
@@ -87,6 +89,9 @@ class DictionaryPanel(QWidget):
         self.capture_bridge = CaptureBridge(self)
         self.capture_bridge.capture_requested.connect(
             self.sense_capture_requested
+        )
+        self.capture_bridge.audio_capture_requested.connect(
+            self.audio_capture_requested
         )
         # Pronunciation playback goes through Qt's own media player fed the mp3
         # URL, not by calling the Cambridge page's audioN.play() globals (which
@@ -411,9 +416,39 @@ class DictionaryPanel(QWidget):
             });
         }
 
+        // A "replace" button next to each pronunciation that overwrites the
+        // current card's audio for that clip's region (uk/us) with the clip URL.
+        // A card has one UK and one US audio slot, so the action is replace (no
+        // +new). The region is read from the block's class and the mp3 URL from
+        // its <source>, normalised to absolute as elsewhere.
+        function injectAudio() {
+            var blocks = document.querySelectorAll('span.dpron-i');
+            blocks.forEach(function(block) {
+                if (block.dataset.stAudioCapture === '1') { return; }
+                var region = block.classList.contains('uk') ? 'uk'
+                    : block.classList.contains('us') ? 'us' : '';
+                if (!region) { return; }
+                var src = block.querySelector('source[type="audio/mpeg"]')
+                    || block.querySelector('source[src$=".mp3"]')
+                    || block.querySelector('source');
+                var url = src ? src.getAttribute('src') : null;
+                if (url && url.indexOf('http') !== 0) {
+                    url = 'https://dictionary.cambridge.org' + url;
+                }
+                if (!url) { return; }  // nothing to capture
+                block.dataset.stAudioCapture = '1';
+                block.appendChild(makeButton(
+                    'replace',
+                    'Replace this card\'s ' + region.toUpperCase() + ' audio',
+                    function() { window.captureBridge.captureAudio(region, url); }
+                ));
+            });
+        }
+
         function inject() {
             if (!window.captureBridge) { return; }
             pairs.forEach(function(p) { injectPair(p.selector, p.field); });
+            injectAudio();
         }
 
         // Called from Python when the editor's sense count changes: refresh
