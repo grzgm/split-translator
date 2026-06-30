@@ -84,3 +84,85 @@ class LinkSectionTests(unittest.TestCase):
         panel.load_card(store.cards[0])
         panel._reset_editor()
         self.assertEqual(panel._staged_links, [])
+
+
+class LinkControlsTests(unittest.TestCase):
+    def _panel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [
+            Card(headword="big", id="big"),
+            Card(headword="large", id="large"),
+            Card(headword="small", id="small"),
+        ]
+        panel = FlashcardPanel(store)
+        panel._refresh_saved_list()
+        return panel, store
+
+    def _check(self, panel, card_id):
+        from PySide6.QtCore import Qt
+        for i in range(panel.saved_list.count()):
+            item = panel.saved_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == card_id:
+                item.setCheckState(Qt.CheckState.Checked)
+
+    def _select_type(self, panel, key):
+        from PySide6.QtCore import Qt
+        for i in range(panel.link_type_combo.count()):
+            if panel.link_type_combo.itemData(i, Qt.ItemDataRole.UserRole) == key:
+                panel.link_type_combo.setCurrentIndex(i)
+
+    def test_link_button_disabled_without_loaded_card(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel.link_button.isEnabled())
+
+    def test_link_button_enabled_after_loading(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        self.assertTrue(panel.link_button.isEnabled())
+
+    def test_link_selected_stages_links(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        self._check(panel, "large")
+        self._check(panel, "small")
+        self._select_type(panel, "synonym")
+        panel._on_link_selected()
+        partners = {panel._partner_id(l) for l in panel._staged_links}
+        self.assertEqual(partners, {"large", "small"})
+        self.assertTrue(all(l.type == "synonym" for l in panel._staged_links))
+
+    def test_save_persists_staged_links_symmetrically(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        self._check(panel, "large")
+        self._select_type(panel, "synonym")
+        panel._on_link_selected()
+        panel.save_card()
+        store.shutdown()
+        self.assertEqual(len(store.links_for("big")), 1)
+        self.assertEqual(len(store.links_for("large")), 1)  # symmetric
+
+    def test_removing_a_link_then_saving_unlinks(self):
+        panel, store = self._panel()
+        store.links = [Link("big", "large", "synonym")]
+        panel.load_card(store.cards[0])  # big, with one link
+        self.assertEqual(len(panel._staged_links), 1)
+        panel._remove_staged_link(panel._staged_links[0])
+        panel.save_card()
+        store.shutdown()
+        self.assertEqual(store.links_for("big"), [])
+
+    def test_relinking_same_partner_updates_type(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        self._check(panel, "large")
+        self._select_type(panel, "synonym")
+        panel._on_link_selected()
+        self._check(panel, "large")
+        self._select_type(panel, "antonym")
+        panel._on_link_selected()
+        self.assertEqual(len(panel._staged_links), 1)
+        self.assertEqual(panel._staged_links[0].type, "antonym")

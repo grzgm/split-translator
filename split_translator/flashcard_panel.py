@@ -263,6 +263,7 @@ class FlashcardPanel(QWidget):
         self.init_ui()
         self.add_sense()
         self._refresh_saved_list()
+        self._update_link_button_enabled()
         # Sense rows added during init_ui/add_sense seeded the active row before
         # the flag existed; the card is clean at startup.
         self._dirty = False
@@ -428,6 +429,20 @@ class FlashcardPanel(QWidget):
         self.saved_list.setToolTip("Click a saved card to load it for editing")
         self.saved_list.itemClicked.connect(self._on_saved_clicked)
         saved_layout.addWidget(self.saved_list, stretch=1)
+
+        link_controls = QHBoxLayout()
+        self.link_type_combo = QComboBox()
+        for key, label, _colour in LINK_TYPES:
+            self.link_type_combo.addItem(label, key)
+        self.link_button = QPushButton("Link selected")
+        self.link_button.setToolTip(
+            "Link the loaded card to every ticked card with the chosen type. "
+            "Save the loaded card first to enable this."
+        )
+        self.link_button.clicked.connect(self._on_link_selected)
+        link_controls.addWidget(self.link_type_combo)
+        link_controls.addWidget(self.link_button)
+        saved_layout.addLayout(link_controls)
 
         # The splitter handle is the draggable boundary that sets the editor
         # height. Stretch factor 0 on the editor and 1 on the list means that
@@ -731,6 +746,13 @@ class FlashcardPanel(QWidget):
             pass
         else:
             self.store.add_card(card)
+        # Commit staged links: rebuild each staged link against the saved card's
+        # id (a brand-new card got its id only now) and reconcile in the store.
+        rebased = [
+            Link(card.id, self._partner_id_for(link, card.id), link.type)
+            for link in self._staged_links
+        ]
+        self.store.set_links_for(card.id, rebased)
         headword = card.headword
         self._reset_editor()
         self._refresh_saved_list()
@@ -812,6 +834,7 @@ class FlashcardPanel(QWidget):
             self._last_autofill = None
             self._staged_links = []
             self._refresh_links_section()
+            self._update_link_button_enabled()
             self.saved_list.clearSelection()
         finally:
             self._suppress_dirty = False
@@ -839,6 +862,8 @@ class FlashcardPanel(QWidget):
                 label = f"{self._STAR_SET}: {label}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, card.id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
             self.saved_list.addItem(item)
         self._apply_saved_filter()
 
@@ -904,6 +929,7 @@ class FlashcardPanel(QWidget):
             self._loaded_created_at = card.created_at or None
             self._staged_links = list(self.store.links_for(card.id))
             self._refresh_links_section()
+            self._update_link_button_enabled()
         finally:
             self._suppress_dirty = False
         self._dirty = False
@@ -919,6 +945,51 @@ class FlashcardPanel(QWidget):
         return reply == QMessageBox.StandardButton.Yes
 
     # --- links ----------------------------------------------------------
+
+    def _checked_card_ids(self) -> list:
+        ids = []
+        for i in range(self.saved_list.count()):
+            item = self.saved_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                ids.append(item.data(Qt.ItemDataRole.UserRole))
+        return ids
+
+    def _uncheck_all_saved(self) -> None:
+        for i in range(self.saved_list.count()):
+            self.saved_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+
+    def _on_link_selected(self) -> None:
+        if not self._loaded_card_id:
+            return
+        type_key = self.link_type_combo.currentData()
+        for other_id in self._checked_card_ids():
+            if other_id == self._loaded_card_id:
+                continue
+            link = Link(self._loaded_card_id, other_id, type_key)
+            # Replace any existing link to this partner so the type updates.
+            self._staged_links = [
+                l for l in self._staged_links
+                if self._partner_id(l) != other_id
+            ]
+            self._staged_links.append(link)
+        self._mark_dirty()
+        self._refresh_links_section()
+        self._uncheck_all_saved()
+
+    def _update_link_button_enabled(self) -> None:
+        self.link_button.setEnabled(bool(self._loaded_card_id))
+
+    def _partner_id_for(self, link: Link, self_id: str) -> str:
+        """The end of a staged link that is not self_id. Staged links were built
+        with the loaded card id (or, for a brand-new card, against the partner
+        directly), so the partner is whichever id differs from self_id."""
+        if link.a_id == self_id:
+            return link.b_id
+        if link.b_id == self_id:
+            return link.a_id
+        # The loaded id changed (new card saved): the partner is the end that is
+        # not the previous loaded id.
+        return link.b_id if link.a_id == self._loaded_card_id else link.a_id
 
     def _partner_id(self, link: Link) -> str:
         """The id at the other end of a link from the loaded card."""
