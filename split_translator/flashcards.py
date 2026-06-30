@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # The four shipped link types: (key, display label, edge colour). Synonym,
 # Similar and Related form a green gradient (intensity = closeness in meaning,
@@ -142,21 +142,40 @@ class Link:
         )
 
 
-def serialise_cards(cards: list[Card]) -> dict:
-    """Build the on-disk JSON structure from a list of cards."""
-    return {"version": SCHEMA_VERSION, "cards": [c.to_dict() for c in cards]}
+def serialise_cards(cards: list[Card], links: list["Link"] | None = None) -> dict:
+    """Build the on-disk JSON structure from cards and their links."""
+    return {
+        "version": SCHEMA_VERSION,
+        "cards": [c.to_dict() for c in cards],
+        "links": [link.to_dict() for link in (links or [])],
+    }
 
 
-def load_cards(filepath: Path) -> list[Card]:
-    """Load cards from disk, tolerating a missing or malformed file by returning []."""
+def load_flashcards(filepath: Path) -> tuple[list[Card], list["Link"]]:
+    """Load cards and links, tolerating a missing or malformed file by returning
+    ([], []). A v1 file (no links key) loads with an empty link list. Links that
+    reference a card id not present are dropped (dangling-link pruning)."""
     if not filepath.exists():
-        return []
+        return [], []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             raw = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return []
-    return [Card.from_dict(c) for c in raw.get("cards", [])]
+        return [], []
+    cards = [Card.from_dict(c) for c in raw.get("cards", [])]
+    ids = {c.id for c in cards}
+    links = []
+    for entry in raw.get("links", []):
+        link = Link.from_dict(entry)
+        if link.a_id in ids and link.b_id in ids:
+            links.append(link)
+    return cards, links
+
+
+def load_cards(filepath: Path) -> list[Card]:
+    """Load only the cards (links ignored). Kept for callers that do not need
+    links."""
+    return load_flashcards(filepath)[0]
 
 
 def write_cards(filepath: Path, data: dict) -> None:
@@ -210,8 +229,3 @@ class FlashcardStore:
     def shutdown(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
             self.save_worker.wait()
-
-
-def load_flashcards(filepath: Path):
-    """Temporary shim; replaced in the links-storage task. Returns (cards, [])."""
-    return load_cards(filepath), []

@@ -45,3 +45,62 @@ class LinkTypesTests(unittest.TestCase):
         for key, label, colour in LINK_TYPES:
             self.assertTrue(label)
             self.assertTrue(colour.startswith("#"))
+
+
+class LinkStorageTests(unittest.TestCase):
+    def test_serialise_includes_version_2_and_links(self):
+        cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+        links = [Link(a_id="a", b_id="b", type="synonym")]
+        data = serialise_cards(cards, links)
+        self.assertEqual(data["version"], 2)
+        self.assertEqual(SCHEMA_VERSION, 2)
+        self.assertEqual(data["links"], [{"a_id": "a", "b_id": "b",
+                                          "type": "synonym"}])
+
+    def test_round_trip_cards_and_links(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "f.json"
+            cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+            links = [Link(a_id="a", b_id="b", type="related")]
+            write_cards(p, serialise_cards(cards, links))
+            loaded_cards, loaded_links = load_flashcards(p)
+            self.assertEqual(len(loaded_cards), 2)
+            self.assertEqual(loaded_links, links)
+
+    def test_v1_file_loads_with_empty_links(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "f.json"
+            p.write_text(
+                '{"version": 1, "cards": [{"id": "a", "headword": "a"}]}',
+                encoding="utf-8",
+            )
+            cards, links = load_flashcards(p)
+            self.assertEqual(len(cards), 1)
+            self.assertEqual(links, [])
+
+    def test_dangling_links_pruned_on_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "f.json"
+            # Link references "gone", which is not among the cards.
+            data = {
+                "version": 2,
+                "cards": [{"id": "a", "headword": "a"}],
+                "links": [{"a_id": "a", "b_id": "gone", "type": "synonym"}],
+            }
+            import json
+            p.write_text(json.dumps(data), encoding="utf-8")
+            cards, links = load_flashcards(p)
+            self.assertEqual(links, [])
+
+    def test_missing_file_returns_empty_pair(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(load_flashcards(Path(d) / "none.json"), ([], []))
+
+    def test_unknown_type_survives_round_trip(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "f.json"
+            cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+            links = [Link(a_id="a", b_id="b", type="custom")]
+            write_cards(p, serialise_cards(cards, links))
+            _cards, loaded_links = load_flashcards(p)
+            self.assertEqual(loaded_links[0].type, "custom")
