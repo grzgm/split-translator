@@ -4,6 +4,7 @@ import json
 from urllib.parse import quote
 
 from PySide6.QtCore import QFile, QIODevice, Qt, QUrl, Signal
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -87,6 +88,11 @@ class DictionaryPanel(QWidget):
         self.capture_bridge.capture_requested.connect(
             self.sense_capture_requested
         )
+        # Pronunciation playback goes through Qt's own media player fed the mp3
+        # URL, not by calling the Cambridge page's audioN.play() globals (which
+        # couples to that page's internal scripting). Lazily built on first use.
+        self._player: QMediaPlayer | None = None
+        self._audio_output: QAudioOutput | None = None
         self.init_ui()
         self._setup_capture_buttons()
 
@@ -577,6 +583,62 @@ class DictionaryPanel(QWidget):
             self.correction_applied.emit(wrong, corrected)
         self.search_word(corrected)
 
+    # Collects every pronunciation clip's mp3 URL on the Cambridge English page,
+    # in document order, so the Nth one can be played by URL. The page renders one
+    # <audio> per pronunciation, and its audioN globals (audio1, audio2, ...) line
+    # up with that DOM order, so url_list[N-1] is exactly the clip the old
+    # audioN.play() played (verified against the live page). Returns a JSON string
+    # array; runJavaScript drops a bare array (it arrives empty), so it is
+    # stringified and parsed back in Python, as with _GRAB_JS.
+    _AUDIO_URLS_JS = r"""
+    (function() {
+        function abs(u) {
+            if (u && u.indexOf('http') !== 0) {
+                u = 'https://dictionary.cambridge.org' + u;
+            }
+            return u;
+        }
+        var urls = [];
+        var audios = document.querySelectorAll('audio');
+        for (var i = 0; i < audios.length; i++) {
+            var s = audios[i].querySelector('source[type="audio/mpeg"]')
+                || audios[i].querySelector('source[src$=".mp3"]')
+                || audios[i].querySelector('source');
+            urls.push(s ? abs(s.getAttribute('src')) : null);
+        }
+        return JSON.stringify(urls);
+    })();
+    """
+
     def play_cambridge_audio(self, audio_num: int = 1):
-        js_code = f"audio{audio_num}.load(); audio{audio_num}.play();"
-        self.cambridge_en_view.page().runJavaScript(js_code)
+        """Play the `audio_num`-th (1-based) pronunciation clip from the Cambridge
+        English page through Qt's media player. Reads the clip URLs from the page
+        (rather than driving its audioN.play() globals) and plays the chosen one
+        by URL, so playback no longer depends on the page's own scripting."""
+        self.cambridge_en_view.page().runJavaScript(
+            self._AUDIO_URLS_JS,
+            lambda result: self._play_audio_url(result, audio_num),
+        )
+
+    def _play_audio_url(self, result, audio_num: int) -> None:
+        try:
+            urls = json.loads(result) if result else []
+        except (json.JSONDecodeError, TypeError):
+            urls = []
+        index = audio_num - 1
+        if index < 0 or index >= len(urls):
+            return
+        url = urls[index]
+        if not url:
+            return
+        if self._player is None:
+            self._player = QMediaPlayer(self)
+            self._audio_output = QAudioOutput(self)
+            self._player.setAudioOutput(self._audio_output)
+        # Replaying the same URL is a no-op unless the source is cleared first
+        # (setting the held URL again does nothing once the clip has finished),
+        # so stop and clear before reloading, mirroring the flashcard player.
+        self._player.stop()
+        self._player.setSource(QUrl())
+        self._player.setSource(QUrl(url))
+        self._player.play()

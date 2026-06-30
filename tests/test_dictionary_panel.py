@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 
@@ -47,6 +48,73 @@ class CorrectionTests(unittest.TestCase):
         panel._handle_correction(None)
         self.assertEqual(corrections, [])
         self.assertEqual(searches, [])
+
+
+class AudioPlaybackTests(unittest.TestCase):
+    def _panel(self):
+        return DictionaryPanel(QWebEngineProfile.defaultProfile())
+
+    def _stub_player(self, panel):
+        # Record the URLs handed to the media player without playing anything.
+        played = []
+
+        class FakePlayer:
+            def setAudioOutput(self, _out):
+                pass
+
+            def stop(self):
+                pass
+
+            def setSource(self, url):
+                played.append(url.toString())
+
+            def play(self):
+                pass
+
+        panel._player = FakePlayer()
+        panel._audio_output = object()  # already built, so no real one is made
+        return played
+
+    def test_plays_the_nth_url_one_based(self):
+        panel = self._panel()
+        played = self._stub_player(panel)
+        urls = ["https://x/uk1.mp3", "https://x/us1.mp3", "https://x/uk2.mp3"]
+        panel._play_audio_url(json.dumps(urls), 2)
+        # setSource is called twice per play: once with "" to clear, then the URL.
+        self.assertEqual(played, ["", "https://x/us1.mp3"])
+
+    def test_first_url_is_audio_num_one(self):
+        panel = self._panel()
+        played = self._stub_player(panel)
+        urls = ["https://x/uk1.mp3", "https://x/us1.mp3"]
+        panel._play_audio_url(json.dumps(urls), 1)
+        self.assertEqual(played, ["", "https://x/uk1.mp3"])
+
+    def test_out_of_range_index_plays_nothing(self):
+        panel = self._panel()
+        played = self._stub_player(panel)
+        urls = ["https://x/uk1.mp3"]
+        panel._play_audio_url(json.dumps(urls), 5)  # only one clip on the page
+        self.assertEqual(played, [])
+
+    def test_null_url_entry_plays_nothing(self):
+        panel = self._panel()
+        played = self._stub_player(panel)
+        urls = [None]  # an <audio> with no resolvable source
+        panel._play_audio_url(json.dumps(urls), 1)
+        self.assertEqual(played, [])
+
+    def test_malformed_payload_plays_nothing(self):
+        panel = self._panel()
+        played = self._stub_player(panel)
+        panel._play_audio_url("not json", 1)
+        self.assertEqual(played, [])
+
+    def test_empty_payload_plays_nothing(self):
+        panel = self._panel()
+        played = self._stub_player(panel)
+        panel._play_audio_url("", 1)
+        self.assertEqual(played, [])
 
 
 if __name__ == "__main__":
