@@ -104,3 +104,64 @@ class LinkStorageTests(unittest.TestCase):
             write_cards(p, serialise_cards(cards, links))
             _cards, loaded_links = load_flashcards(p)
             self.assertEqual(loaded_links[0].type, "custom")
+
+
+class StoreLinkTests(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [
+            Card(headword="a", id="a"),
+            Card(headword="b", id="b"),
+            Card(headword="c", id="c"),
+        ]
+        return store
+
+    def test_set_links_for_adds_links(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym"),
+                                  Link("a", "c", "related")])
+        store.shutdown()
+        self.assertEqual(len(store.links), 2)
+        self.assertEqual({l.b_id for l in store.links}, {"b", "c"})
+
+    def test_links_for_returns_links_touching_card(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        self.assertEqual(len(store.links_for("a")), 1)
+        self.assertEqual(len(store.links_for("b")), 1)  # symmetric
+        self.assertEqual(len(store.links_for("c")), 0)
+
+    def test_set_links_for_replaces_only_that_cards_links(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        store.set_links_for("c", [Link("c", "b", "related")])
+        # Replacing a's links must not remove c-b.
+        store.set_links_for("a", [Link("a", "c", "antonym")])
+        types = {(min(l.a_id, l.b_id), max(l.a_id, l.b_id)): l.type
+                 for l in store.links}
+        self.assertEqual(types[("a", "c")], "antonym")
+        self.assertEqual(types[("b", "c")], "related")
+        self.assertNotIn(("a", "b"), types)  # a-b was dropped
+
+    def test_set_links_for_dedups_symmetric_pairs(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym"),
+                                  Link("b", "a", "synonym")])
+        self.assertEqual(len(store.links), 1)
+
+    def test_set_links_for_persists(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        store.shutdown()
+        _cards, links = load_flashcards(store.filepath)
+        self.assertEqual(len(links), 1)
+
+    def test_cards_changed_emitted_on_set_links(self):
+        store = self._store()
+        fired = []
+        store.cards_changed.connect(lambda: fired.append(True))
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        self.assertEqual(fired, [True])

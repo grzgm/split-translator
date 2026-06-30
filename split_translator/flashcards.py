@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QObject, QThread, Signal
 
 SCHEMA_VERSION = 2
 
@@ -197,13 +197,23 @@ class SaveWorker(QThread):
         write_cards(self.filepath, self.data)
 
 
+class _StoreSignals(QObject):
+    """Holds the store's Qt signal. FlashcardStore is a plain object so it can be
+    built off the UI thread and in tests without a QApplication; the signal lives
+    on this tiny QObject and is re-exposed as store.cards_changed."""
+
+    cards_changed = Signal()
+
+
 class FlashcardStore:
-    """Owns the in-memory card list and persists it to a JSON file."""
+    """Owns the in-memory card list and links, and persists them to a JSON file."""
 
     def __init__(self, filepath: Path):
         self.filepath = filepath
         self.save_worker = None
-        self.cards = load_cards(filepath)
+        self.cards, self.links = load_flashcards(filepath)
+        self._signals = _StoreSignals()
+        self.cards_changed = self._signals.cards_changed
 
     def add_card(self, card: Card) -> None:
         self.cards.insert(0, card)
@@ -220,11 +230,30 @@ class FlashcardStore:
                 return True
         return False
 
+    def links_for(self, card_id: str) -> list[Link]:
+        return [l for l in self.links if card_id in (l.a_id, l.b_id)]
+
+    def set_links_for(self, card_id: str, new_links: list[Link]) -> None:
+        """Replace every link touching card_id with new_links. Each new link must
+        touch card_id. Symmetric pairs are deduplicated by (a_id, b_id)."""
+        kept = [l for l in self.links if card_id not in (l.a_id, l.b_id)]
+        seen = {(l.a_id, l.b_id) for l in kept}
+        for link in new_links:
+            key = (link.a_id, link.b_id)
+            if key not in seen:
+                seen.add(key)
+                kept.append(link)
+        self.links = kept
+        self.save()
+
     def save(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
             self.save_worker.wait()
-        self.save_worker = SaveWorker(self.filepath, serialise_cards(self.cards))
+        self.save_worker = SaveWorker(
+            self.filepath, serialise_cards(self.cards, self.links)
+        )
         self.save_worker.start()
+        self.cards_changed.emit()
 
     def shutdown(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
