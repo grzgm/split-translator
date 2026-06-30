@@ -73,3 +73,27 @@ class GraphWindowTests(unittest.TestCase):
         for node_id, pos in pos_before.items():
             self.assertEqual(win._node_positions[node_id], pos)
         self.assertIn("tiny", win._node_positions)
+
+    def test_moving_a_node_follows_label_edge_and_position(self):
+        from PySide6.QtCore import QPointF
+        win = FlashcardGraphWindow(self._store())
+        win.rebuild()
+        node = win._nodes["big"]
+        label = win._labels["big"]
+        # An edge that touches "big".
+        edge = next(line for (a, b, _t), line in win._edges.items()
+                    if "big" in (a, b))
+
+        node.setPos(QPointF(123.0, 45.0))
+
+        # Stored position updated to the node's new spot.
+        self.assertEqual(win._node_positions["big"], (123.0, 45.0))
+        # Label sits beside the node at its new spot.
+        self.assertEqual(label.pos().x(), 123.0 + 18.0)   # _NODE_RADIUS == 18.0
+        self.assertEqual(label.pos().y(), 45.0 - 18.0)
+        # The edge endpoint at "big"'s end now passes through (123, 45). Because
+        # the line is drawn between the two node centres, one of its endpoints
+        # equals the node's new position.
+        ln = edge.line()
+        endpoints = {(ln.x1(), ln.y1()), (ln.x2(), ln.y2())}
+        self.assertIn((123.0, 45.0), endpoints)

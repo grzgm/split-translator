@@ -4,8 +4,8 @@ pure-logic graph_layout module; this file is the Qt presentation and the
 interactions (drag, click-to-activate, type filter, node search) and an
 incremental refresh that preserves manually arranged node positions."""
 
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPen
+from PySide6.QtCore import QPointF, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QGraphicsEllipseItem,
@@ -30,13 +30,15 @@ _SCENE_H = 600.0
 
 
 class _NodeItem(QGraphicsEllipseItem):
-    """A draggable node that reports clicks back to the window via a callback."""
+    """A draggable node. Reports clicks to the window and, on every move, tells
+    the window to follow with the node's label, its edges and its stored
+    position."""
 
-    def __init__(self, card_id: str, on_click, starred: bool):
+    def __init__(self, card_id: str, window, starred: bool):
         super().__init__(-_NODE_RADIUS, -_NODE_RADIUS,
                          2 * _NODE_RADIUS, 2 * _NODE_RADIUS)
         self.card_id = card_id
-        self._on_click = on_click
+        self._window = window
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(
             QGraphicsEllipseItem.GraphicsItemFlag.ItemSendsGeometryChanges, True
@@ -47,8 +49,16 @@ class _NodeItem(QGraphicsEllipseItem):
         self.setZValue(1)
 
     def mousePressEvent(self, event):
-        self._on_click(self.card_id)
+        self._window._emit_node_clicked(self.card_id)
         super().mousePressEvent(event)
+
+    def itemChange(self, change, value):
+        # Fired for every position change because ItemSendsGeometryChanges is
+        # set. value is the node's new QPointF position; tell the window to move
+        # the label and edges and record the new position.
+        if change == QGraphicsEllipseItem.GraphicsItemChange.ItemPositionHasChanged:
+            self._window._on_node_moved(self.card_id)
+        return super().itemChange(change, value)
 
 
 class FlashcardGraphWindow(QWidget):
@@ -102,7 +112,7 @@ class FlashcardGraphWindow(QWidget):
 
         self.scene = QGraphicsScene(self)
         self.view = QGraphicsView(self.scene)
-        self.view.setRenderHint(self.view.renderHints())
+        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         outer.addWidget(self.view, stretch=1)
 
@@ -116,6 +126,24 @@ class FlashcardGraphWindow(QWidget):
 
     def _emit_node_clicked(self, card_id: str) -> None:
         self.card_activated.emit(card_id)
+
+    def _on_node_moved(self, card_id: str) -> None:
+        """Follow a node that has just moved: keep its label beside it, record
+        its new position, and reposition every edge touching it."""
+        node = self._nodes.get(card_id)
+        if node is None:
+            return
+        pos = node.pos()
+        self._node_positions[card_id] = (pos.x(), pos.y())
+        label = self._labels.get(card_id)
+        if label is not None:
+            label.setPos(QPointF(pos.x() + _NODE_RADIUS, pos.y() - _NODE_RADIUS))
+        for (a_id, b_id, _type), line in self._edges.items():
+            if card_id in (a_id, b_id):
+                a = self._nodes.get(a_id)
+                b = self._nodes.get(b_id)
+                if a is not None and b is not None:
+                    self._position_edge(line, a, b)
 
     def _edge_key(self, link) -> tuple:
         return (link.a_id, link.b_id, link.type)
@@ -142,7 +170,7 @@ class FlashcardGraphWindow(QWidget):
 
     def _add_node_item(self, card) -> None:
         x, y = self._node_positions.get(card.id, (_SCENE_W / 2, _SCENE_H / 2))
-        node = _NodeItem(card.id, self._emit_node_clicked, bool(card.starred))
+        node = _NodeItem(card.id, self, bool(card.starred))
         node.setPos(QPointF(x, y))
         self.scene.addItem(node)
         self._nodes[card.id] = node
