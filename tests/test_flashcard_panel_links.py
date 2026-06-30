@@ -13,6 +13,44 @@ from split_translator.flashcards import Card, FlashcardStore, Link
 app = QApplication.instance() or QApplication([])
 
 
+class SavedFilterTests(unittest.TestCase):
+    def _panel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        store.cards = [
+            Card(headword="address", id="a"),
+            Card(headword="receive", id="b"),
+            Card(headword="recede", id="c"),
+        ]
+        panel = FlashcardPanel(store)
+        panel._refresh_saved_list()
+        return panel, store
+
+    def _visible(self, panel):
+        return [
+            panel.saved_list.item(i).text()
+            for i in range(panel.saved_list.count())
+            if not panel.saved_list.item(i).isHidden()
+        ]
+
+    def test_filter_narrows_to_matching_rows(self):
+        panel, _ = self._panel()
+        panel.saved_filter.setText("rec")
+        self.assertEqual(set(self._visible(panel)), {"receive", "recede"})
+
+    def test_filter_is_case_insensitive(self):
+        panel, _ = self._panel()
+        panel.saved_filter.setText("ADDR")
+        self.assertEqual(self._visible(panel), ["address"])
+
+    def test_empty_filter_shows_all(self):
+        panel, _ = self._panel()
+        panel.saved_filter.setText("rec")
+        panel.saved_filter.setText("")
+        self.assertEqual(len(self._visible(panel)), 3)
+
+
 class LinkSectionTests(unittest.TestCase):
     def _panel(self):
         tmp = tempfile.TemporaryDirectory()

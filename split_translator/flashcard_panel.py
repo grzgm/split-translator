@@ -419,6 +419,11 @@ class FlashcardPanel(QWidget):
         saved_layout = QVBoxLayout(saved_widget)
         saved_layout.setContentsMargins(0, 0, 0, 0)
         saved_layout.addWidget(QLabel("Saved cards"))
+        self.saved_filter = QLineEdit()
+        self.saved_filter.setPlaceholderText("Filter saved cards")
+        self.saved_filter.setClearButtonEnabled(True)
+        self.saved_filter.textChanged.connect(self._apply_saved_filter)
+        saved_layout.addWidget(self.saved_filter)
         self.saved_list = QListWidget()
         self.saved_list.setToolTip("Click a saved card to load it for editing")
         self.saved_list.itemClicked.connect(self._on_saved_clicked)
@@ -835,6 +840,13 @@ class FlashcardPanel(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, card.id)
             self.saved_list.addItem(item)
+        self._apply_saved_filter()
+
+    def _apply_saved_filter(self, text: str = "") -> None:
+        needle = self.saved_filter.text().strip().lower()
+        for i in range(self.saved_list.count()):
+            item = self.saved_list.item(i)
+            item.setHidden(bool(needle) and needle not in item.text().lower())
 
     def _on_saved_clicked(self, item):
         card_id = item.data(Qt.ItemDataRole.UserRole)
