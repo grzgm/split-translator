@@ -246,6 +246,33 @@ class FlashcardStore:
         self.links = kept
         self.save()
 
+    def save_card_with_links(self, card: Card, links: list[Link]) -> None:
+        """Add or update a card and replace its links in a single save.
+
+        Mirrors update_card (replace in place when the id exists, else insert at
+        the front) and set_links_for (replace every link touching card.id with
+        the given list, deduped by canonical (a_id, b_id)), but performs exactly
+        one disk write and emits cards_changed once. Used by the editor's Save so
+        a single Save is a single disk write and a single graph refresh."""
+        replaced = False
+        for i, existing in enumerate(self.cards):
+            if existing.id == card.id:
+                self.cards[i] = card
+                replaced = True
+                break
+        if not replaced:
+            self.cards.insert(0, card)
+
+        kept = [l for l in self.links if card.id not in (l.a_id, l.b_id)]
+        seen = {(l.a_id, l.b_id) for l in kept}
+        for link in links:
+            key = (link.a_id, link.b_id)
+            if key not in seen:
+                seen.add(key)
+                kept.append(link)
+        self.links = kept
+        self.save()
+
     def save(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
             self.save_worker.wait()

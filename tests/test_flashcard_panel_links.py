@@ -166,3 +166,15 @@ class LinkControlsTests(unittest.TestCase):
         panel._on_link_selected()
         self.assertEqual(len(panel._staged_links), 1)
         self.assertEqual(panel._staged_links[0].type, "antonym")
+
+    def test_save_emits_cards_changed_once(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        self._check(panel, "large")
+        self._select_type(panel, "synonym")
+        panel._on_link_selected()
+        fired = []
+        store.cards_changed.connect(lambda: fired.append(True))
+        panel.save_card()
+        store.shutdown()
+        self.assertEqual(len(fired), 1)  # one write, not two

@@ -740,19 +740,15 @@ class FlashcardPanel(QWidget):
         if card is None:
             self.save_rejected.emit("Cannot save flashcard: headword is empty")
             return
-        # Update the loaded card in place when editing; otherwise add a new one.
-        # If the loaded card has since gone, fall back to adding it.
-        if self._loaded_card_id and self.store.update_card(card):
-            pass
-        else:
-            self.store.add_card(card)
-        # Commit staged links: rebuild each staged link against the saved card's
-        # id (a brand-new card got its id only now) and reconcile in the store.
+        # Commit the card and its links in one write: rebuild each staged link
+        # against the saved card's id (a brand-new card got its id only now) and
+        # hand both to the store so a single Save is a single disk write and a
+        # single graph refresh.
         rebased = [
             Link(card.id, self._partner_id_for(link, card.id), link.type)
             for link in self._staged_links
         ]
-        self.store.set_links_for(card.id, rebased)
+        self.store.save_card_with_links(card, rebased)
         headword = card.headword
         self._reset_editor()
         self._refresh_saved_list()

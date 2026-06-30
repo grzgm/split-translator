@@ -165,3 +165,33 @@ class StoreLinkTests(unittest.TestCase):
         store.cards_changed.connect(lambda: fired.append(True))
         store.set_links_for("a", [Link("a", "b", "synonym")])
         self.assertEqual(fired, [True])
+
+    def test_save_card_with_links_updates_card_and_links_in_one_emit(self):
+        store = self._store()
+        fired = []
+        store.cards_changed.connect(lambda: fired.append(True))
+        edited = Card(headword="a-edited", id="a")
+        store.save_card_with_links(edited, [Link("a", "b", "synonym")])
+        store.shutdown()
+        self.assertEqual(len(fired), 1)  # one write, one refresh
+        self.assertEqual(next(c for c in store.cards if c.id == "a").headword,
+                         "a-edited")
+        self.assertEqual(len(store.links_for("a")), 1)
+
+    def test_save_card_with_links_inserts_a_new_card(self):
+        store = self._store()
+        new_card = Card(headword="d", id="d")
+        store.save_card_with_links(new_card, [])
+        store.shutdown()
+        self.assertEqual(store.cards[0].id, "d")  # inserted at front
+
+    def test_save_card_with_links_preserves_other_cards_links(self):
+        store = self._store()
+        store.set_links_for("c", [Link("c", "b", "related")])
+        store.save_card_with_links(Card(headword="a", id="a"),
+                                   [Link("a", "b", "synonym")])
+        store.shutdown()
+        keys = {(min(l.a_id, l.b_id), max(l.a_id, l.b_id)): l.type
+                for l in store.links}
+        self.assertEqual(keys[("b", "c")], "related")  # untouched
+        self.assertEqual(keys[("a", "b")], "synonym")
