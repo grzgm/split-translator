@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt
 from .config import Config, CONFIG_DIR
 from .dictionary_panel import DictionaryPanel
 from .flashcard_panel import FlashcardPanel
+from .flashcard_graph import FlashcardGraphWindow
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
 from .book_panel import BookPanel
@@ -37,6 +38,7 @@ class TranslationTool(QMainWindow):
         flashcards_file = CONFIG_DIR / "flashcards.json"
         self.flashcard_store = FlashcardStore(flashcards_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
+        self.flashcard_graph_window = None
 
         self.init_ui()
         self.setup_menu()
@@ -106,9 +108,13 @@ class TranslationTool(QMainWindow):
         anchor_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
         anchor_action.triggered.connect(self.book_panel.open_anchor_editor)
 
+        graph_action = QAction("Flashcard Graph", self)
+        graph_action.triggered.connect(self.open_flashcard_graph)
+
         view_menu = QMenu("View", self)
         view_menu.addAction(flashcard_action)
         view_menu.addAction(anchor_action)
+        view_menu.addAction(graph_action)
 
         view_button = QToolButton()
         view_button.setText("View")
@@ -265,6 +271,36 @@ class TranslationTool(QMainWindow):
         # editor is empty. (A still-loading page also fires the auto-grab on
         # load.)
         self.dictionary_panel.grab_pronunciation()
+
+    def open_flashcard_graph(self):
+        if self.flashcard_graph_window is None:
+            self.flashcard_graph_window = FlashcardGraphWindow(self.flashcard_store)
+            self.flashcard_graph_window.card_activated.connect(
+                self.on_graph_card_activated
+            )
+            # Refresh the graph in place whenever cards or links change, so the
+            # window stays current without losing manually arranged positions.
+            self.flashcard_store.cards_changed.connect(
+                self.refresh_flashcard_graph
+            )
+        self.flashcard_graph_window.rebuild()
+        self.flashcard_graph_window.show()
+        self.flashcard_graph_window.raise_()
+        self.flashcard_graph_window.activateWindow()
+
+    def refresh_flashcard_graph(self):
+        window = self.flashcard_graph_window
+        if window is not None and window.isVisible():
+            window.refresh()
+
+    def on_graph_card_activated(self, card_id: str):
+        card = next(
+            (c for c in self.flashcard_store.cards if c.id == card_id), None
+        )
+        if card is None:
+            return
+        self.flashcard_dock.show()
+        self.flashcard_panel.load_card(card)
 
     def new_flashcard(self, force: bool = False):
         word = self.dictionary_panel.search_input.text().strip()
