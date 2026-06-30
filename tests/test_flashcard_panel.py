@@ -553,22 +553,38 @@ class FlashcardPanelTests(unittest.TestCase):
     # --- replace audio from the page (set_audio) ------------------------
 
     def test_set_audio_sets_only_that_region(self):
-        # Replacing one region's audio sets just that URL and leaves the other
-        # region, the IPA and the headword untouched.
+        # Replacing one region's audio sets just that URL and its IPA, leaving
+        # the other region and the headword untouched.
         panel, _ = self._panel()
         panel.headword_input.setText("run")
-        panel.ipa_uk_input.setText("/aa/")
-        panel.set_audio("uk", "https://example/new-uk.mp3")
+        panel.ipa_uk_input.setText("/old/")
+        panel.set_audio("uk", "https://example/new-uk.mp3", "/new/")
         self.assertEqual(panel._audio_uk_url, "https://example/new-uk.mp3")
         self.assertIsNone(panel._audio_us_url)  # other region untouched
         self.assertEqual(panel.headword_input.text(), "run")  # untouched
-        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")  # untouched
+        self.assertEqual(panel.ipa_uk_input.text(), "/new/")  # IPA replaced
 
     def test_set_audio_us_is_the_mirror(self):
         panel, _ = self._panel()
-        panel.set_audio("us", "https://example/new-us.mp3")
+        panel.set_audio("us", "https://example/new-us.mp3", "/yu/")
         self.assertEqual(panel._audio_us_url, "https://example/new-us.mp3")
+        self.assertEqual(panel.ipa_us_input.text(), "/yu/")
         self.assertIsNone(panel._audio_uk_url)
+        self.assertEqual(panel.ipa_uk_input.text(), "")  # other region untouched
+
+    def test_set_audio_keeps_existing_ipa_when_none_captured(self):
+        # A clip with no IPA on the page must not blank an IPA the card has.
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/keep/")
+        panel.set_audio("uk", "https://example/new-uk.mp3", None)
+        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")  # left as-is
+
+    def test_set_audio_ipa_defaults_to_none(self):
+        # The IPA argument is optional; omitting it leaves the IPA field alone.
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/keep/")
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")
 
     def test_set_audio_enables_that_speaker_button(self):
         panel, _ = self._panel()
@@ -592,13 +608,14 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.set_pronunciation(
             "/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run"
         )
-        panel.set_audio("uk", "https://example/replaced.mp3")  # user replaces it
+        # user replaces the clip and its IPA
+        panel.set_audio("uk", "https://example/replaced.mp3", "/zz/")
         panel.set_pronunciation(
             "/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk"
         )
         # The whole card is left alone: the replace counts as a user edit.
         self.assertEqual(panel.headword_input.text(), "run")
-        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")
+        self.assertEqual(panel.ipa_uk_input.text(), "/zz/")
         self.assertEqual(panel._audio_uk_url, "https://example/replaced.mp3")
 
     def test_set_audio_unknown_region_is_a_noop(self):

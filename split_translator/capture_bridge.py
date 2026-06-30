@@ -14,13 +14,14 @@ class CaptureBridge(QObject):
 
     # field: "polish" | "english"; target: "current" | "new"; pos: "" when unknown.
     capture_requested = Signal(str, str, str, str)  # text, field, target, pos
-    # A pronunciation clip captured from the page: region "uk"/"us", mp3 URL.
-    audio_capture_requested = Signal(str, str)  # region, url
+    # A pronunciation clip captured from the page: region "uk"/"us", mp3 URL and
+    # the clip's IPA notation ("" when the page block has none).
+    audio_capture_requested = Signal(str, str, str)  # region, url, ipa
 
     @Slot(str, str, str, str)
     def capture(self, text: str, field: str, target: str, pos: str) -> None:
         self.capture_requested.emit(text, field, target, pos)
 
-    @Slot(str, str)
-    def captureAudio(self, region: str, url: str) -> None:
-        self.audio_capture_requested.emit(region, url)
+    @Slot(str, str, str)
+    def captureAudio(self, region: str, url: str, ipa: str) -> None:
+        self.audio_capture_requested.emit(region, url, ipa)

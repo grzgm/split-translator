@@ -33,6 +33,30 @@ def _qwebchannel_js() -> str:
         f.close()
 
 
+# Read one Cambridge pronunciation block (span.dpron-i) into {ipa, audio}: the
+# .ipa notation and the <source> mp3 URL, normalised to absolute. Defined once
+# and spliced into both the one-shot grab (the "New from word" seed) and the
+# injected capture script (the per-block "replace" button), so the two read a
+# block the same way. Returns "" / null when the block lacks an IPA / audio.
+_BLOCK_PRON_JS = r"""
+        function stReadBlockPron(block) {
+            if (!block) { return { ipa: '', audio: null }; }
+            var ipaEl = block.querySelector('.ipa');
+            var srcEl = block.querySelector('source[type="audio/mpeg"]')
+                || block.querySelector('source[src$=".mp3"]')
+                || block.querySelector('source');
+            var audio = srcEl ? srcEl.getAttribute('src') : null;
+            if (audio && audio.indexOf('http') !== 0) {
+                audio = 'https://dictionary.cambridge.org' + audio;
+            }
+            return {
+                ipa: ipaEl ? ipaEl.textContent.trim() : '',
+                audio: audio
+            };
+        }
+"""
+
+
 class CaptureWebView(QWebEngineView):
     """A web view whose right-click menu keeps the browser defaults and adds the
     two flashcard capture actions below them."""
@@ -80,8 +104,9 @@ class DictionaryPanel(QWidget):
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
     # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
     sense_capture_requested = Signal(str, str, str, str)
-    # A pronunciation clip captured from the page: region ("uk"/"us"), mp3 URL.
-    audio_capture_requested = Signal(str, str)
+    # A pronunciation clip captured from the page: region ("uk"/"us"), mp3 URL
+    # and the clip's IPA notation ("" when the block has none).
+    audio_capture_requested = Signal(str, str, str)
 
     def __init__(self, profile: QWebEngineProfile, parent=None):
         super().__init__(parent)
@@ -184,17 +209,11 @@ class DictionaryPanel(QWidget):
 
     _GRAB_JS = r"""
     (function() {
+        __BLOCK_PRON_JS__
         function grab(region) {
-            var block = document.querySelector('span.' + region + '.dpron-i');
-            if (!block) { return { ipa: null, audio: null }; }
-            var ipaEl = block.querySelector('.ipa');
-            var srcEl = block.querySelector('source[type="audio/mpeg"]')
-                || block.querySelector('source[src$=".mp3"]');
-            var audio = srcEl ? srcEl.getAttribute('src') : null;
-            if (audio && audio.indexOf('http') !== 0) {
-                audio = 'https://dictionary.cambridge.org' + audio;
-            }
-            return { ipa: ipaEl ? ipaEl.textContent.trim() : null, audio: audio };
+            return stReadBlockPron(
+                document.querySelector('span.' + region + '.dpron-i')
+            );
         }
         var uk = grab('uk');
         var us = grab('us');
@@ -237,9 +256,8 @@ class DictionaryPanel(QWidget):
     """
 
     def grab_pronunciation(self):
-        self.cambridge_en_view.page().runJavaScript(
-            self._GRAB_JS, self._on_pronunciation
-        )
+        js = self._GRAB_JS.replace("__BLOCK_PRON_JS__", _BLOCK_PRON_JS)
+        self.cambridge_en_view.page().runJavaScript(js, self._on_pronunciation)
 
     def _on_pronunciation(self, result):
         try:
@@ -309,6 +327,7 @@ class DictionaryPanel(QWidget):
     _CAPTURE_JS_TEMPLATE = r"""
     (function() {
         __CHANNEL_JS__
+        __BLOCK_PRON_JS__
 
         var pairs = __PAIRS__;
 
@@ -417,10 +436,11 @@ class DictionaryPanel(QWidget):
         }
 
         // A "replace" button next to each pronunciation that overwrites the
-        // current card's audio for that clip's region (uk/us) with the clip URL.
-        // A card has one UK and one US audio slot, so the action is replace (no
-        // +new). The region is read from the block's class and the mp3 URL from
-        // its <source>, normalised to absolute as elsewhere.
+        // current card's audio and IPA for that clip's region (uk/us) with the
+        // clip's URL and notation. A card has one UK and one US slot, so the
+        // action is replace (no +new). The region is read from the block's
+        // class; the mp3 URL and IPA come from stReadBlockPron, the same reader
+        // the "New from word" seed uses.
         function injectAudio() {
             var blocks = document.querySelectorAll('span.dpron-i');
             blocks.forEach(function(block) {
@@ -428,19 +448,18 @@ class DictionaryPanel(QWidget):
                 var region = block.classList.contains('uk') ? 'uk'
                     : block.classList.contains('us') ? 'us' : '';
                 if (!region) { return; }
-                var src = block.querySelector('source[type="audio/mpeg"]')
-                    || block.querySelector('source[src$=".mp3"]')
-                    || block.querySelector('source');
-                var url = src ? src.getAttribute('src') : null;
-                if (url && url.indexOf('http') !== 0) {
-                    url = 'https://dictionary.cambridge.org' + url;
-                }
-                if (!url) { return; }  // nothing to capture
+                var pron = stReadBlockPron(block);
+                if (!pron.audio) { return; }  // nothing to capture
+                var url = pron.audio;
+                var ipa = pron.ipa;
                 block.dataset.stAudioCapture = '1';
                 block.appendChild(makeButton(
                     'replace',
-                    'Replace this card\'s ' + region.toUpperCase() + ' audio',
-                    function() { window.captureBridge.captureAudio(region, url); }
+                    'Replace this card\'s ' + region.toUpperCase()
+                        + ' audio and IPA',
+                    function() {
+                        window.captureBridge.captureAudio(region, url, ipa);
+                    }
                 ));
             });
         }
@@ -526,6 +545,7 @@ class DictionaryPanel(QWidget):
         js = (
             self._CAPTURE_JS_TEMPLATE
             .replace("__CHANNEL_JS__", _qwebchannel_js())
+            .replace("__BLOCK_PRON_JS__", _BLOCK_PRON_JS)
             .replace("__POS_MAP__", json.dumps(self._POS_MAP))
             .replace("__PAIRS__", json.dumps(pairs))
         )

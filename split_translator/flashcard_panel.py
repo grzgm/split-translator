@@ -596,10 +596,12 @@ class FlashcardPanel(QWidget):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
         self.play_us_button.setEnabled(bool(self._audio_us_url))
 
-    def set_audio(self, region: str, url: str) -> None:
-        """Replace one region's pronunciation audio with a clip captured from the
-        Cambridge page. Sets just that region's URL (UK or US) and leaves the
-        IPA, headword, spelling and the other region untouched.
+    def set_audio(self, region: str, url: str, ipa: str | None = None) -> None:
+        """Replace one region's pronunciation audio (and its IPA) with a clip
+        captured from the Cambridge page. Sets just that region's URL (UK or US)
+        and, when the clip carries one, its IPA notation; the headword, spelling
+        and the other region stay untouched. An empty or missing IPA leaves the
+        existing IPA field alone rather than blanking it.
 
         Unlike set_pronunciation this is a deliberate single-field edit, not an
         autofill, so it marks the card dirty and does NOT update the autofill
@@ -609,8 +611,12 @@ class FlashcardPanel(QWidget):
         a later passive grab leave the edited card alone."""
         if region == "uk":
             self._audio_uk_url = url or None
+            if ipa:
+                self.ipa_uk_input.setText(ipa)
         elif region == "us":
             self._audio_us_url = url or None
+            if ipa:
+                self.ipa_us_input.setText(ipa)
         else:
             return
         # A genuine edit: mark dirty directly so the discard guards fire (do not
