@@ -9,6 +9,22 @@ from PySide6.QtCore import QThread
 
 SCHEMA_VERSION = 1
 
+# The four shipped link types: (key, display label, edge colour). Synonym,
+# Similar and Related form a green gradient (intensity = closeness in meaning,
+# Synonym closest); Antonym is red. This list is the single source of truth for
+# the editor dropdown, the graph legend and the edge colours. Link.type is a
+# free-form string in storage, so a type not in this list still round-trips; the
+# UI falls back to its raw string and a neutral colour. Add a type later by
+# appending one tuple here.
+LINK_TYPES = [
+    ("synonym", "Synonym", "#1b7a2f"),
+    ("similar", "Similar", "#4caf50"),
+    ("related", "Related", "#a5d6a7"),
+    ("antonym", "Antonym", "#f44336"),
+]
+LINK_TYPE_KEYS = {key for key, _label, _colour in LINK_TYPES}
+LINK_FALLBACK_COLOUR = "#888888"
+
 
 @dataclass
 class Sense:
@@ -100,6 +116,32 @@ class Card:
         )
 
 
+@dataclass
+class Link:
+    """A symmetric, typed relationship between two cards (by id). a_id/b_id are
+    held in canonical (sorted) order so a pair has exactly one representation and
+    (A,B) equals (B,A). type is a free-form string."""
+
+    a_id: str
+    b_id: str
+    type: str
+
+    def __post_init__(self):
+        if self.a_id > self.b_id:
+            self.a_id, self.b_id = self.b_id, self.a_id
+
+    def to_dict(self) -> dict:
+        return {"a_id": self.a_id, "b_id": self.b_id, "type": self.type}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Link":
+        return cls(
+            a_id=data.get("a_id", ""),
+            b_id=data.get("b_id", ""),
+            type=data.get("type", ""),
+        )
+
+
 def serialise_cards(cards: list[Card]) -> dict:
     """Build the on-disk JSON structure from a list of cards."""
     return {"version": SCHEMA_VERSION, "cards": [c.to_dict() for c in cards]}
@@ -168,3 +210,8 @@ class FlashcardStore:
     def shutdown(self) -> None:
         if self.save_worker and self.save_worker.isRunning():
             self.save_worker.wait()
+
+
+def load_flashcards(filepath: Path):
+    """Temporary shim; replaced in the links-storage task. Returns (cards, [])."""
+    return load_cards(filepath), []
