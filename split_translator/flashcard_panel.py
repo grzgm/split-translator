@@ -741,6 +741,12 @@ class FlashcardPanel(QWidget):
             focused is self or self.isAncestorOf(focused)
         )
 
+    def focus_editor(self) -> None:
+        """Put keyboard focus on the editor (the headword field). Used after
+        re-docking via Alt+D so the editor stays focused and the shortcut keeps
+        working without first clicking back into it."""
+        self.headword_input.setFocus()
+
     def new_card(self, word: str, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
         to discard unsaved content. ``force`` skips the confirmation. The headword

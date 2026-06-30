@@ -224,6 +224,9 @@ class TranslationTool(QMainWindow):
         shortcut_to_example = QShortcut(QKeySequence("Alt+X"), self)
         shortcut_to_example.activated.connect(self.capture_to_example)
 
+        shortcut_dock_flashcard = QShortcut(QKeySequence("Alt+D"), self)
+        shortcut_dock_flashcard.activated.connect(self.toggle_flashcard_dock)
+
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():
             self.book_panel.go_to_next()
@@ -238,6 +241,17 @@ class TranslationTool(QMainWindow):
             self.flashcard_panel.play_audio("uk" if num == 1 else "us")
             return
         self.dictionary_panel.play_cambridge_audio(num)
+
+    def toggle_flashcard_dock(self):
+        # Alt+D flips the flashcard editor between floating and docked, mirroring
+        # the float button in the dock's title bar. It only acts while the editor
+        # has focus, so the sequence stays free everywhere else.
+        if not self.flashcard_panel.has_focus():
+            return
+        self.flashcard_dock.setFloating(not self.flashcard_dock.isFloating())
+        # Docking moves focus off the editor, which would block the next Alt+D.
+        # Put it back so the shortcut keeps toggling without a click in between.
+        self.flashcard_panel.focus_editor()
 
     def focus_search(self):
         self.dictionary_panel.focus_search()
