@@ -1042,8 +1042,12 @@ class FlashcardPanel(QWidget):
         return link.a_id
 
     def _partner_id(self, link: Link) -> str:
-        """The id at the other end of a link from the loaded card."""
-        if self._loaded_card_id == link.a_id:
+        """The id at the other end of a link from the card being edited. Uses the
+        loaded card id, or the new-card placeholder while creating a card (staged
+        links for a new card are built against that placeholder), so the partner
+        resolves correctly in both cases."""
+        anchor = self._loaded_card_id or _NEW_CARD_ANCHOR
+        if link.a_id == anchor:
             return link.b_id
         return link.a_id
 

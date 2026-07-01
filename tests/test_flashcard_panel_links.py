@@ -186,6 +186,28 @@ class TickLinkingTests(unittest.TestCase):
         own = self._item(panel, "big")
         self.assertFalse(bool(own.flags() & Qt.ItemFlag.ItemIsUserCheckable))
 
+    def test_new_card_untick_removes_staged_link(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("huge")  # new, unsaved card
+        self._set_category(panel, "synonym")
+        self._item(panel, "big").setCheckState(Qt.CheckState.Checked)
+        self.assertEqual(len(panel._staged_links), 1)
+        self._item(panel, "big").setCheckState(Qt.CheckState.Unchecked)
+        self.assertEqual(panel._staged_links, [])
+
+    def test_new_card_tick_survives_category_switch_display(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("huge")  # new, unsaved card
+        self._set_category(panel, "synonym")
+        self._item(panel, "big").setCheckState(Qt.CheckState.Checked)
+        # Switch away and back: the synonym tick must still show.
+        self._set_category(panel, "antonym")
+        self.assertEqual(
+            self._item(panel, "big").checkState(), Qt.CheckState.Unchecked)
+        self._set_category(panel, "synonym")
+        self.assertEqual(
+            self._item(panel, "big").checkState(), Qt.CheckState.Checked)
+
     def test_removed_api_is_gone(self):
         panel, _ = self._panel()
         for attr in (
