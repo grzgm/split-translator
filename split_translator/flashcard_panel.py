@@ -3,7 +3,15 @@
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, Qt, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -860,11 +868,43 @@ class FlashcardPanel(QWidget):
 
     # --- saved cards list -----------------------------------------------
 
+    def _loaded_marker_icon(self) -> QIcon:
+        """A filled dot for the loaded row's icon, drawn centred both ways in the
+        checkbox column. The pixmap is as wide as a checkbox indicator (so it lines
+        up horizontally with the other rows' boxes) and as tall as a list row (so
+        the dot sits at the row's vertical centre). Built once and cached."""
+        cached = getattr(self, "_loaded_icon", None)
+        if cached is not None:
+            return cached
+        width = self.style().pixelMetric(
+            QStyle.PixelMetric.PM_IndicatorWidth
+        ) or 16
+        # Row height: the loaded row is bold, so measure with a bold font and add
+        # the list's item vertical padding for a close match to the real row.
+        bold = self.saved_list.font()
+        bold.setBold(True)
+        row_height = QFontMetrics(bold).height() + 4
+        pixmap = QPixmap(width, row_height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QBrush(QColor("#0a84ff")))
+        painter.setPen(Qt.PenStyle.NoPen)
+        # A dot sized to the narrower dimension, centred in the full pixmap.
+        diameter = max(4, int(width * 0.5))
+        x = (width - diameter) / 2.0
+        y = (row_height - diameter) / 2.0
+        painter.drawEllipse(int(x), int(y), diameter, diameter)
+        painter.end()
+        self._loaded_icon = QIcon(pixmap)
+        return self._loaded_icon
+
     def _refresh_saved_list(self):
         """Rebuild the saved-cards list from the store (newest first). Each row
         shows the headword (starred cards prefixed) and carries its card id.
         Clicking a row's text loads it; its checkbox links it in the chosen
-        category. The loaded card's own row has no checkbox."""
+        category. The loaded card's own row has no checkbox: a centred dot icon
+        marks it instead."""
         self._reticking = True
         try:
             self.saved_list.clear()
@@ -875,12 +915,15 @@ class FlashcardPanel(QWidget):
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
                 if card.id == self._loaded_card_id:
-                    # The loaded card cannot link to itself: no checkbox. Mark it
-                    # clearly as the row currently in the editor with bold text and
-                    # a subtle background tint.
+                    # The loaded card cannot link to itself, so it has no checkbox.
+                    # A dot drawn as the row icon sits in the same fixed column a
+                    # checkbox would occupy (centred in it), so the row reads as
+                    # the one currently in the editor rather than as a card with a
+                    # missing box. Bold text and a subtle blue tint reinforce it.
                     item.setFlags(
                         item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
                     )
+                    item.setIcon(self._loaded_marker_icon())
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)

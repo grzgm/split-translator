@@ -186,6 +186,17 @@ class TickLinkingTests(unittest.TestCase):
         own = self._item(panel, "big")
         self.assertFalse(bool(own.flags() & Qt.ItemFlag.ItemIsUserCheckable))
 
+    def test_loaded_row_has_dot_icon_marker(self):
+        # The loaded row shows a dot icon in the checkbox column (not a text
+        # prefix), while non-loaded rows have no icon and a plain headword.
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        own = self._item(panel, "big")
+        self.assertEqual(own.text(), "big")  # marker is an icon, not text
+        self.assertFalse(own.icon().isNull())
+        other = self._item(panel, "large")
+        self.assertTrue(other.icon().isNull())
+
     def test_new_card_untick_removes_staged_link(self):
         panel, store = self._panel()
         panel.headword_input.setText("huge")  # new, unsaved card
