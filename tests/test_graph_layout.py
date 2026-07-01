@@ -19,6 +19,26 @@ class GraphLayoutTests(unittest.TestCase):
     def test_empty_graph_returns_empty(self):
         self.assertEqual(layout([], []), {})
 
+    def test_min_separation_keeps_nodes_apart(self):
+        # Many nodes, no edges, so the force layout alone can leave pairs close;
+        # the relaxation pass must push every pair at least min_separation apart.
+        nodes = [f"n{i}" for i in range(12)]
+        sep = 80.0
+        pos = layout(nodes, [], width=800, height=600, min_separation=sep)
+        items = list(pos.values())
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                (ax, ay), (bx, by) = items[i], items[j]
+                # Allow a tiny epsilon: border clamping can shave a hair off.
+                self.assertGreaterEqual(math.hypot(ax - bx, ay - by), sep - 1.0)
+
+    def test_min_separation_is_deterministic(self):
+        nodes = [f"n{i}" for i in range(8)]
+        edges = [("n0", "n1"), ("n2", "n3")]
+        a = layout(nodes, edges, min_separation=70.0)
+        b = layout(nodes, edges, min_separation=70.0)
+        self.assertEqual(a, b)
+
     def test_connected_nodes_end_closer_than_unconnected(self):
         # a-b connected; c isolated. After layout, a and b should be closer to
         # each other than a is to c (the spring pulls connected nodes together).

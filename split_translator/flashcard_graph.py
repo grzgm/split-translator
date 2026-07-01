@@ -248,7 +248,12 @@ class FlashcardGraphWindow(QWidget):
 
         node_ids = [c.id for c in self.store.cards]
         edges = [(l.a_id, l.b_id) for l in self.store.links]
-        self._node_positions = layout(node_ids, edges, _SCENE_W, _SCENE_H)
+        # Keep node bodies (plus their labels' breathing room) from overlapping
+        # on the initial layout: separate centres by more than a node diameter.
+        min_sep = 2 * _NODE_RADIUS + 44.0
+        self._node_positions = layout(
+            node_ids, edges, _SCENE_W, _SCENE_H, min_separation=min_sep
+        )
 
         for card in self.store.cards:
             self._add_node_item(card)
