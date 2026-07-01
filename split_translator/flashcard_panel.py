@@ -25,6 +25,10 @@ from PySide6.QtWidgets import (
 
 from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
 
+# Placeholder used in staged links when the edited card has not been saved yet;
+# replaced with the real card id at first Save (see _partner_id_for).
+_NEW_CARD_ANCHOR = "__new__"
+
 # A light-blue border shown on a fillable field while it is still empty, so it is
 # easy to see at a glance what remains to be filled. It clears back to the default
 # border the moment the field has any content.
@@ -260,10 +264,16 @@ class FlashcardPanel(QWidget):
         self.player = None
         self.audio_output = None
         self._staged_links = []
+        # True while check states are being set programmatically (load, reset,
+        # category switch, rebuild) so the itemChanged handler ignores them and
+        # they are not treated as user link edits.
+        self._reticking = False
+        # Set by _on_item_changed on a genuine user checkbox toggle so that the
+        # subsequent itemClicked -> _on_saved_clicked knows to skip loading.
+        self._checkbox_click = False
         self.init_ui()
         self.add_sense()
         self._refresh_saved_list()
-        self._update_link_button_enabled()
         # Sense rows added during init_ui/add_sense seeded the active row before
         # the flag existed; the card is clean at startup.
         self._dirty = False
@@ -380,12 +390,6 @@ class FlashcardPanel(QWidget):
         self.add_sense_button.clicked.connect(self.add_sense)
         layout.addWidget(self.add_sense_button)
 
-        layout.addWidget(QLabel("Links"))
-        self.links_container = QVBoxLayout()
-        links_widget = QWidget()
-        links_widget.setLayout(self.links_container)
-        layout.addWidget(links_widget)
-
         buttons = QHBoxLayout()
         self.new_button = QPushButton("New from word")
         self.new_button.setToolTip(
@@ -426,22 +430,31 @@ class FlashcardPanel(QWidget):
         self.saved_filter.textChanged.connect(self._apply_saved_filter)
         saved_layout.addWidget(self.saved_filter)
         self.saved_list = QListWidget()
-        self.saved_list.setToolTip("Click a saved card to load it for editing")
+        self.saved_list.setToolTip(
+            "Click a card's text to load it; tick its box to link it in the chosen category"
+        )
         self.saved_list.itemClicked.connect(self._on_saved_clicked)
+        self.saved_list.itemChanged.connect(self._on_item_changed)
         saved_layout.addWidget(self.saved_list, stretch=1)
 
+        # Linking is driven from this one list: pick a category here, then the
+        # rows tick to show which cards the edited card is linked to in that
+        # category. Ticking or unticking a row stages a link change (committed on
+        # Save), exactly like editing any other field.
         link_controls = QHBoxLayout()
-        self.link_type_combo = QComboBox()
+        link_controls.addWidget(QLabel("Link as"))
+        self.link_category_combo = QComboBox()
         for key, label, _colour in LINK_TYPES:
-            self.link_type_combo.addItem(label, key)
-        self.link_button = QPushButton("Link selected")
-        self.link_button.setToolTip(
-            "Link the loaded card to every ticked card with the chosen type. "
-            "Save the loaded card first to enable this."
+            self.link_category_combo.addItem(label, key)
+        self.link_category_combo.setToolTip(
+            "Choose a relationship; the rows below tick to show the edited card's "
+            "links of this kind. Tick or untick a card to link or unlink it."
         )
-        self.link_button.clicked.connect(self._on_link_selected)
-        link_controls.addWidget(self.link_type_combo)
-        link_controls.addWidget(self.link_button)
+        self.link_category_combo.currentIndexChanged.connect(
+            lambda _=None: self._retick_saved_list()
+        )
+        link_controls.addWidget(self.link_category_combo)
+        link_controls.addStretch()
         saved_layout.addLayout(link_controls)
 
         # The splitter handle is the draggable boundary that sets the editor
@@ -829,12 +842,11 @@ class FlashcardPanel(QWidget):
             # an untouched autofill and overwritten).
             self._last_autofill = None
             self._staged_links = []
-            self._refresh_links_section()
-            self._update_link_button_enabled()
             self.saved_list.clearSelection()
         finally:
             self._suppress_dirty = False
         self._dirty = False
+        self._refresh_saved_list()
         self._scroll_editor_to_top()
 
     def _scroll_editor_to_top(self) -> None:
@@ -849,19 +861,32 @@ class FlashcardPanel(QWidget):
 
     def _refresh_saved_list(self):
         """Rebuild the saved-cards list from the store (newest first). Each row
-        shows the headword, marked with a leading star for starred cards, and
-        carries its card id so a click can load it."""
-        self.saved_list.clear()
-        for card in self.store.cards:
-            label = card.headword
-            if card.starred:
-                label = f"{self._STAR_SET}: {label}"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, card.id)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self.saved_list.addItem(item)
-        self._apply_saved_filter()
+        shows the headword (starred cards prefixed) and carries its card id.
+        Clicking a row's text loads it; its checkbox links it in the chosen
+        category. The loaded card's own row has no checkbox."""
+        self._reticking = True
+        try:
+            self.saved_list.clear()
+            for card in self.store.cards:
+                label = card.headword
+                if card.starred:
+                    label = f"{self._STAR_SET}: {label}"
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, card.id)
+                if card.id == self._loaded_card_id:
+                    item.setFlags(
+                        item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                else:
+                    item.setFlags(
+                        item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                self.saved_list.addItem(item)
+            self._apply_saved_filter()
+        finally:
+            self._reticking = False
+        self._retick_saved_list()
 
     def _apply_saved_filter(self, text: str = "") -> None:
         needle = self.saved_filter.text().strip().lower()
@@ -870,6 +895,16 @@ class FlashcardPanel(QWidget):
             item.setHidden(bool(needle) and needle not in item.text().lower())
 
     def _on_saved_clicked(self, item):
+        # A click on a row's checkbox also fires itemClicked; that click toggled
+        # the check state (handled in _on_item_changed) and must NOT load the
+        # card. Only a click on the row text loads.
+        # Note: this relies on Qt firing itemChanged before itemClicked for a
+        # checkbox click, so _on_item_changed sets _checkbox_click=True first.
+        # If a real-display walkthrough shows a checkbox click still loading,
+        # the fallback is to load on itemDoubleClicked instead of itemClicked.
+        if self._checkbox_click:
+            self._checkbox_click = False
+            return
         card_id = item.data(Qt.ItemDataRole.UserRole)
         card = next((c for c in self.store.cards if c.id == card_id), None)
         if card is not None:
@@ -924,11 +959,10 @@ class FlashcardPanel(QWidget):
             self._loaded_card_id = card.id
             self._loaded_created_at = card.created_at or None
             self._staged_links = list(self.store.links_for(card.id))
-            self._refresh_links_section()
-            self._update_link_button_enabled()
         finally:
             self._suppress_dirty = False
         self._dirty = False
+        self._refresh_saved_list()
         return True
 
     def _confirm_discard(self) -> bool:
@@ -942,50 +976,70 @@ class FlashcardPanel(QWidget):
 
     # --- links ----------------------------------------------------------
 
-    def _checked_card_ids(self) -> list:
-        ids = []
-        for i in range(self.saved_list.count()):
-            item = self.saved_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                ids.append(item.data(Qt.ItemDataRole.UserRole))
-        return ids
+    def _current_category(self) -> str:
+        return self.link_category_combo.currentData()
 
-    def _uncheck_all_saved(self) -> None:
-        for i in range(self.saved_list.count()):
-            self.saved_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+    def _retick_saved_list(self) -> None:
+        """Set each row's check state to reflect the edited card's staged links
+        of the currently chosen category. Programmatic, so it runs inside the
+        reticking guard and never counts as a user edit."""
+        category = self._current_category()
+        linked_partners = {
+            self._partner_id(l) for l in self._staged_links if l.type == category
+        }
+        self._reticking = True
+        try:
+            for i in range(self.saved_list.count()):
+                item = self.saved_list.item(i)
+                if not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                    continue  # the loaded card's own row has no checkbox
+                partner = item.data(Qt.ItemDataRole.UserRole)
+                state = (
+                    Qt.CheckState.Checked
+                    if partner in linked_partners
+                    else Qt.CheckState.Unchecked
+                )
+                item.setCheckState(state)
+        finally:
+            self._reticking = False
 
-    def _on_link_selected(self) -> None:
-        if not self._loaded_card_id:
+    def _on_item_changed(self, item) -> None:
+        """A row's check state changed. When it is a genuine user tick (not a
+        programmatic retick), stage or unstage a link of the chosen category
+        between the edited card and that row's card, and mark the card dirty."""
+        if self._reticking:
             return
-        type_key = self.link_type_combo.currentData()
-        for other_id in self._checked_card_ids():
-            if other_id == self._loaded_card_id:
-                continue
-            link = Link(self._loaded_card_id, other_id, type_key)
-            # Replace any existing link to this partner so the type updates.
-            self._staged_links = [
-                l for l in self._staged_links
-                if self._partner_id(l) != other_id
-            ]
-            self._staged_links.append(link)
+        self._checkbox_click = True
+        partner = item.data(Qt.ItemDataRole.UserRole)
+        category = self._current_category()
+        checked = item.checkState() == Qt.CheckState.Checked
+        # Drop any existing staged link to this partner in this category first.
+        self._staged_links = [
+            l for l in self._staged_links
+            if not (self._partner_id(l) == partner and l.type == category)
+        ]
+        if checked:
+            # Build against the loaded id when there is one; a brand-new card has
+            # no id yet, so use a placeholder that _partner_id_for resolves at
+            # save time (it takes the end that is not the saved card's id).
+            anchor = self._loaded_card_id if self._loaded_card_id else _NEW_CARD_ANCHOR
+            self._staged_links.append(Link(anchor, partner, category))
         self._mark_dirty()
-        self._refresh_links_section()
-        self._uncheck_all_saved()
-
-    def _update_link_button_enabled(self) -> None:
-        self.link_button.setEnabled(bool(self._loaded_card_id))
 
     def _partner_id_for(self, link: Link, self_id: str) -> str:
-        """The end of a staged link that is not self_id. Staged links were built
-        with the loaded card id (or, for a brand-new card, against the partner
-        directly), so the partner is whichever id differs from self_id."""
+        """The end of a staged link that is not self_id (the saved card). Staged
+        links are built with the loaded card's id as one end, or with a "__new__"
+        placeholder for a card being created; in both cases the partner is the
+        other, real card id."""
         if link.a_id == self_id:
             return link.b_id
         if link.b_id == self_id:
             return link.a_id
-        # The loaded id changed (new card saved): the partner is the end that is
-        # not the previous loaded id.
-        return link.b_id if link.a_id == self._loaded_card_id else link.a_id
+        # New-card placeholder: neither end is the just-saved id. The partner is
+        # the end that is not the placeholder anchor.
+        if link.a_id == _NEW_CARD_ANCHOR:
+            return link.b_id
+        return link.a_id
 
     def _partner_id(self, link: Link) -> str:
         """The id at the other end of a link from the loaded card."""
@@ -993,66 +1047,3 @@ class FlashcardPanel(QWidget):
             return link.b_id
         return link.a_id
 
-    def _partner_headword(self, link: Link) -> str:
-        partner = self._partner_id(link)
-        card = next((c for c in self.store.cards if c.id == partner), None)
-        return card.headword if card is not None else partner
-
-    def _label_for_type(self, type_key: str) -> str:
-        for key, label, _colour in LINK_TYPES:
-            if key == type_key:
-                return label
-        return type_key  # unknown type: show its raw string
-
-    def _clear_links_container(self) -> None:
-        while self.links_container.count():
-            item = self.links_container.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-    def _refresh_links_section(self) -> None:
-        """Rebuild the Links section from self._staged_links, grouped by type in
-        LINK_TYPES order (unknown types last, in first-seen order)."""
-        self._clear_links_container()
-        order = [key for key, _label, _colour in LINK_TYPES]
-        by_type = {}
-        for link in self._staged_links:
-            by_type.setdefault(link.type, []).append(link)
-        ordered_types = [k for k in order if k in by_type]
-        ordered_types += [k for k in by_type if k not in order]
-        for type_key in ordered_types:
-            heading = QLabel(self._label_for_type(type_key))
-            self.links_container.addWidget(heading)
-            for link in by_type[type_key]:
-                self.links_container.addWidget(self._build_link_row(link))
-
-    def _build_link_row(self, link: Link) -> QWidget:
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(2)
-        label = QLabel(self._partner_headword(link))
-        row.link_label = label  # for tests / removal
-        row.link = link
-        remove = QPushButton("x")
-        remove.setMaximumWidth(28)
-        remove.clicked.connect(lambda: self._remove_staged_link(link))
-        row_layout.addWidget(label)
-        row_layout.addStretch()
-        row_layout.addWidget(remove)
-        return row
-
-    def _remove_staged_link(self, link: Link) -> None:
-        self._staged_links = [l for l in self._staged_links if l != link]
-        self._mark_dirty()
-        self._refresh_links_section()
-
-    def _link_row_labels(self) -> list:
-        """Partner headwords currently shown in the Links section (test support)."""
-        labels = []
-        for i in range(self.links_container.count()):
-            widget = self.links_container.itemAt(i).widget()
-            if widget is not None and hasattr(widget, "link_label"):
-                labels.append(widget.link_label.text())
-        return labels

@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from split_translator.flashcard_panel import FlashcardPanel
@@ -51,42 +52,7 @@ class SavedFilterTests(unittest.TestCase):
         self.assertEqual(len(self._visible(panel)), 3)
 
 
-class LinkSectionTests(unittest.TestCase):
-    def _panel(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        store = FlashcardStore(Path(tmp.name) / "f.json")
-        store.cards = [
-            Card(headword="big", id="big"),
-            Card(headword="large", id="large"),
-            Card(headword="small", id="small"),
-        ]
-        store.links = [Link("big", "large", "synonym"),
-                       Link("big", "small", "antonym")]
-        panel = FlashcardPanel(store)
-        panel._refresh_saved_list()
-        return panel, store
-
-    def test_loading_a_card_populates_staged_links(self):
-        panel, store = self._panel()
-        panel.load_card(store.cards[0])  # big
-        self.assertEqual(len(panel._staged_links), 2)
-
-    def test_link_rows_show_partner_headwords(self):
-        panel, store = self._panel()
-        panel.load_card(store.cards[0])  # big
-        labels = panel._link_row_labels()
-        self.assertIn("large", labels)
-        self.assertIn("small", labels)
-
-    def test_reset_clears_staged_links(self):
-        panel, store = self._panel()
-        panel.load_card(store.cards[0])
-        panel._reset_editor()
-        self.assertEqual(panel._staged_links, [])
-
-
-class LinkControlsTests(unittest.TestCase):
+class TickLinkingTests(unittest.TestCase):
     def _panel(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -101,80 +67,135 @@ class LinkControlsTests(unittest.TestCase):
         panel._refresh_saved_list()
         return panel, store
 
-    def _check(self, panel, card_id):
-        from PySide6.QtCore import Qt
+    def _item(self, panel, card_id):
         for i in range(panel.saved_list.count()):
-            item = panel.saved_list.item(i)
-            if item.data(Qt.ItemDataRole.UserRole) == card_id:
-                item.setCheckState(Qt.CheckState.Checked)
+            it = panel.saved_list.item(i)
+            if it.data(Qt.ItemDataRole.UserRole) == card_id:
+                return it
+        raise AssertionError(f"no row for {card_id}")
 
-    def _select_type(self, panel, key):
-        from PySide6.QtCore import Qt
-        for i in range(panel.link_type_combo.count()):
-            if panel.link_type_combo.itemData(i, Qt.ItemDataRole.UserRole) == key:
-                panel.link_type_combo.setCurrentIndex(i)
+    def _set_category(self, panel, key):
+        for i in range(panel.link_category_combo.count()):
+            if panel.link_category_combo.itemData(i) == key:
+                panel.link_category_combo.setCurrentIndex(i)
+                return
+        raise AssertionError(f"no category {key}")
 
-    def test_link_button_disabled_without_loaded_card(self):
-        panel, _ = self._panel()
-        self.assertFalse(panel.link_button.isEnabled())
+    def test_loading_card_ticks_its_links_in_current_category(self):
+        panel, store = self._panel()
+        store.links = [Link("big", "large", "synonym")]
+        self._set_category(panel, "synonym")
+        panel.load_card(store.cards[0])  # big
+        self.assertEqual(
+            self._item(panel, "large").checkState(), Qt.CheckState.Checked
+        )
+        self.assertEqual(
+            self._item(panel, "small").checkState(), Qt.CheckState.Unchecked
+        )
 
-    def test_link_button_enabled_after_loading(self):
+    def test_switching_category_returns_the_ticks(self):
+        panel, store = self._panel()
+        store.links = [Link("big", "large", "synonym"),
+                       Link("big", "small", "antonym")]
+        panel.load_card(store.cards[0])  # big
+        self._set_category(panel, "synonym")
+        self.assertEqual(
+            self._item(panel, "large").checkState(), Qt.CheckState.Checked)
+        self.assertEqual(
+            self._item(panel, "small").checkState(), Qt.CheckState.Unchecked)
+        self._set_category(panel, "antonym")
+        self.assertEqual(
+            self._item(panel, "large").checkState(), Qt.CheckState.Unchecked)
+        self.assertEqual(
+            self._item(panel, "small").checkState(), Qt.CheckState.Checked)
+
+    def test_ticking_stages_a_link_and_marks_dirty(self):
         panel, store = self._panel()
         panel.load_card(store.cards[0])  # big
-        self.assertTrue(panel.link_button.isEnabled())
+        self._set_category(panel, "synonym")
+        self._item(panel, "large").setCheckState(Qt.CheckState.Checked)
+        partners = {panel._partner_id(l): l.type for l in panel._staged_links}
+        self.assertEqual(partners.get("large"), "synonym")
+        self.assertTrue(panel._dirty)
 
-    def test_link_selected_stages_links(self):
+    def test_unticking_removes_the_staged_link(self):
+        panel, store = self._panel()
+        store.links = [Link("big", "large", "synonym")]
+        panel.load_card(store.cards[0])  # big
+        self._set_category(panel, "synonym")
+        self._item(panel, "large").setCheckState(Qt.CheckState.Unchecked)
+        self.assertEqual(panel._staged_links, [])
+        self.assertTrue(panel._dirty)
+
+    def test_tick_then_save_persists_symmetrically(self):
         panel, store = self._panel()
         panel.load_card(store.cards[0])  # big
-        self._check(panel, "large")
-        self._check(panel, "small")
-        self._select_type(panel, "synonym")
-        panel._on_link_selected()
-        partners = {panel._partner_id(l) for l in panel._staged_links}
-        self.assertEqual(partners, {"large", "small"})
-        self.assertTrue(all(l.type == "synonym" for l in panel._staged_links))
-
-    def test_save_persists_staged_links_symmetrically(self):
-        panel, store = self._panel()
-        panel.load_card(store.cards[0])  # big
-        self._check(panel, "large")
-        self._select_type(panel, "synonym")
-        panel._on_link_selected()
+        self._set_category(panel, "synonym")
+        self._item(panel, "large").setCheckState(Qt.CheckState.Checked)
         panel.save_card()
         store.shutdown()
         self.assertEqual(len(store.links_for("big")), 1)
-        self.assertEqual(len(store.links_for("large")), 1)  # symmetric
+        self.assertEqual(len(store.links_for("large")), 1)
 
-    def test_removing_a_link_then_saving_unlinks(self):
+    def test_untick_then_save_unlinks(self):
         panel, store = self._panel()
         store.links = [Link("big", "large", "synonym")]
-        panel.load_card(store.cards[0])  # big, with one link
-        self.assertEqual(len(panel._staged_links), 1)
-        panel._remove_staged_link(panel._staged_links[0])
+        panel.load_card(store.cards[0])  # big
+        self._set_category(panel, "synonym")
+        self._item(panel, "large").setCheckState(Qt.CheckState.Unchecked)
         panel.save_card()
         store.shutdown()
         self.assertEqual(store.links_for("big"), [])
 
-    def test_relinking_same_partner_updates_type(self):
+    def test_toggling_checkbox_does_not_load_that_card(self):
         panel, store = self._panel()
-        panel.load_card(store.cards[0])  # big
-        self._check(panel, "large")
-        self._select_type(panel, "synonym")
-        panel._on_link_selected()
-        self._check(panel, "large")
-        self._select_type(panel, "antonym")
-        panel._on_link_selected()
-        self.assertEqual(len(panel._staged_links), 1)
-        self.assertEqual(panel._staged_links[0].type, "antonym")
+        panel.load_card(store.cards[0])  # big loaded
+        self._set_category(panel, "synonym")
+        self._item(panel, "large").setCheckState(Qt.CheckState.Checked)
+        # The loaded card is unchanged: ticking large did not load it.
+        self.assertEqual(panel._loaded_card_id, "big")
 
-    def test_save_emits_cards_changed_once(self):
+    def test_clicking_row_text_loads(self):
         panel, store = self._panel()
-        panel.load_card(store.cards[0])  # big
-        self._check(panel, "large")
-        self._select_type(panel, "synonym")
-        panel._on_link_selected()
-        fired = []
-        store.cards_changed.connect(lambda: fired.append(True))
+        panel._on_saved_clicked(self._item(panel, "large"))
+        self.assertEqual(panel._loaded_card_id, "large")
+
+    def test_ticking_while_creating_new_card_persists_on_first_save(self):
+        panel, store = self._panel()
+        # brand-new card, never saved
+        panel.headword_input.setText("huge")
+        self._set_category(panel, "synonym")
+        self._item(panel, "big").setCheckState(Qt.CheckState.Checked)
         panel.save_card()
         store.shutdown()
-        self.assertEqual(len(fired), 1)  # one write, not two
+        new_card = next(c for c in store.cards if c.headword == "huge")
+        self.assertEqual(len(store.links_for(new_card.id)), 1)
+        self.assertEqual(len(store.links_for("big")), 1)
+
+    def test_programmatic_retick_does_not_mark_dirty(self):
+        panel, store = self._panel()
+        store.links = [Link("big", "large", "synonym")]
+        panel.load_card(store.cards[0])  # ticks large via _retick, must stay clean
+        self.assertFalse(panel._dirty)
+        self._set_category(panel, "antonym")  # re-ticks, still not a user edit
+        self.assertFalse(panel._dirty)
+
+    def test_loaded_cards_own_row_is_not_checkable(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # big
+        own = self._item(panel, "big")
+        self.assertFalse(bool(own.flags() & Qt.ItemFlag.ItemIsUserCheckable))
+
+    def test_removed_api_is_gone(self):
+        panel, _ = self._panel()
+        for attr in (
+            "link_button", "link_type_combo", "_on_link_selected",
+            "_checked_card_ids", "_uncheck_all_saved",
+            "_update_link_button_enabled", "_refresh_links_section",
+            "_build_link_row", "_link_row_labels", "links_container",
+        ):
+            self.assertFalse(hasattr(panel, attr), f"{attr} should be removed")
+
+
+if __name__ == "__main__":
+    unittest.main()
