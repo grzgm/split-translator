@@ -29,8 +29,11 @@ class GraphLayoutTests(unittest.TestCase):
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 (ax, ay), (bx, by) = items[i], items[j]
-                # Allow a tiny epsilon: border clamping can shave a hair off.
-                self.assertGreaterEqual(math.hypot(ax - bx, ay - by), sep - 1.0)
+                # Shortfall compensation hands a clamped node's leftover shift to
+                # its partner, so the target is met cleanly (small epsilon only
+                # for float rounding), not left overlapping at the border.
+                self.assertGreaterEqual(
+                    math.hypot(ax - bx, ay - by), sep - 0.01)
 
     def test_min_separation_is_deterministic(self):
         nodes = [f"n{i}" for i in range(8)]
@@ -38,6 +41,25 @@ class GraphLayoutTests(unittest.TestCase):
         a = layout(nodes, edges, min_separation=70.0)
         b = layout(nodes, edges, min_separation=70.0)
         self.assertEqual(a, b)
+
+    def test_spread_fills_the_canvas(self):
+        # After the spread pass the nodes should reach out toward the canvas
+        # edges (within the 8% inner margin), not clump in the middle third.
+        nodes = [f"n{i}" for i in range(10)]
+        edges = [("n0", "n1"), ("n1", "n2"), ("n3", "n4")]
+        w, h = 800.0, 600.0
+        pos = layout(nodes, edges, width=w, height=h)
+        xs = [x for x, _ in pos.values()]
+        ys = [y for _, y in pos.values()]
+        span_x = max(xs) - min(xs)
+        span_y = max(ys) - min(ys)
+        # Uniform scaling fills one axis fully; the other fills proportionally.
+        # Either way the layout must span far more than the old middle third
+        # (~1/3 of the canvas). Assert the larger span fills most of its axis.
+        avail_w = w * (1 - 2 * 0.08)
+        avail_h = h * (1 - 2 * 0.08)
+        fill = max(span_x / avail_w, span_y / avail_h)
+        self.assertGreater(fill, 0.9)
 
     def test_connected_nodes_end_closer_than_unconnected(self):
         # a-b connected; c isolated. After layout, a and b should be closer to

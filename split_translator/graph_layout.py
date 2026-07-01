@@ -95,11 +95,47 @@ def layout(
             pos[node][1] = min(max_y, max(min_y, pos[node][1]))
         temperature -= cooling
 
+    # Spread the settled cluster out to fill the whole canvas rather than
+    # clumping in the centre, while keeping connected nodes near each other
+    # (this only scales and centres, it does not change relative positions).
+    _spread_to_fill(ordered, pos, min_x, max_x, min_y, max_y)
+
+    # Relax overlaps LAST so it has the final say: fixed-radius nodes never
+    # visually overlap even after the spread pushed some pairs close.
     if min_separation > 0.0:
         _relax_overlaps(ordered, pos, min_separation,
                         min_x, max_x, min_y, max_y)
 
     return {node: (pos[node][0], pos[node][1]) for node in ordered}
+
+
+def _spread_to_fill(ordered, pos, min_x, max_x, min_y, max_y):
+    """Scale and centre the settled positions so their bounding box fills the
+    [min_x, max_x] x [min_y, max_y] area. Preserves relative placement (and so
+    the clustering), just uses the whole canvas instead of the middle third."""
+    xs = [pos[node][0] for node in ordered]
+    ys = [pos[node][1] for node in ordered]
+    lo_x, hi_x = min(xs), max(xs)
+    lo_y, hi_y = min(ys), max(ys)
+    span_x = hi_x - lo_x
+    span_y = hi_y - lo_y
+    target_w = max_x - min_x
+    target_h = max_y - min_y
+
+    # Uniform scale keeps the layout's aspect ratio (no stretching). Degenerate
+    # spans (all nodes on a line) scale only the non-degenerate axis.
+    scale_x = target_w / span_x if span_x > 0.01 else 1.0
+    scale_y = target_h / span_y if span_y > 0.01 else 1.0
+    scale = min(scale_x, scale_y)
+
+    # Centre the scaled box within the target area.
+    scaled_w = span_x * scale
+    scaled_h = span_y * scale
+    off_x = min_x + (target_w - scaled_w) / 2.0
+    off_y = min_y + (target_h - scaled_h) / 2.0
+    for node in ordered:
+        pos[node][0] = off_x + (pos[node][0] - lo_x) * scale
+        pos[node][1] = off_y + (pos[node][1] - lo_y) * scale
 
 
 def _relax_overlaps(ordered, pos, min_sep, min_x, max_x, min_y, max_y):
@@ -127,9 +163,27 @@ def _relax_overlaps(ordered, pos, min_sep, min_x, max_x, min_y, max_y):
                 else:
                     ux, uy = dx / dist, dy / dist
                 shift = (min_sep - dist) / 2.0
-                pos[a][0] = min(max_x, max(min_x, pos[a][0] + ux * shift))
-                pos[a][1] = min(max_y, max(min_y, pos[a][1] + uy * shift))
-                pos[b][0] = min(max_x, max(min_x, pos[b][0] - ux * shift))
-                pos[b][1] = min(max_y, max(min_y, pos[b][1] - uy * shift))
+                # Move each node half the gap, but a node pinned to the border
+                # cannot move; the clamp would leave the pair overlapping. So
+                # measure how far each actually moved and pass any shortfall to
+                # the partner, which is usually free to absorb it.
+                short_a = _shove(pos, a, ux * shift, uy * shift,
+                                 min_x, max_x, min_y, max_y)
+                _shove(pos, b, -ux * shift - short_a[0],
+                       -uy * shift - short_a[1],
+                       min_x, max_x, min_y, max_y)
         if not moved:
             break
+
+
+def _shove(pos, node, dx, dy, min_x, max_x, min_y, max_y):
+    """Move a node by (dx, dy), clamped to bounds. Return the (x, y) shortfall:
+    how much of the requested move the clamp swallowed, so the caller can hand
+    the leftover to the partner node."""
+    want_x = pos[node][0] + dx
+    want_y = pos[node][1] + dy
+    new_x = min(max_x, max(min_x, want_x))
+    new_y = min(max_y, max(min_y, want_y))
+    pos[node][0] = new_x
+    pos[node][1] = new_y
+    return (want_x - new_x, want_y - new_y)
