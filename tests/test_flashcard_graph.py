@@ -54,6 +54,38 @@ class GraphWindowTests(unittest.TestCase):
         win._emit_node_clicked("big")  # the click handler nodes call
         self.assertEqual(emitted, ["big"])
 
+    def _press_release(self, node, start, end):
+        # Drive the node's real press/release handlers with genuine scene mouse
+        # events, so the click-vs-drag decision under test is actually executed.
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+
+        press = QGraphicsSceneMouseEvent()
+        press.setScenePos(QPointF(*start))
+        press.setButton(Qt.MouseButton.LeftButton)
+        node.mousePressEvent(press)
+
+        release = QGraphicsSceneMouseEvent()
+        release.setScenePos(QPointF(*end))
+        release.setButton(Qt.MouseButton.LeftButton)
+        node.mouseReleaseEvent(release)
+
+    def test_small_movement_counts_as_click(self):
+        win = FlashcardGraphWindow(self._store())
+        win.rebuild()
+        emitted = []
+        win.card_activated.connect(emitted.append)
+        self._press_release(win._nodes["big"], (10.0, 10.0), (12.0, 11.0))
+        self.assertEqual(emitted, ["big"])
+
+    def test_drag_does_not_activate_the_card(self):
+        win = FlashcardGraphWindow(self._store())
+        win.rebuild()
+        emitted = []
+        win.card_activated.connect(emitted.append)
+        self._press_release(win._nodes["big"], (10.0, 10.0), (80.0, 60.0))
+        self.assertEqual(emitted, [])
+
     def test_type_filter_hides_edges_of_that_type(self):
         win = FlashcardGraphWindow(self._store())
         win.rebuild()
@@ -88,9 +120,12 @@ class GraphWindowTests(unittest.TestCase):
 
         # Stored position updated to the node's new spot.
         self.assertEqual(win._node_positions["big"], (123.0, 45.0))
-        # Label sits beside the node at its new spot.
-        self.assertEqual(label.pos().x(), 123.0 + 18.0)   # _NODE_RADIUS == 18.0
-        self.assertEqual(label.pos().y(), 45.0 - 18.0)
+        # Label is centred horizontally on the node and sits below it. Its exact
+        # x depends on the rendered text width, so assert the centring relation
+        # (label centre == node centre) rather than a pixel value.
+        rect = label.boundingRect()
+        self.assertAlmostEqual(label.pos().x() + rect.width() / 2.0, 123.0)
+        self.assertGreater(label.pos().y(), 45.0)   # below the node
         # The edge endpoint at "big"'s end now passes through (123, 45). Because
         # the line is drawn between the two node centres, one of its endpoints
         # equals the node's new position.

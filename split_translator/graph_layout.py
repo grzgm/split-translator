@@ -42,6 +42,13 @@ def layout(
     temperature = width / 10.0
     cooling = temperature / (iterations + 1)
 
+    # Keep nodes off the very border. A hard clamp to [0, width] makes repelled
+    # nodes pile flat against the frame, which reads as a bug; an inner margin
+    # leaves a gutter so the graph floats inside the scene.
+    margin = min(width, height) * 0.08
+    min_x, max_x = margin, width - margin
+    min_y, max_y = margin, height - margin
+
     for _ in range(iterations):
         disp = {node: [0.0, 0.0] for node in ordered}
 
@@ -78,8 +85,8 @@ def layout(
             step = min(d, temperature)
             pos[node][0] += (dx / d) * step
             pos[node][1] += (dy / d) * step
-            pos[node][0] = min(width, max(0.0, pos[node][0]))
-            pos[node][1] = min(height, max(0.0, pos[node][1]))
+            pos[node][0] = min(max_x, max(min_x, pos[node][0]))
+            pos[node][1] = min(max_y, max(min_y, pos[node][1]))
         temperature -= cooling
 
     return {node: (pos[node][0], pos[node][1]) for node in ordered}
