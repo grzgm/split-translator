@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, Qt, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
 
 # Placeholder used in staged links when the edited card has not been saved yet;
-# replaced with the real card id at first Save (see _partner_id_for).
+# replaced with the real card id at first Save (see _partner_id).
 _NEW_CARD_ANCHOR = "__new__"
 
 # A light-blue border shown on a fillable field while it is still empty, so it is
@@ -758,7 +759,7 @@ class FlashcardPanel(QWidget):
         # hand both to the store so a single Save is a single disk write and a
         # single graph refresh.
         rebased = [
-            Link(card.id, self._partner_id_for(link, card.id), link.type)
+            Link(card.id, self._partner_id(link), link.type)
             for link in self._staged_links
         ]
         self.store.save_card_with_links(card, rebased)
@@ -874,9 +875,16 @@ class FlashcardPanel(QWidget):
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
                 if card.id == self._loaded_card_id:
+                    # The loaded card cannot link to itself: no checkbox. Mark it
+                    # clearly as the row currently in the editor with bold text and
+                    # a subtle background tint.
                     item.setFlags(
                         item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
                     )
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setBackground(QBrush(QColor("#e8f0fe")))
                 else:
                     item.setFlags(
                         item.flags() | Qt.ItemFlag.ItemIsUserCheckable
@@ -920,6 +928,9 @@ class FlashcardPanel(QWidget):
             and not self._confirm_discard()
         ):
             return False
+        # _reset_editor rebuilds the list once (no loaded card yet); that rebuild
+        # is superseded by the _refresh_saved_list() call at the end of this method,
+        # which runs with _loaded_card_id and _staged_links already set.
         self._reset_editor()  # clears fields and any previous loaded id
         # Filling the editor from a saved card is not a user edit; suppress the
         # dirty flag for the whole load so the just-loaded card reads as clean
@@ -1019,35 +1030,17 @@ class FlashcardPanel(QWidget):
             if not (self._partner_id(l) == partner and l.type == category)
         ]
         if checked:
-            # Build against the loaded id when there is one; a brand-new card has
-            # no id yet, so use a placeholder that _partner_id_for resolves at
-            # save time (it takes the end that is not the saved card's id).
-            anchor = self._loaded_card_id if self._loaded_card_id else _NEW_CARD_ANCHOR
-            self._staged_links.append(Link(anchor, partner, category))
+            self._staged_links.append(Link(self._edit_anchor(), partner, category))
         self._mark_dirty()
 
-    def _partner_id_for(self, link: Link, self_id: str) -> str:
-        """The end of a staged link that is not self_id (the saved card). Staged
-        links are built with the loaded card's id as one end, or with a "__new__"
-        placeholder for a card being created; in both cases the partner is the
-        other, real card id."""
-        if link.a_id == self_id:
-            return link.b_id
-        if link.b_id == self_id:
-            return link.a_id
-        # New-card placeholder: neither end is the just-saved id. The partner is
-        # the end that is not the placeholder anchor.
-        if link.a_id == _NEW_CARD_ANCHOR:
-            return link.b_id
-        return link.a_id
+    def _edit_anchor(self) -> str:
+        """The id standing in for the card being edited: its saved id, or the
+        new-card placeholder while it is unsaved. Staged links are always built
+        with this as one end, so it identifies the edited card's side of a link."""
+        return self._loaded_card_id or _NEW_CARD_ANCHOR
 
     def _partner_id(self, link: Link) -> str:
-        """The id at the other end of a link from the card being edited. Uses the
-        loaded card id, or the new-card placeholder while creating a card (staged
-        links for a new card are built against that placeholder), so the partner
-        resolves correctly in both cases."""
-        anchor = self._loaded_card_id or _NEW_CARD_ANCHOR
-        if link.a_id == anchor:
-            return link.b_id
-        return link.a_id
+        """The id at the other end of a staged link from the card being edited."""
+        anchor = self._edit_anchor()
+        return link.b_id if link.a_id == anchor else link.a_id
 
