@@ -61,6 +61,27 @@ class GraphLayoutTests(unittest.TestCase):
         fill = max(span_x / avail_w, span_y / avail_h)
         self.assertGreater(fill, 0.9)
 
+    def test_many_nodes_few_edges_do_not_pile_on_the_border(self):
+        # The real failure case: many cards with almost no links. Repulsion
+        # dominates and, with a hard in-loop clamp, flings every node flat
+        # against the frame (reads as a bug). Most nodes must settle in the
+        # interior, not on the margin rectangle.
+        nodes = [f"n{i}" for i in range(41)]
+        edges = [("n0", "n1"), ("n2", "n3")]
+        w, h = 900.0, 640.0
+        margin = min(w, h) * 0.08
+        min_x, max_x = margin, w - margin
+        min_y, max_y = margin, h - margin
+        pos = layout(nodes, edges, width=w, height=h)
+        on_edge = 0
+        for x, y in pos.values():
+            if (abs(x - min_x) < 1 or abs(x - max_x) < 1
+                    or abs(y - min_y) < 1 or abs(y - max_y) < 1):
+                on_edge += 1
+        # A handful touching the edge is fine (they define the bounding box the
+        # spread scales to); the bulk must be interior.
+        self.assertLess(on_edge, len(nodes) // 4)
+
     def test_connected_nodes_end_closer_than_unconnected(self):
         # a-b connected; c isolated. After layout, a and b should be closer to
         # each other than a is to c (the spring pulls connected nodes together).

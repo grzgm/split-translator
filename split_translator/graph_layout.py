@@ -48,9 +48,13 @@ def layout(
     temperature = width / 10.0
     cooling = temperature / (iterations + 1)
 
-    # Keep nodes off the very border. A hard clamp to [0, width] makes repelled
-    # nodes pile flat against the frame, which reads as a bug; an inner margin
-    # leaves a gutter so the graph floats inside the scene.
+    # The target area the settled layout is scaled into. An inner margin leaves
+    # a gutter so the graph floats inside the scene rather than touching the
+    # frame. This is applied ONCE at the end (in _spread_to_fill), never as a
+    # per-iteration clamp: clamping inside the loop makes repelled nodes pile
+    # flat against these bounds (which reads as a bug), because with many nodes
+    # and few edges repulsion dominates and pushes everything outward. Letting
+    # the layout settle freely gives a natural blob that the spread then fits.
     margin = min(width, height) * 0.08
     min_x, max_x = margin, width - margin
     min_y, max_y = margin, height - margin
@@ -84,15 +88,15 @@ def layout(
             disp[b][0] += ux * force
             disp[b][1] += uy * force
 
-        # Apply displacement capped by the current temperature, then cool.
+        # Apply displacement capped by the current temperature, then cool. No
+        # clamp here: the layout settles freely and _spread_to_fill scales the
+        # settled blob into the margins afterwards (see the margin comment).
         for node in ordered:
             dx, dy = disp[node]
             d = math.hypot(dx, dy) or 0.01
             step = min(d, temperature)
             pos[node][0] += (dx / d) * step
             pos[node][1] += (dy / d) * step
-            pos[node][0] = min(max_x, max(min_x, pos[node][0]))
-            pos[node][1] = min(max_y, max(min_y, pos[node][1]))
         temperature -= cooling
 
     # Spread the settled cluster out to fill the whole canvas rather than
