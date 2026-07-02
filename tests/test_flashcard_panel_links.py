@@ -109,14 +109,14 @@ class TickLinkingTests(unittest.TestCase):
         self.assertEqual(
             self._item(panel, "small").checkState(), Qt.CheckState.Checked)
 
-    def test_ticking_stages_a_link_and_marks_dirty(self):
+    def test_ticking_stages_a_link_and_marks_altered(self):
         panel, store = self._panel()
         panel.load_card(store.cards[0])  # big
         self._set_category(panel, "synonym")
         self._item(panel, "large").setCheckState(Qt.CheckState.Checked)
         partners = {panel._partner_id(l): l.type for l in panel._staged_links}
         self.assertEqual(partners.get("large"), "synonym")
-        self.assertTrue(panel._dirty)
+        self.assertTrue(panel.state.altered)
 
     def test_unticking_removes_the_staged_link(self):
         panel, store = self._panel()
@@ -125,7 +125,7 @@ class TickLinkingTests(unittest.TestCase):
         self._set_category(panel, "synonym")
         self._item(panel, "large").setCheckState(Qt.CheckState.Unchecked)
         self.assertEqual(panel._staged_links, [])
-        self.assertTrue(panel._dirty)
+        self.assertTrue(panel.state.altered)
 
     def test_tick_then_save_persists_symmetrically(self):
         panel, store = self._panel()
@@ -153,12 +153,12 @@ class TickLinkingTests(unittest.TestCase):
         self._set_category(panel, "synonym")
         self._item(panel, "large").setCheckState(Qt.CheckState.Checked)
         # The loaded card is unchanged: ticking large did not load it.
-        self.assertEqual(panel._loaded_card_id, "big")
+        self.assertEqual(panel.state.loaded_card_id, "big")
 
     def test_clicking_row_text_loads(self):
         panel, store = self._panel()
         panel._on_saved_clicked(self._item(panel, "large"))
-        self.assertEqual(panel._loaded_card_id, "large")
+        self.assertEqual(panel.state.loaded_card_id, "large")
 
     def test_ticking_while_creating_new_card_persists_on_first_save(self):
         panel, store = self._panel()
@@ -172,13 +172,13 @@ class TickLinkingTests(unittest.TestCase):
         self.assertEqual(len(store.links_for(new_card.id)), 1)
         self.assertEqual(len(store.links_for("big")), 1)
 
-    def test_programmatic_retick_does_not_mark_dirty(self):
+    def test_programmatic_retick_does_not_mark_altered(self):
         panel, store = self._panel()
         store.links = [Link("big", "large", "synonym")]
         panel.load_card(store.cards[0])  # ticks large via _retick, must stay clean
-        self.assertFalse(panel._dirty)
+        self.assertFalse(panel.state.altered)
         self._set_category(panel, "antonym")  # re-ticks, still not a user edit
-        self.assertFalse(panel._dirty)
+        self.assertFalse(panel.state.altered)
 
     def test_loaded_cards_own_row_is_not_checkable(self):
         panel, store = self._panel()

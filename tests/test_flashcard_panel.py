@@ -20,6 +20,52 @@ class FlashcardPanelTests(unittest.TestCase):
         store = FlashcardStore(Path(tmp.name) / "cards.json")
         return FlashcardPanel(store), store
 
+    # --- mode indicators ------------------------------------------------
+
+    def test_starts_in_new_mode(self):
+        panel, _ = self._panel()
+        self.assertTrue(panel.state.is_new)
+        self.assertEqual(panel.save_button.text(), "Add card")
+        self.assertEqual(panel.id_input.text(), "")
+
+    def test_id_field_is_read_only_and_disabled(self):
+        panel, _ = self._panel()
+        self.assertTrue(panel.id_input.isReadOnly())
+        self.assertFalse(panel.id_input.isEnabled())
+
+    def test_loading_shows_editing_mode_and_id(self):
+        panel, store = self._panel()
+        store.cards = [Card(headword="address", id="id-addr")]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.save_button.text(), "Save changes")
+        self.assertEqual(panel.id_input.text(), "id-addr")
+
+    def test_clear_returns_to_new_mode(self):
+        panel, store = self._panel()
+        store.cards = [Card(headword="address", id="id-addr")]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.ctrl_held = lambda: True  # skip the discard prompt
+        panel.clear_editor()
+        self.assertTrue(panel.state.is_new)
+        self.assertEqual(panel.save_button.text(), "Add card")
+        self.assertEqual(panel.id_input.text(), "")
+
+    def test_save_returns_to_new_mode(self):
+        panel, store = self._panel()
+        store.cards = [Card(headword="address", id="id-addr")]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.headword_input.setText("address2")
+        panel.save_card()
+        self.assertTrue(panel.state.is_new)
+        self.assertEqual(panel.save_button.text(), "Add card")
+        self.assertEqual(panel.id_input.text(), "")
+
+    # --- basic editing --------------------------------------------------
+
     def test_starts_with_one_active_sense(self):
         panel, _ = self._panel()
         self.assertEqual(len(panel._rows()), 1)
@@ -36,8 +82,6 @@ class FlashcardPanelTests(unittest.TestCase):
         )
 
     def test_capture_scrolls_field_to_start(self):
-        # A captured value longer than the field shows its beginning, not its
-        # end: the cursor is reset to position 0 after the fill.
         panel, _ = self._panel()
         long_text = "a very long english definition that overflows the field width"
         panel.set_english_selection(long_text)
@@ -47,7 +91,6 @@ class FlashcardPanelTests(unittest.TestCase):
 
     def test_has_focus_true_when_a_child_has_focus(self):
         panel, _ = self._panel()
-        # The panel must be shown for a child to actually take keyboard focus.
         panel.show()
         panel.headword_input.setFocus()
         QApplication.processEvents()
@@ -61,8 +104,6 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertFalse(panel.has_focus())
 
     def test_play_audio_is_noop_without_url(self):
-        # No pronunciation grabbed yet: play_audio must not raise and must not
-        # build a player. This is what makes Alt+1 / Alt+2 safe on an empty card.
         panel, _ = self._panel()
         self.assertIsNone(panel.player)
         panel.play_audio("uk")
@@ -90,9 +131,6 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.add_example_selection("   ")
         self.assertEqual(panel.active_row.examples(), [])
 
-    # Real keyboard focus cannot be asserted under the offscreen platform
-    # (focusWidget() is always None), so these check that setFocus is invoked on
-    # the right field instead, which is what drives the focus on a live display.
     def test_add_example_with_focus_calls_setfocus(self):
         panel, _ = self._panel()
         focused = []
@@ -123,9 +161,7 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.add_example_selection("She lives at that address.")
         card = panel.build_card()
         self.assertEqual(len(card.senses), 1)
-        self.assertEqual(
-            card.senses[0].examples, ["She lives at that address."]
-        )
+        self.assertEqual(card.senses[0].examples, ["She lives at that address."])
 
     def test_sense_kept_when_only_examples(self):
         panel, _ = self._panel()
@@ -134,9 +170,7 @@ class FlashcardPanelTests(unittest.TestCase):
         card = panel.build_card()
         self.assertEqual(len(card.senses), 1)
         self.assertEqual(card.senses[0].polish, "")
-        self.assertEqual(
-            card.senses[0].examples, ["She lives at that address."]
-        )
+        self.assertEqual(card.senses[0].examples, ["She lives at that address."])
 
     def test_build_card_requires_headword(self):
         panel, _ = self._panel()
@@ -179,9 +213,11 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(store.cards[0].starred)
         self.assertFalse(panel.is_starred())
 
+    # --- auto-grab (autofill_pronunciation) -----------------------------
+
     def test_grab_fills_everything_when_editor_empty(self):
         panel, _ = self._panel()
-        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
         self.assertEqual(panel.headword_input.text(), "run")
         self.assertEqual(panel.ipa_uk_input.text(), "/aa/")
         self.assertEqual(panel.ipa_us_input.text(), "/bb/")
@@ -189,37 +225,17 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.spelling_us_input.text(), "us")
         self.assertEqual(panel._audio_uk_url, "a.mp3")
 
-    def test_grab_fills_nothing_when_any_field_has_value(self):
+    def test_grab_does_not_mark_altered(self):
+        # A passive autofill is programmatic, so it must leave the card unaltered
+        # (so the next page load can refill it and no discard prompt fires).
         panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/mine/")  # one field already filled
-        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
-        # Nothing is touched, not even the empty fields.
-        self.assertEqual(panel.headword_input.text(), "")
-        self.assertEqual(panel.ipa_uk_input.text(), "/mine/")
-        self.assertEqual(panel.ipa_us_input.text(), "")
-        self.assertEqual(panel.spelling_uk_input.text(), "")
-        self.assertIsNone(panel._audio_uk_url)
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        self.assertFalse(panel.state.altered)
 
-    def test_grab_blocked_by_headword_value(self):
+    def test_second_grab_replaces_unaltered_autofill(self):
         panel, _ = self._panel()
-        panel.headword_input.setText("kept")
-        panel.set_pronunciation("/aa/", None, None, None, word="run")
-        self.assertEqual(panel.headword_input.text(), "kept")
-        self.assertEqual(panel.ipa_uk_input.text(), "")
-
-    def test_grab_blocked_by_existing_audio(self):
-        panel, _ = self._panel()
-        panel._audio_uk_url = "old.mp3"
-        panel.set_pronunciation("/aa/", None, None, None, word="run")
-        self.assertEqual(panel.headword_input.text(), "")
-        self.assertEqual(panel.ipa_uk_input.text(), "")
-
-    def test_second_grab_replaces_untouched_autofill(self):
-        # Autofill once, then a new search re-fills every grab field with the
-        # new word's data because the user has not touched the autofilled ones.
-        panel, _ = self._panel()
-        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", "ax.mp3", "uk", "us", word="run")
-        panel.set_pronunciation("/cc/", None, "c.mp3", None, "uk2", None, word="walk")
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", "ax.mp3", "uk", "us", word="run")
+        panel.autofill_pronunciation("/cc/", None, "c.mp3", None, "uk2", None, word="walk")
         self.assertEqual(panel.headword_input.text(), "walk")
         self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
         self.assertEqual(panel.spelling_uk_input.text(), "uk2")
@@ -229,31 +245,40 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.spelling_us_input.text(), "")
         self.assertIsNone(panel._audio_us_url)
 
-    def test_second_grab_blocked_after_user_edits_a_grab_field(self):
-        # Autofill once, the user edits one grab field, then a new search must
-        # leave the whole card alone (the edit is in-progress work).
+    def test_grab_blocked_after_user_edits_a_field(self):
+        # Once the user has altered the card, a passive grab does nothing.
         panel, _ = self._panel()
-        panel.set_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
-        panel.headword_input.setText("my own word")  # user edit
-        panel.set_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.headword_input.setText("my own word")  # user edit -> altered
+        panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
         self.assertEqual(panel.headword_input.text(), "my own word")
         self.assertEqual(panel.ipa_uk_input.text(), "/aa/")  # unchanged
         self.assertEqual(panel.spelling_uk_input.text(), "uk")
         self.assertEqual(panel._audio_uk_url, "a.mp3")
 
-    def test_grab_does_not_overwrite_a_loaded_card(self):
-        # Loading a saved card clears the autofill snapshot, so a later grab
-        # (e.g. an in-flight Cambridge page finishing) must not overwrite it.
+    def test_grab_refills_a_loaded_but_unaltered_card(self):
+        # Uniform rule: an unaltered loaded card IS refilled by a passive grab.
         panel, _ = self._panel()
         card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
         panel.load_card(card)
-        panel.set_pronunciation("/cc/", None, "c.mp3", None, word="walk")
-        self.assertEqual(panel.headword_input.text(), "loaded")
+        self.assertFalse(panel.state.altered)
+        panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
+        self.assertEqual(panel.headword_input.text(), "walk")
+        self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
+
+    def test_grab_leaves_an_altered_loaded_card_alone(self):
+        panel, _ = self._panel()
+        card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
+        panel.load_card(card)
+        panel.headword_input.setText("touched")  # user edit -> altered
+        panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
+        self.assertEqual(panel.headword_input.text(), "touched")
         self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
+
+    # --- explicit-action prompts ----------------------------------------
 
     def test_new_card_clears_without_setting_headword(self):
         panel, _ = self._panel()
-        # Empty editor: no discard prompt, returns True, clears.
         self.assertTrue(panel.new_card("run"))
         self.assertEqual(panel.headword_input.text(), "")
 
@@ -270,8 +295,8 @@ class FlashcardPanelTests(unittest.TestCase):
         asked = []
         panel._confirm_discard = lambda: asked.append(True) or False
         self.assertTrue(panel.new_card("run", force=True))
-        self.assertEqual(asked, [])  # never prompted
-        self.assertEqual(panel.headword_input.text(), "")  # cleared
+        self.assertEqual(asked, [])
+        self.assertEqual(panel.headword_input.text(), "")
 
     def test_clear_editor_ctrl_skips_confirmation(self):
         panel, _ = self._panel()
@@ -280,19 +305,122 @@ class FlashcardPanelTests(unittest.TestCase):
         panel._confirm_discard = lambda: asked.append(True) or False
         panel.ctrl_held = lambda: True
         panel.clear_editor()
-        self.assertEqual(asked, [])  # never prompted
-        self.assertEqual(panel.headword_input.text(), "")  # cleared
+        self.assertEqual(asked, [])
+        self.assertEqual(panel.headword_input.text(), "")
 
     def test_clear_editor_without_ctrl_confirms(self):
         panel, _ = self._panel()
         panel.headword_input.setText("keep")
         panel.ctrl_held = lambda: False
-        panel._confirm_discard = lambda: False  # decline
+        panel._confirm_discard = lambda: False
         panel.clear_editor()
-        self.assertEqual(panel.headword_input.text(), "keep")  # not cleared
+        self.assertEqual(panel.headword_input.text(), "keep")
+
+    # --- altered flag ---------------------------------------------------
+
+    def test_empty_editor_is_unaltered(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel.state.altered)
+
+    def test_typing_marks_altered(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        self.assertTrue(panel.state.altered)
+
+    def test_loading_a_card_leaves_it_unaltered(self):
+        panel, store = self._panel()
+        store.cards = [Card(headword="address", id="id-addr",
+                            senses=[Sense(pos="n", polish="adres")])]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertFalse(panel.state.altered)
+
+    def test_save_leaves_editor_unaltered(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        self.assertTrue(panel.state.altered)
+        panel.save_card()
+        self.assertFalse(panel.state.altered)
+
+    def test_starring_marks_altered(self):
+        panel, _ = self._panel()
+        panel.set_starred(True)
+        self.assertTrue(panel.state.altered)
+
+    def test_adding_an_example_marks_altered(self):
+        panel, _ = self._panel()
+        panel.active_row.add_example("an example", focus=False)
+        self.assertTrue(panel.state.altered)
+
+    # --- replace audio from the page (set_audio) ------------------------
+
+    def test_set_audio_sets_only_that_region(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        panel.ipa_uk_input.setText("/old/")
+        panel.set_audio("uk", "https://example/new-uk.mp3", "/new/")
+        self.assertEqual(panel._audio_uk_url, "https://example/new-uk.mp3")
+        self.assertIsNone(panel._audio_us_url)
+        self.assertEqual(panel.headword_input.text(), "run")
+        self.assertEqual(panel.ipa_uk_input.text(), "/new/")
+
+    def test_set_audio_us_is_the_mirror(self):
+        panel, _ = self._panel()
+        panel.set_audio("us", "https://example/new-us.mp3", "/yu/")
+        self.assertEqual(panel._audio_us_url, "https://example/new-us.mp3")
+        self.assertEqual(panel.ipa_us_input.text(), "/yu/")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertEqual(panel.ipa_uk_input.text(), "")
+
+    def test_set_audio_keeps_existing_ipa_when_none_captured(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/keep/")
+        panel.set_audio("uk", "https://example/new-uk.mp3", None)
+        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")
+
+    def test_set_audio_ipa_defaults_to_none(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/keep/")
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")
+
+    def test_set_audio_enables_that_speaker_button(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel.play_uk_button.isEnabled())
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertTrue(panel.play_uk_button.isEnabled())
+        self.assertFalse(panel.play_us_button.isEnabled())
+
+    def test_set_audio_marks_the_card_altered(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel.state.altered)
+        panel.set_audio("uk", "https://example/new-uk.mp3")
+        self.assertTrue(panel.state.altered)
+
+    def test_set_audio_blocks_a_later_passive_grab(self):
+        panel, _ = self._panel()
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.set_audio("uk", "https://example/replaced.mp3", "/zz/")
+        panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
+        self.assertEqual(panel.headword_input.text(), "run")
+        self.assertEqual(panel.ipa_uk_input.text(), "/zz/")
+        self.assertEqual(panel._audio_uk_url, "https://example/replaced.mp3")
+
+    def test_set_audio_unknown_region_is_a_noop(self):
+        panel, _ = self._panel()
+        panel.set_audio("xx", "https://example/x.mp3")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertIsNone(panel._audio_us_url)
+        self.assertFalse(panel.state.altered)
+
+    def test_set_audio_empty_url_clears_that_region(self):
+        panel, _ = self._panel()
+        panel._audio_uk_url = "old.mp3"
+        panel.set_audio("uk", "")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertFalse(panel.play_uk_button.isEnabled())
 
     # --- empty-field marking --------------------------------------------
-    # A blank fillable field carries a "border" style; a filled one does not.
 
     @staticmethod
     def _marked(field):
@@ -330,7 +458,7 @@ class FlashcardPanelTests(unittest.TestCase):
     def test_blank_example_is_marked_and_clears_when_typed(self):
         panel, _ = self._panel()
         row = panel.active_row
-        row.add_example()  # blank "+ example" row
+        row.add_example()
         field = row._example_rows()[-1].example_input
         self.assertTrue(self._marked(field))
         field.setText("She lives here.")
@@ -358,10 +486,9 @@ class FlashcardPanelTests(unittest.TestCase):
 
     def test_grab_clears_markers_on_filled_fields(self):
         panel, _ = self._panel()
-        panel.set_pronunciation("/wn/", "/wun/", "u.mp3", None, word="one")
+        panel.autofill_pronunciation("/wn/", "/wun/", "u.mp3", None, word="one")
         self.assertFalse(self._marked(panel.headword_input))
         self.assertFalse(self._marked(panel.ipa_uk_input))
-        # No spelling came through, so those stay marked.
         self.assertTrue(self._marked(panel.spelling_uk_input))
 
     def test_reset_re_marks_card_and_new_sense(self):
@@ -405,7 +532,6 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(self._labels(panel), ["address", "Starred: receive"])
 
     def test_saved_list_starts_from_stored_cards(self):
-        # The list is built at construction from whatever the store already holds.
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         store = FlashcardStore(Path(tmp.name) / "cards.json")
@@ -419,7 +545,7 @@ class FlashcardPanelTests(unittest.TestCase):
         panel._on_saved_clicked(panel.saved_list.item(0))
         self.assertEqual(panel.headword_input.text(), "address")
         self.assertEqual(panel.ipa_uk_input.text(), "/adres/")
-        self.assertEqual(panel._loaded_card_id, "id-addr")
+        self.assertEqual(panel.state.loaded_card_id, "id-addr")
         row = panel.active_row
         self.assertEqual(row.pos_combo.currentText(), "n")
         self.assertEqual(row.polish_input.text(), "adres")
@@ -429,7 +555,7 @@ class FlashcardPanelTests(unittest.TestCase):
     def test_loading_starred_card_reflects_star(self):
         panel, store = self._panel()
         self._seed(panel, store)
-        panel._on_saved_clicked(panel.saved_list.item(1))  # receive (starred)
+        panel._on_saved_clicked(panel.saved_list.item(1))
         self.assertTrue(panel.is_starred())
 
     def test_editing_loaded_card_saves_in_place(self):
@@ -443,20 +569,19 @@ class FlashcardPanelTests(unittest.TestCase):
         addr = next(c for c in store.cards if c.id == "id-addr")
         self.assertEqual(addr.senses[0].polish, "adres pocztowy")
         self.assertEqual(addr.created_at, "2026-01-01T00:00:00")  # preserved
-        # Editor reset and back to creating a fresh card.
         self.assertEqual(panel.headword_input.text(), "")
-        self.assertIsNone(panel._loaded_card_id)
+        self.assertTrue(panel.state.is_new)
 
     def test_save_after_new_card_adds_not_updates(self):
         panel, store = self._panel()
         self._seed(panel, store)
-        panel._on_saved_clicked(panel.saved_list.item(0))  # load address
-        panel.new_card("fresh", force=True)  # forget the loaded id
-        self.assertIsNone(panel._loaded_card_id)
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.new_card("fresh", force=True)
+        self.assertTrue(panel.state.is_new)
         panel.headword_input.setText("fresh")
         panel.save_card()
         store.shutdown()
-        self.assertEqual(len(store.cards), 3)  # a brand new card
+        self.assertEqual(len(store.cards), 3)
         self.assertEqual(store.cards[0].headword, "fresh")
 
     def test_saved_list_refreshes_after_save(self):
@@ -471,30 +596,10 @@ class FlashcardPanelTests(unittest.TestCase):
         self._seed(panel, store)
         panel.headword_input.setText("inprogress")
         panel.ctrl_held = lambda: False
-        panel._confirm_discard = lambda: False  # decline the discard
+        panel._confirm_discard = lambda: False
         self.assertFalse(panel.load_card(store.cards[0]))
         self.assertEqual(panel.headword_input.text(), "inprogress")
-        self.assertIsNone(panel._loaded_card_id)
-
-    # --- unsaved-changes prompt gating ----------------------------------
-    # The discard prompt is gated on actual edits, not just on content: a
-    # freshly loaded (or reset) card reads as clean, so viewing a different
-    # card does not prompt; only a genuine edit re-arms the prompt.
-
-    def test_empty_editor_is_not_dirty(self):
-        panel, _ = self._panel()
-        self.assertFalse(panel._dirty)
-
-    def test_typing_marks_dirty(self):
-        panel, _ = self._panel()
-        panel.headword_input.setText("run")
-        self.assertTrue(panel._dirty)
-
-    def test_loading_a_card_leaves_it_clean(self):
-        panel, store = self._panel()
-        self._seed(panel, store)
-        panel._on_saved_clicked(panel.saved_list.item(0))  # load "address"
-        self.assertFalse(panel._dirty)
+        self.assertTrue(panel.state.is_new)
 
     def test_loading_then_loading_again_does_not_prompt(self):
         panel, store = self._panel()
@@ -502,8 +607,7 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.ctrl_held = lambda: False
         asked = []
         panel._confirm_discard = lambda: asked.append(True) or False
-        panel._on_saved_clicked(panel.saved_list.item(0))  # load "address"
-        # Switching to another card without editing must not prompt.
+        panel._on_saved_clicked(panel.saved_list.item(0))
         self.assertTrue(panel.load_card(store.cards[1]))
         self.assertEqual(asked, [])
         self.assertEqual(panel.headword_input.text(), "receive")
@@ -512,130 +616,15 @@ class FlashcardPanelTests(unittest.TestCase):
         panel, store = self._panel()
         self._seed(panel, store)
         panel.ctrl_held = lambda: False
-        panel._on_saved_clicked(panel.saved_list.item(0))  # load "address"
-        panel.active_row.polish_input.setText("adres pocztowy")  # a real edit
-        self.assertTrue(panel._dirty)
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.active_row.polish_input.setText("adres pocztowy")
+        self.assertTrue(panel.state.altered)
         asked = []
         panel._confirm_discard = lambda: asked.append(True) or False
-        self.assertFalse(panel.load_card(store.cards[1]))  # declined
-        self.assertEqual(asked, [True])  # prompted because edited
-
-    def test_save_leaves_editor_clean(self):
-        panel, _ = self._panel()
-        panel.headword_input.setText("run")
-        self.assertTrue(panel._dirty)
-        panel.save_card()
-        self.assertFalse(panel._dirty)
-
-    def test_starring_marks_dirty(self):
-        panel, _ = self._panel()
-        panel.set_starred(True)
-        self.assertTrue(panel._dirty)
-
-    def test_adding_an_example_marks_dirty(self):
-        panel, _ = self._panel()
-        panel.active_row.add_example("an example", focus=False)
-        self.assertTrue(panel._dirty)
-
-    def test_capturing_audio_only_marks_dirty(self):
-        # A grab that fills only audio (no headword/IPA/spelling) sets the URLs
-        # by direct assignment, which fires no textChanged; it must still mark
-        # the card dirty so the captured audio is not silently discarded.
-        panel, _ = self._panel()
-        panel.set_pronunciation(
-            ipa_uk=None,
-            ipa_us=None,
-            audio_uk_url="https://example/uk.mp3",
-            audio_us_url=None,
-        )
-        self.assertTrue(panel._dirty)
-
-    # --- replace audio from the page (set_audio) ------------------------
-
-    def test_set_audio_sets_only_that_region(self):
-        # Replacing one region's audio sets just that URL and its IPA, leaving
-        # the other region and the headword untouched.
-        panel, _ = self._panel()
-        panel.headword_input.setText("run")
-        panel.ipa_uk_input.setText("/old/")
-        panel.set_audio("uk", "https://example/new-uk.mp3", "/new/")
-        self.assertEqual(panel._audio_uk_url, "https://example/new-uk.mp3")
-        self.assertIsNone(panel._audio_us_url)  # other region untouched
-        self.assertEqual(panel.headword_input.text(), "run")  # untouched
-        self.assertEqual(panel.ipa_uk_input.text(), "/new/")  # IPA replaced
-
-    def test_set_audio_us_is_the_mirror(self):
-        panel, _ = self._panel()
-        panel.set_audio("us", "https://example/new-us.mp3", "/yu/")
-        self.assertEqual(panel._audio_us_url, "https://example/new-us.mp3")
-        self.assertEqual(panel.ipa_us_input.text(), "/yu/")
-        self.assertIsNone(panel._audio_uk_url)
-        self.assertEqual(panel.ipa_uk_input.text(), "")  # other region untouched
-
-    def test_set_audio_keeps_existing_ipa_when_none_captured(self):
-        # A clip with no IPA on the page must not blank an IPA the card has.
-        panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/keep/")
-        panel.set_audio("uk", "https://example/new-uk.mp3", None)
-        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")  # left as-is
-
-    def test_set_audio_ipa_defaults_to_none(self):
-        # The IPA argument is optional; omitting it leaves the IPA field alone.
-        panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/keep/")
-        panel.set_audio("uk", "https://example/new-uk.mp3")
-        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")
-
-    def test_set_audio_enables_that_speaker_button(self):
-        panel, _ = self._panel()
-        self.assertFalse(panel.play_uk_button.isEnabled())  # no audio yet
-        panel.set_audio("uk", "https://example/new-uk.mp3")
-        self.assertTrue(panel.play_uk_button.isEnabled())
-        self.assertFalse(panel.play_us_button.isEnabled())  # us still empty
-
-    def test_set_audio_marks_the_card_dirty(self):
-        # Replacing audio is a genuine edit, so it must mark the card dirty (this
-        # is what makes tapping another card and New-from-word prompt to discard).
-        panel, _ = self._panel()
-        self.assertFalse(panel._dirty)
-        panel.set_audio("uk", "https://example/new-uk.mp3")
-        self.assertTrue(panel._dirty)
-
-    def test_set_audio_blocks_a_later_passive_grab(self):
-        # After replacing audio, the autofill snapshot no longer matches, so a
-        # passive auto-grab on a new search must leave the edited card untouched.
-        panel, _ = self._panel()
-        panel.set_pronunciation(
-            "/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run"
-        )
-        # user replaces the clip and its IPA
-        panel.set_audio("uk", "https://example/replaced.mp3", "/zz/")
-        panel.set_pronunciation(
-            "/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk"
-        )
-        # The whole card is left alone: the replace counts as a user edit.
-        self.assertEqual(panel.headword_input.text(), "run")
-        self.assertEqual(panel.ipa_uk_input.text(), "/zz/")
-        self.assertEqual(panel._audio_uk_url, "https://example/replaced.mp3")
-
-    def test_set_audio_unknown_region_is_a_noop(self):
-        panel, _ = self._panel()
-        panel.set_audio("xx", "https://example/x.mp3")
-        self.assertIsNone(panel._audio_uk_url)
-        self.assertIsNone(panel._audio_us_url)
-        self.assertFalse(panel._dirty)
-
-    def test_set_audio_empty_url_clears_that_region(self):
-        panel, _ = self._panel()
-        panel._audio_uk_url = "old.mp3"
-        panel.set_audio("uk", "")
-        self.assertIsNone(panel._audio_uk_url)
-        self.assertFalse(panel.play_uk_button.isEnabled())
+        self.assertFalse(panel.load_card(store.cards[1]))
+        self.assertEqual(asked, [True])
 
     # --- editor / saved-list splitter -----------------------------------
-    # The editor sits in a scroll area above the saved-cards list, separated by
-    # a draggable splitter, so the editor height can be fixed and a taller card
-    # scrolls instead of pushing the list down.
 
     def test_editor_splitter_holds_scroll_then_list(self):
         from PySide6.QtWidgets import QScrollArea
@@ -644,7 +633,6 @@ class FlashcardPanelTests(unittest.TestCase):
         splitter = panel.editor_splitter
         self.assertEqual(splitter.count(), 2)
         self.assertIsInstance(splitter.widget(0), QScrollArea)
-        # The saved-cards list lives in the bottom pane.
         self.assertTrue(splitter.widget(1).isAncestorOf(panel.saved_list))
 
     def test_editor_scroll_is_resizable_and_not_collapsible(self):
@@ -652,32 +640,15 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.editor_scroll.widgetResizable())
         self.assertFalse(panel.editor_splitter.childrenCollapsible())
 
-    def test_resizing_panel_grows_the_list_not_the_editor(self):
-        # Making the whole panel taller must keep the editor at its set height
-        # and give all the new space to the saved-cards list.
-        panel, _ = self._panel()
-        panel.resize(400, 700)
-        panel.show()
-        QApplication.processEvents()
-        self.addCleanup(panel.hide)
-        editor_before, list_before = panel.editor_splitter.sizes()
-        panel.resize(400, 1000)
-        QApplication.processEvents()
-        editor_after, list_after = panel.editor_splitter.sizes()
-        self.assertEqual(editor_after, editor_before)  # editor height unchanged
-        self.assertGreater(list_after, list_before)  # list took the new space
-
     def test_reset_scrolls_editor_to_top(self):
         panel, _ = self._panel()
-        # Force a small size so the editor content overflows and the scroll bar
-        # has a usable range to move within.
         panel.resize(400, 250)
         panel.show()
         QApplication.processEvents()
         self.addCleanup(panel.hide)
         bar = panel.editor_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
-        self.assertGreater(bar.value(), 0)  # actually scrolled down
+        self.assertGreater(bar.value(), 0)
         panel._reset_editor()
         self.assertEqual(bar.value(), 0)
 

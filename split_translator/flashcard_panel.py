@@ -1,5 +1,6 @@
 """Flashcard editor: a dock-panel widget for building one card at a time."""
 
+from contextlib import contextmanager
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, Qt, QUrl, Signal
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .flashcard_editor_state import EditorState
 from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
 
 # Placeholder used in staged links when the edited card has not been saved yet;
@@ -235,81 +237,86 @@ class SenseRow(QFrame):
 
 
 class FlashcardPanel(QWidget):
-    """Editor that builds one card at a time and saves it to the store."""
+    """Editor that builds one card at a time and saves it to the store.
+
+    A single EditorState answers the two questions the editor keeps asking:
+    which mode (new or editing) and has the user altered the card. Every user
+    edit routes through _on_user_edit (sets altered); every programmatic fill
+    runs inside _programmatic() (never sets altered). Three indicators, the
+    Save button label, the read-only Id field and the loaded-row dot, are all
+    refreshed by _apply_state_to_ui so they can never disagree."""
 
     card_saved = Signal(str)
     save_rejected = Signal(str)
     sense_count_changed = Signal(int)
 
-    # Star toggle labels. Plain text (no glyph) to keep to standard characters.
     _STAR_EMPTY = "Star"
     _STAR_SET = "Starred"
 
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
         self.store = store
+        self.state = EditorState()
         self.active_row = None
         self._audio_uk_url = None
         self._audio_us_url = None
-        # When a saved card is loaded for editing, its id and original creation
-        # time are remembered so that Save updates it in place instead of adding
-        # a duplicate. Cleared whenever the editor is reset to a blank card.
-        self._loaded_card_id = None
-        self._loaded_created_at = None
-        # Tracks whether the editor has unsaved user edits since it was last
-        # loaded, cleared or saved. Programmatic fills (load, reset, capture)
-        # run with `_suppress_dirty` set so they do not mark the card dirty;
-        # only genuine user edits flip the flag. The discard confirmation is
-        # gated on this, so viewing a freshly loaded card and clicking another
-        # never prompts.
-        self._dirty = False
-        self._suppress_dirty = False
-        # Snapshot of the grab fields exactly as the last autofill left them
-        # (the six text fields plus the two audio URLs). A later search re-fills
-        # the card only while the fields still match this; the moment the user
-        # edits any grab field the card no longer matches and is left alone.
-        # None means no autofill has run on the current (empty) editor yet.
-        self._last_autofill = None
+        # True while a programmatic fill runs (load, autofill, capture, reset)
+        # so _on_user_edit is a no-op and those fills never set altered.
+        self._programmatic_depth = 0
         self.player = None
         self.audio_output = None
         self._staged_links = []
-        # True while check states are being set programmatically (load, reset,
-        # category switch, rebuild) so the itemChanged handler ignores them and
-        # they are not treated as user link edits.
+        # Guards for the saved-list checkbox behaviour (unchanged from before).
         self._reticking = False
-        # Set by _on_item_changed on a genuine user checkbox toggle so that the
-        # subsequent itemClicked -> _on_saved_clicked knows to skip loading.
         self._checkbox_click = False
         self.init_ui()
         self.add_sense()
         self._refresh_saved_list()
-        # Sense rows added during init_ui/add_sense seeded the active row before
-        # the flag existed; the card is clean at startup.
-        self._dirty = False
+        # Sense rows added during init seeded the active row before the state
+        # existed; the card is unaltered at startup.
+        self.state.to_new()
+        self._apply_state_to_ui()
+
+    # --- programmatic-fill guard ----------------------------------------
+
+    @contextmanager
+    def _programmatic(self):
+        """Run a block of programmatic field writes without marking the card
+        altered. Reentrant, so nested guarded fills are safe."""
+        self._programmatic_depth += 1
+        try:
+            yield
+        finally:
+            self._programmatic_depth -= 1
+
+    def _on_user_edit(self, *_args) -> None:
+        """A genuine user edit. No-op during a programmatic fill."""
+        if self._programmatic_depth == 0:
+            self.state.mark_altered()
 
     def init_ui(self):
         outer = QVBoxLayout(self)
 
-        # The editor (card fields, senses and the action buttons) lives in its
-        # own widget so it can be put inside a scroll area: a card taller than
-        # the editor area scrolls instead of pushing the saved-cards list down.
-        # A vertical splitter below makes the boundary between the editor and the
-        # list user-draggable, so the editor height can be set once and stays put
-        # (no UI shift when a taller or shorter card is loaded). `layout` is the
-        # editor's own layout; every editor row below adds to it.
         editor_widget = QWidget()
         layout = QVBoxLayout(editor_widget)
         layout.setContentsMargins(0, 0, 0, 0)
 
         form = QFormLayout()
 
+        # Read-only Id field: empty in new mode, shows the loaded card's id when
+        # editing. Disabled and read-only, a pure indicator; it is never wired
+        # to _on_user_edit.
+        self.id_input = QLineEdit()
+        self.id_input.setReadOnly(True)
+        self.id_input.setEnabled(False)
+        self.id_input.setPlaceholderText("new card")
+        form.addRow("Id", self.id_input)
+
         headword_row = QHBoxLayout()
         self.headword_input = QLineEdit()
         self.headword_input.setToolTip(
             "Ctrl+N: fill from the search box (New from word)"
         )
-        # Star toggle: marks a card as important to focus on. Persisted with the
-        # card and reset with the editor.
         self.star_button = QPushButton(self._STAR_EMPTY)
         self.star_button.setCheckable(True)
         self.star_button.setMaximumWidth(70)
@@ -334,9 +341,6 @@ class FlashcardPanel(QWidget):
         spelling_row.addWidget(self.spelling_us_input)
         form.addRow("Spelling", spelling_row)
 
-        # IPA row: each IPA field is followed by a compact speaker button that
-        # plays that region's Cambridge pronunciation. A built-in style icon is
-        # used (no theme dependency and no non-standard glyph in code).
         speaker_icon = self.style().standardIcon(
             QStyle.StandardPixmap.SP_MediaVolume
         )
@@ -344,9 +348,7 @@ class FlashcardPanel(QWidget):
         ipa_row = QHBoxLayout()
         self.ipa_uk_input = QLineEdit()
         self.ipa_uk_input.setPlaceholderText("IPA UK")
-        self.ipa_uk_input.setToolTip(
-            "New from word: filled from the Cambridge page"
-        )
+        self.ipa_uk_input.setToolTip("New from word: filled from the Cambridge page")
         self.play_uk_button = QPushButton()
         self.play_uk_button.setIcon(speaker_icon)
         self.play_uk_button.setMaximumWidth(32)
@@ -355,9 +357,7 @@ class FlashcardPanel(QWidget):
 
         self.ipa_us_input = QLineEdit()
         self.ipa_us_input.setPlaceholderText("IPA US")
-        self.ipa_us_input.setToolTip(
-            "New from word: filled from the Cambridge page"
-        )
+        self.ipa_us_input.setToolTip("New from word: filled from the Cambridge page")
         self.play_us_button = QPushButton()
         self.play_us_button.setIcon(speaker_icon)
         self.play_us_button.setMaximumWidth(32)
@@ -373,8 +373,8 @@ class FlashcardPanel(QWidget):
         self.own_notation_input = QLineEdit()
         form.addRow("Own notation", self.own_notation_input)
 
-        # Mark every fillable card field while empty and keep each marker in sync
-        # as it is typed into or filled by a grab.
+        # Mark every fillable card field while empty; keep the marker in sync and
+        # route genuine user typing into _on_user_edit.
         for field in (
             self.headword_input,
             self.spelling_uk_input,
@@ -384,7 +384,7 @@ class FlashcardPanel(QWidget):
             self.own_notation_input,
         ):
             field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
-            field.textChanged.connect(self._mark_dirty)
+            field.textChanged.connect(self._on_user_edit)
             _mark_empty(field)
 
         layout.addLayout(form)
@@ -410,25 +410,21 @@ class FlashcardPanel(QWidget):
             "Empty the editor. Ctrl+click skips the discard confirmation."
         )
         self.clear_button.clicked.connect(self.clear_editor)
-        self.save_button = QPushButton("Save")
+        # The Save button label switches with the mode: "Add card" when new,
+        # "Save changes" when editing (set in _apply_state_to_ui).
+        self.save_button = QPushButton("Add card")
         self.save_button.clicked.connect(self.save_card)
         buttons.addWidget(self.new_button)
         buttons.addWidget(self.clear_button)
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
-        # A stretch keeps the editor rows packed at the top of the scroll area so
-        # a short card does not leave the fields floating in the middle.
         layout.addStretch()
 
-        # The editor scrolls when its content is taller than the area it is given;
-        # when shorter, the editor widget fills the area (widgetResizable).
         self.editor_scroll = QScrollArea()
         self.editor_scroll.setWidgetResizable(True)
         self.editor_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.editor_scroll.setWidget(editor_widget)
 
-        # Saved cards: a list of every stored card (newest first). Clicking a row
-        # loads that card into the editor so it can be reviewed or edited.
         saved_widget = QWidget()
         saved_layout = QVBoxLayout(saved_widget)
         saved_layout.setContentsMargins(0, 0, 0, 0)
@@ -446,10 +442,6 @@ class FlashcardPanel(QWidget):
         self.saved_list.itemChanged.connect(self._on_item_changed)
         saved_layout.addWidget(self.saved_list, stretch=1)
 
-        # Linking is driven from this one list: pick a category here, then the
-        # rows tick to show which cards the edited card is linked to in that
-        # category. Ticking or unticking a row stages a link change (committed on
-        # Save), exactly like editing any other field.
         link_controls = QHBoxLayout()
         link_controls.addWidget(QLabel("Link as"))
         self.link_category_combo = QComboBox()
@@ -466,11 +458,6 @@ class FlashcardPanel(QWidget):
         link_controls.addStretch()
         saved_layout.addLayout(link_controls)
 
-        # The splitter handle is the draggable boundary that sets the editor
-        # height. Stretch factor 0 on the editor and 1 on the list means that
-        # when the whole panel is resized, the editor keeps its set height and
-        # the saved-cards list absorbs all the extra (or lost) space. Neither
-        # pane collapses to zero. setSizes seeds the initial split.
         self.editor_splitter = QSplitter(Qt.Orientation.Vertical)
         self.editor_splitter.addWidget(self.editor_scroll)
         self.editor_splitter.addWidget(saved_widget)
@@ -481,6 +468,19 @@ class FlashcardPanel(QWidget):
         outer.addWidget(self.editor_splitter)
 
         self._update_play_buttons()
+
+    # --- state -> UI ----------------------------------------------------
+
+    def _apply_state_to_ui(self) -> None:
+        """Refresh the three mode indicators from the state in one place: the
+        Save button label and the read-only Id field. (The loaded-row dot is set
+        in _refresh_saved_list, which reads the same state.)"""
+        if self.state.is_editing:
+            self.save_button.setText("Save changes")
+            self.id_input.setText(self.state.loaded_card_id or "")
+        else:
+            self.save_button.setText("Add card")
+            self.id_input.setText("")
 
     # --- sense rows -----------------------------------------------------
 
@@ -496,7 +496,7 @@ class FlashcardPanel(QWidget):
         row = SenseRow()
         row.activated.connect(self.set_active_row)
         row.remove_requested.connect(self.remove_sense)
-        row.edited.connect(self._mark_dirty)
+        row.edited.connect(self._on_user_edit)
         self.senses_container.addWidget(row)
         self.set_active_row(row)
         self.sense_count_changed.emit(len(self._rows()))
@@ -507,13 +507,12 @@ class FlashcardPanel(QWidget):
             candidate.set_active(candidate is row)
 
     def set_active_index(self, index: int):
-        """Make the 1-based sense index active (no-op if out of range)."""
         rows = self._rows()
         if 1 <= index <= len(rows):
             self.set_active_row(rows[index - 1])
 
     def remove_sense(self, row):
-        self._mark_dirty()
+        self._on_user_edit()
         rows = self._rows()
         if len(rows) <= 1:
             row.pos_combo.setCurrentText("")
@@ -556,48 +555,9 @@ class FlashcardPanel(QWidget):
             return
         self._ensure_active_row().add_example_text(text)
 
-    # --- pronunciation --------------------------------------------------
+    # --- pronunciation / auto-grab --------------------------------------
 
-    def _grab_fields_empty(self) -> bool:
-        """True when every field an automatic grab fills is still empty."""
-        for widget in (
-            self.headword_input,
-            self.ipa_uk_input,
-            self.ipa_us_input,
-            self.spelling_uk_input,
-            self.spelling_us_input,
-        ):
-            if widget.text().strip():
-                return False
-        return not (self._audio_uk_url or self._audio_us_url)
-
-    def _grab_fields_snapshot(self) -> tuple:
-        """Current value of every grab field, in the order the snapshot stores
-        them. Compared against ``_last_autofill`` to tell an untouched autofill
-        from one the user has edited."""
-        return (
-            self.headword_input.text(),
-            self.ipa_uk_input.text(),
-            self.ipa_us_input.text(),
-            self.spelling_uk_input.text(),
-            self.spelling_us_input.text(),
-            self._audio_uk_url,
-            self._audio_us_url,
-        )
-
-    def _grab_fields_unchanged_by_user(self) -> bool:
-        """True when the grab fields may be overwritten by a fresh autofill:
-        either every field is still empty (no autofill yet, or a cleared card),
-        or they all still hold exactly what the last autofill wrote. Returns
-        False once the user has edited any grab field."""
-        if self._grab_fields_empty():
-            return True
-        return (
-            self._last_autofill is not None
-            and self._grab_fields_snapshot() == self._last_autofill
-        )
-
-    def set_pronunciation(
+    def autofill_pronunciation(
         self,
         ipa_uk,
         ipa_us,
@@ -607,21 +567,16 @@ class FlashcardPanel(QWidget):
         spelling_us=None,
         word=None,
     ):
-        # All-or-nothing as a group: fill the headword, IPA, spelling and audio
-        # only while every one of those fields is either still empty or still
-        # holds exactly what the previous autofill wrote. The moment the user
-        # edits any grab field the card no longer matches and a later search
-        # leaves it untouched, so in-progress work is never clobbered. While the
-        # fields are still the untouched autofill, a new search replaces them
-        # with the new word's data.
-        if not self._grab_fields_unchanged_by_user():
+        """Passive auto-grab from a Cambridge page load. Refill the headword,
+        IPA, spelling and audio only while the card is unaltered; once the user
+        has altered it, do nothing silently (no dialog, no overwrite). The
+        refill runs programmatically so it never marks the card altered, which
+        lets a later page load refill again."""
+        if self.state.altered:
             return
         # Write every grab field (even to empty) so a re-fill clears values the
-        # previous word had but the new one lacks; otherwise the snapshot would
-        # not match on the next search. These are programmatic fills, so suppress
-        # the dirty flag here and restore the "capture is intent" mark below.
-        self._suppress_dirty = True
-        try:
+        # previous word had but the new one lacks.
+        with self._programmatic():
             _fill(self.headword_input, word or "")
             _fill(self.ipa_uk_input, ipa_uk or "")
             _fill(self.ipa_us_input, ipa_us or "")
@@ -629,17 +584,7 @@ class FlashcardPanel(QWidget):
             _fill(self.spelling_us_input, spelling_us or "")
             self._audio_uk_url = audio_uk_url or None
             self._audio_us_url = audio_us_url or None
-        finally:
-            self._suppress_dirty = False
-        # Remember exactly what this autofill left so the next search can tell an
-        # untouched autofill from one the user has since edited.
-        self._last_autofill = self._grab_fields_snapshot()
         self._update_play_buttons()
-        # Audio URLs are set by direct assignment (no textChanged signal), so a
-        # grab that captures only audio would not otherwise mark the card dirty.
-        # Capturing pronunciation is intent to build a card, so flag it here.
-        if audio_uk_url or audio_us_url:
-            self._mark_dirty()
 
     def _update_play_buttons(self):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
@@ -647,36 +592,28 @@ class FlashcardPanel(QWidget):
 
     def set_audio(self, region: str, url: str, ipa: str | None = None) -> None:
         """Replace one region's pronunciation audio (and its IPA) with a clip
-        captured from the Cambridge page. Sets just that region's URL (UK or US)
-        and, when the clip carries one, its IPA notation; the headword, spelling
-        and the other region stay untouched. An empty or missing IPA leaves the
-        existing IPA field alone rather than blanking it.
-
-        Unlike set_pronunciation this is a deliberate single-field edit, not an
-        autofill, so it marks the card dirty and does NOT update the autofill
-        snapshot. Leaving the snapshot stale is the point: the audio URLs are
-        part of it, so a changed URL makes the card count as user-edited. That is
-        what makes tapping another card and New-from-word prompt to discard, and
-        a later passive grab leave the edited card alone."""
+        captured from the Cambridge page. A deliberate single-field edit, so it
+        marks the card altered; that is what makes a later passive grab leave
+        the edited card alone."""
         if region == "uk":
-            self._audio_uk_url = url or None
-            if ipa:
-                self.ipa_uk_input.setText(ipa)
+            with self._programmatic():
+                self._audio_uk_url = url or None
+                if ipa:
+                    self.ipa_uk_input.setText(ipa)
         elif region == "us":
-            self._audio_us_url = url or None
-            if ipa:
-                self.ipa_us_input.setText(ipa)
+            with self._programmatic():
+                self._audio_us_url = url or None
+                if ipa:
+                    self.ipa_us_input.setText(ipa)
         else:
             return
-        # A genuine edit: mark dirty directly so the discard guards fire (do not
-        # route through _mark_dirty, which a suppress flag could swallow).
-        self._dirty = True
+        self.state.mark_altered()
         self._update_play_buttons()
 
     # --- star -----------------------------------------------------------
 
     def _on_star_toggled(self, checked: bool):
-        self._mark_dirty()
+        self._on_user_edit()
         self.star_button.setText(self._STAR_SET if checked else self._STAR_EMPTY)
         self.star_button.setStyleSheet(
             "background-color: #f0b400; color: #000; font-weight: bold;"
@@ -698,22 +635,12 @@ class FlashcardPanel(QWidget):
             self.player = QMediaPlayer(self)
             self.audio_output = QAudioOutput(self)
             self.player.setAudioOutput(self.audio_output)
-        # Clicking the same play button twice would otherwise do nothing: setting
-        # the source to the URL the player already holds is a no-op, so after the
-        # clip has finished it never replays. Stop and clear the source first so
-        # every click reloads and plays from the start, even for the same URL.
         self.player.stop()
         self.player.setSource(QUrl())
         self.player.setSource(QUrl(url))
         self.player.play()
 
     # --- card lifecycle -------------------------------------------------
-
-    def _mark_dirty(self) -> None:
-        """Record a genuine user edit. No-op while `_suppress_dirty` is set, so
-        programmatic fills (load, reset, capture) never mark the card dirty."""
-        if not self._suppress_dirty:
-            self._dirty = True
 
     def has_content(self) -> bool:
         text_inputs = (
@@ -737,8 +664,6 @@ class FlashcardPanel(QWidget):
         senses = [row.to_sense() for row in self._rows()]
         senses = [sense for sense in senses if not sense.is_empty]
         now = datetime.now().isoformat(timespec="seconds")
-        # Editing a loaded card keeps its id and original creation time so Save
-        # updates that card in place; a fresh card gets a new id and timestamps.
         card = Card(
             headword=headword,
             spelling_uk=self.spelling_uk_input.text().strip() or None,
@@ -750,11 +675,11 @@ class FlashcardPanel(QWidget):
             audio_us_url=self._audio_us_url,
             senses=senses,
             starred=self.is_starred(),
-            created_at=self._loaded_created_at or now,
+            created_at=self.state.loaded_created_at or now,
             updated_at=now,
         )
-        if self._loaded_card_id:
-            card.id = self._loaded_card_id
+        if self.state.loaded_card_id:
+            card.id = self.state.loaded_card_id
         return card
 
     def save_card(self):
@@ -762,10 +687,6 @@ class FlashcardPanel(QWidget):
         if card is None:
             self.save_rejected.emit("Cannot save flashcard: headword is empty")
             return
-        # Commit the card and its links in one write: rebuild each staged link
-        # against the saved card's id (a brand-new card got its id only now) and
-        # hand both to the store so a single Save is a single disk write and a
-        # single graph refresh.
         rebased = [
             Link(card.id, self._partner_id(link), link.type)
             for link in self._staged_links
@@ -778,52 +699,38 @@ class FlashcardPanel(QWidget):
 
     @staticmethod
     def ctrl_held() -> bool:
-        """True when Ctrl is down (used to skip the discard confirmation on a
-        Ctrl+click of New from word / Clear)."""
         return bool(
             QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier
         )
 
     def has_focus(self) -> bool:
-        """True when keyboard focus is on this panel or one of its descendants.
-        Used by the main window to route Alt+1 / Alt+2 to the card pronunciations
-        when the editor is in use rather than to the dictionary audio."""
         focused = QApplication.focusWidget()
         return focused is not None and (
             focused is self or self.isAncestorOf(focused)
         )
 
     def focus_editor(self) -> None:
-        """Put keyboard focus on the editor (the headword field). Used after
-        re-docking via Alt+D so the editor stays focused and the shortcut keeps
-        working without first clicking back into it."""
         self.headword_input.setFocus()
 
     def new_card(self, word: str, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
-        to discard unsaved content. ``force`` skips the confirmation. The headword
-        and pronunciation are filled by the grab (see ``set_pronunciation``), not
-        here, so the all-or-nothing gate sees a fully empty editor."""
-        if not force and self._dirty and not self._confirm_discard():
+        to discard unsaved content. force skips the confirmation."""
+        if not force and self.state.altered and not self._confirm_discard():
             return False
         self._reset_editor()
         return True
 
     def clear_editor(self):
-        # Ctrl+click skips the discard confirmation.
         if (
             not self.ctrl_held()
-            and self._dirty
+            and self.state.altered
             and not self._confirm_discard()
         ):
             return
         self._reset_editor()
 
     def _reset_editor(self):
-        # Clearing fields fires textChanged/toggled which would otherwise mark
-        # the card dirty; suppress that so a reset leaves a clean editor.
-        self._suppress_dirty = True
-        try:
+        with self._programmatic():
             for widget in (
                 self.headword_input,
                 self.spelling_uk_input,
@@ -842,26 +749,15 @@ class FlashcardPanel(QWidget):
                 row.deleteLater()
             self.active_row = None
             self.add_sense()
-            # Back to building a fresh card: forget any loaded card and drop the
-            # selection highlight on the saved-cards list.
-            self._loaded_card_id = None
-            self._loaded_created_at = None
-            # Forget the previous autofill snapshot; the empty editor is then
-            # open to a fresh autofill (and a later load cannot be mistaken for
-            # an untouched autofill and overwritten).
-            self._last_autofill = None
             self._staged_links = []
             self.saved_list.clearSelection()
-        finally:
-            self._suppress_dirty = False
-        self._dirty = False
+        # Back to a fresh, unaltered card.
+        self.state.to_new()
+        self._apply_state_to_ui()
         self._refresh_saved_list()
         self._scroll_editor_to_top()
 
     def _scroll_editor_to_top(self) -> None:
-        """Reset the editor scroll so a freshly loaded or cleared card shows from
-        the headword down, rather than keeping the previous card's scroll offset.
-        Guarded so it is safe to call before init_ui has built the scroll area."""
         scroll = getattr(self, "editor_scroll", None)
         if scroll is not None:
             scroll.verticalScrollBar().setValue(0)
@@ -869,18 +765,12 @@ class FlashcardPanel(QWidget):
     # --- saved cards list -----------------------------------------------
 
     def _loaded_marker_icon(self) -> QIcon:
-        """A filled dot for the loaded row's icon, drawn centred both ways in the
-        checkbox column. The pixmap is as wide as a checkbox indicator (so it lines
-        up horizontally with the other rows' boxes) and as tall as a list row (so
-        the dot sits at the row's vertical centre). Built once and cached."""
         cached = getattr(self, "_loaded_icon", None)
         if cached is not None:
             return cached
         width = self.style().pixelMetric(
             QStyle.PixelMetric.PM_IndicatorWidth
         ) or 16
-        # Row height: the loaded row is bold, so measure with a bold font and add
-        # the list's item vertical padding for a close match to the real row.
         bold = self.saved_list.font()
         bold.setBold(True)
         row_height = QFontMetrics(bold).height() + 4
@@ -890,7 +780,6 @@ class FlashcardPanel(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(QBrush(QColor("#0a84ff")))
         painter.setPen(Qt.PenStyle.NoPen)
-        # A dot sized to the narrower dimension, centred in the full pixmap.
         diameter = max(4, int(width * 0.5))
         x = (width - diameter) / 2.0
         y = (row_height - diameter) / 2.0
@@ -900,11 +789,6 @@ class FlashcardPanel(QWidget):
         return self._loaded_icon
 
     def _refresh_saved_list(self):
-        """Rebuild the saved-cards list from the store (newest first). Each row
-        shows the headword (starred cards prefixed) and carries its card id.
-        Clicking a row's text loads it; its checkbox links it in the chosen
-        category. The loaded card's own row has no checkbox: a centred dot icon
-        marks it instead."""
         self._reticking = True
         try:
             self.saved_list.clear()
@@ -914,24 +798,15 @@ class FlashcardPanel(QWidget):
                     label = f"{self._STAR_SET}: {label}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
-                if card.id == self._loaded_card_id:
-                    # The loaded card cannot link to itself, so it has no checkbox.
-                    # A dot drawn as the row icon sits in the same fixed column a
-                    # checkbox would occupy (centred in it), so the row reads as
-                    # the one currently in the editor rather than as a card with a
-                    # missing box. Bold text and a subtle blue tint reinforce it.
-                    item.setFlags(
-                        item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
-                    )
+                if card.id == self.state.loaded_card_id:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                     item.setIcon(self._loaded_marker_icon())
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
                     item.setBackground(QBrush(QColor("#e8f0fe")))
                 else:
-                    item.setFlags(
-                        item.flags() | Qt.ItemFlag.ItemIsUserCheckable
-                    )
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                     item.setCheckState(Qt.CheckState.Unchecked)
                 self.saved_list.addItem(item)
             self._apply_saved_filter()
@@ -946,13 +821,6 @@ class FlashcardPanel(QWidget):
             item.setHidden(bool(needle) and needle not in item.text().lower())
 
     def _on_saved_clicked(self, item):
-        # A click on a row's checkbox also fires itemClicked; that click toggled
-        # the check state (handled in _on_item_changed) and must NOT load the
-        # card. Only a click on the row text loads.
-        # Note: this relies on Qt firing itemChanged before itemClicked for a
-        # checkbox click, so _on_item_changed sets _checkbox_click=True first.
-        # If a real-display walkthrough shows a checkbox click still loading,
-        # the fallback is to load on itemDoubleClicked instead of itemClicked.
         if self._checkbox_click:
             self._checkbox_click = False
             return
@@ -962,24 +830,17 @@ class FlashcardPanel(QWidget):
             self.load_card(card)
 
     def load_card(self, card: Card) -> bool:
-        """Load a saved card into the editor for review or editing. Asks to
-        discard unsaved content first (unless Ctrl is held); a later Save updates
-        this card in place. Returns False if the user declined to discard."""
+        """Load a saved card for review or editing. Asks to discard unsaved
+        content first (unless Ctrl is held). A later Save updates this card in
+        place. Returns False if the user declined to discard."""
         if (
             not self.ctrl_held()
-            and self._dirty
+            and self.state.altered
             and not self._confirm_discard()
         ):
             return False
-        # _reset_editor rebuilds the list once (no loaded card yet); that rebuild
-        # is superseded by the _refresh_saved_list() call at the end of this method,
-        # which runs with _loaded_card_id and _staged_links already set.
-        self._reset_editor()  # clears fields and any previous loaded id
-        # Filling the editor from a saved card is not a user edit; suppress the
-        # dirty flag for the whole load so the just-loaded card reads as clean
-        # and switching to another card does not prompt to discard.
-        self._suppress_dirty = True
-        try:
+        self._reset_editor()  # clears fields; sets state.to_new()
+        with self._programmatic():
             _fill(self.headword_input, card.headword)
             _fill(self.spelling_uk_input, card.spelling_uk or "")
             _fill(self.spelling_us_input, card.spelling_us or "")
@@ -991,8 +852,6 @@ class FlashcardPanel(QWidget):
             self._update_play_buttons()
             self.set_starred(card.starred)
 
-            # Rebuild the sense rows from the card (drop the blank starter row
-            # first).
             for row in self._rows():
                 self.senses_container.removeWidget(row)
                 row.deleteLater()
@@ -1010,20 +869,18 @@ class FlashcardPanel(QWidget):
             else:
                 self.add_sense()
 
-            self._loaded_card_id = card.id
-            self._loaded_created_at = card.created_at or None
             self._staged_links = list(self.store.links_for(card.id))
-        finally:
-            self._suppress_dirty = False
-        self._dirty = False
+        # Enter editing mode: a clean baseline, so altered stays False.
+        self.state.to_editing(card.id, card.created_at or None)
+        self._apply_state_to_ui()
         self._refresh_saved_list()
         return True
 
     def _confirm_discard(self) -> bool:
         reply = QMessageBox.question(
             self,
-            "Discard flashcard?",
-            "The current flashcard has unsaved changes. Discard them?",
+            "Unsaved changes",
+            "You have unsaved changes. Discard them?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
@@ -1034,9 +891,6 @@ class FlashcardPanel(QWidget):
         return self.link_category_combo.currentData()
 
     def _retick_saved_list(self) -> None:
-        """Set each row's check state to reflect the edited card's staged links
-        of the currently chosen category. Programmatic, so it runs inside the
-        reticking guard and never counts as a user edit."""
         category = self._current_category()
         linked_partners = {
             self._partner_id(l) for l in self._staged_links if l.type == category
@@ -1046,7 +900,7 @@ class FlashcardPanel(QWidget):
             for i in range(self.saved_list.count()):
                 item = self.saved_list.item(i)
                 if not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
-                    continue  # the loaded card's own row has no checkbox
+                    continue
                 partner = item.data(Qt.ItemDataRole.UserRole)
                 state = (
                     Qt.CheckState.Checked
@@ -1058,32 +912,23 @@ class FlashcardPanel(QWidget):
             self._reticking = False
 
     def _on_item_changed(self, item) -> None:
-        """A row's check state changed. When it is a genuine user tick (not a
-        programmatic retick), stage or unstage a link of the chosen category
-        between the edited card and that row's card, and mark the card dirty."""
         if self._reticking:
             return
         self._checkbox_click = True
         partner = item.data(Qt.ItemDataRole.UserRole)
         category = self._current_category()
         checked = item.checkState() == Qt.CheckState.Checked
-        # Drop any existing staged link to this partner in this category first.
         self._staged_links = [
             l for l in self._staged_links
             if not (self._partner_id(l) == partner and l.type == category)
         ]
         if checked:
             self._staged_links.append(Link(self._edit_anchor(), partner, category))
-        self._mark_dirty()
+        self._on_user_edit()
 
     def _edit_anchor(self) -> str:
-        """The id standing in for the card being edited: its saved id, or the
-        new-card placeholder while it is unsaved. Staged links are always built
-        with this as one end, so it identifies the edited card's side of a link."""
-        return self._loaded_card_id or _NEW_CARD_ANCHOR
+        return self.state.loaded_card_id or _NEW_CARD_ANCHOR
 
     def _partner_id(self, link: Link) -> str:
-        """The id at the other end of a staged link from the card being edited."""
         anchor = self._edit_anchor()
         return link.b_id if link.a_id == anchor else link.a_id
-
