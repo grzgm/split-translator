@@ -378,8 +378,9 @@ class TranslationTool(QMainWindow):
 
     def on_pronunciation_grabbed(self, data):
         # Fires on every Cambridge English page load. Only fill the flashcard
-        # editor when the dock is open; the panel itself drops the data unless
-        # all of its fields are empty (all-or-nothing).
+        # editor when the dock is open; the panel itself refills only while the
+        # card is unaltered, and silently ignores the data once it is altered
+        # (see autofill_pronunciation).
         if not self.flashcard_dock.isVisible():
             return
         if not data or not any(data.values()):

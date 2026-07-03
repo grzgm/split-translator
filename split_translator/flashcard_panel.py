@@ -201,8 +201,8 @@ class SenseRow(QFrame):
 
         # Adding an example row is itself an edit. The pre-fill above happens
         # before the textChanged hook is wired, so announce it explicitly here.
-        # During a programmatic load the panel suppresses the dirty flag, so this
-        # is harmless then.
+        # During a programmatic load the panel routes this through its
+        # programmatic guard, so it does not mark the card altered then.
         self.edited.emit()
 
         if focus:
