@@ -713,6 +713,22 @@ class FlashcardPanelTests(unittest.TestCase):
         panel._on_saved_clicked(panel.saved_list.item(0))
         self.assertEqual(bar.value(), 0)
 
+    # --- SenseRow.set_first_example ------------------------------------
+    def test_set_first_example_creates_when_empty(self):
+        from split_translator.flashcard_panel import SenseRow
+        row = SenseRow()
+        row.set_first_example("She saw the dog run.")
+        self.assertEqual(row.examples(), ["She saw the dog run."])
+
+    def test_set_first_example_overwrites_existing_first(self):
+        from split_translator.flashcard_panel import SenseRow
+        row = SenseRow()
+        row.add_example("first")
+        row.add_example("second")
+        row.set_first_example("replaced")
+        # First example replaced, later examples untouched.
+        self.assertEqual(row.examples(), ["replaced", "second"])
+
 
 if __name__ == "__main__":
     unittest.main()

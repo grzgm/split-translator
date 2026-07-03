@@ -214,6 +214,17 @@ class SenseRow(QFrame):
         if text:
             self.add_example(text)
 
+    def set_first_example(self, text: str) -> None:
+        """Set the first example field's text, creating one if the sense has no
+        example row yet. Used by the book-sentence auto-fill, which owns the
+        first example while the card is unaltered. Later example rows are left
+        untouched."""
+        rows = self._example_rows()
+        if not rows:
+            self.add_example(text)
+            return
+        rows[0].example_input.setText(text)
+
     def _remove_example(self, row) -> None:
         self.examples_container.removeWidget(row)
         row.deleteLater()
