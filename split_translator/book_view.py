@@ -142,6 +142,62 @@ _MATCH_BLOCK_JS = """
 })(%(term)s, %(index)s);
 """
 
+# Extracts the sentence containing the Nth find match (1-based activeMatch).
+# Locates the match the same way as _MATCH_BLOCK_JS (findText leaves no DOM
+# selection to read, so occurrences are counted in document order until the
+# running count reaches the target index), then within that block expands from
+# the match offset to the surrounding sentence boundaries. A boundary is a '.',
+# '!' or '?' followed by whitespace; if none is found on a side the block edge
+# is used. Returns a JSON string (a bare object arrives empty from
+# runJavaScript). %(term)s is a JSON-quoted search string; %(index)s is the
+# 1-based match index.
+_MATCH_SENTENCE_JS = """
+(function(term, index) {
+    if (!term || index < 1) return JSON.stringify({sentence: ""});
+    var needle = term.toLowerCase();
+    var blocks = Array.prototype.slice.call(
+        document.querySelectorAll('[data-stid]'));
+    var seen = 0;
+    for (var i = 0; i < blocks.length; i++) {
+        var raw = blocks[i].textContent || "";
+        var text = raw.toLowerCase();
+        if (!text) continue;
+        var from = 0;
+        var hit = text.indexOf(needle, from);
+        while (hit !== -1) {
+            seen++;
+            if (seen === index) {
+                var start = 0;
+                for (var s = hit - 1; s > 0; s--) {
+                    var c = raw.charAt(s - 1);
+                    if ((c === '.' || c === '!' || c === '?')
+                            && /\\s/.test(raw.charAt(s))) {
+                        start = s + 1;
+                        break;
+                    }
+                }
+                var end = raw.length;
+                for (var e = hit + needle.length; e < raw.length; e++) {
+                    var d = raw.charAt(e);
+                    if ((d === '.' || d === '!' || d === '?')) {
+                        var after = raw.charAt(e + 1);
+                        if (after === '' || /\\s/.test(after)) {
+                            end = e + 1;
+                            break;
+                        }
+                    }
+                }
+                var sentence = raw.substring(start, end).trim();
+                return JSON.stringify({sentence: sentence});
+            }
+            from = hit + needle.length;
+            hit = text.indexOf(needle, from);
+        }
+    }
+    return JSON.stringify({sentence: ""});
+})(%(term)s, %(index)s);
+"""
+
 
 class BookView(QWebEngineView):
     """Renders one edition's HTML; exposes scroll position as (block_id, fraction)."""
@@ -284,6 +340,33 @@ class BookView(QWebEngineView):
         selection to read, and its callback can fire before the scroll settles)."""
         js = _MATCH_BLOCK_JS % {"term": json.dumps(term), "index": int(index)}
         self.page().runJavaScript(js, lambda value: callback(value or ""))
+
+    def match_sentence(self, term: str, index: int, callback) -> None:
+        """Extract the sentence containing the `index`-th (1-based) match for
+        `term` and pass it (or "") to callback(str). `index` is the find
+        result's activeMatch; the sentence is located by occurrence count like
+        matched_block_id (findText leaves no DOM selection to read). The block
+        text and match offset only exist in the page, so extraction runs there
+        and returns a JSON string parsed back here."""
+        js = _MATCH_SENTENCE_JS % {
+            "term": json.dumps(term),
+            "index": int(index),
+        }
+
+        def _on_result(payload):
+            if not payload:
+                callback("")
+                return
+            try:
+                data = json.loads(payload)
+            except (ValueError, TypeError):
+                # Not a JSON envelope (e.g. a stubbed page in tests); treat the
+                # payload itself as the sentence.
+                callback(payload)
+                return
+            callback(data.get("sentence", "") or "")
+
+        self.page().runJavaScript(js, _on_result)
 
     def find(self, term: str, forward: bool, callback) -> None:
         """Run a native find; report (active_match, total) to callback(int, int).
