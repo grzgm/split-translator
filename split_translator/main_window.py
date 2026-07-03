@@ -385,7 +385,7 @@ class TranslationTool(QMainWindow):
         if not data or not any(data.values()):
             return
         word = self.dictionary_panel.search_input.text().strip()
-        self.flashcard_panel.set_pronunciation(
+        self.flashcard_panel.autofill_pronunciation(
             data.get("ipa_uk"),
             data.get("ipa_us"),
             data.get("audio_uk_url"),
