@@ -1,7 +1,7 @@
 """Tabbed book panel showing original and translation editions in web views, with
 native full-text search and content-anchor scroll sync."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,6 +22,11 @@ from .config import Config, CONFIG_DIR
 
 
 class BookPanel(QFrame):
+    # Emitted with the sentence around the active book match, but only for a
+    # match on the Original edition. The main window routes it into the
+    # flashcard editor's first example (see main_window.on_book_sentence_matched).
+    book_sentence_matched = Signal(str)
+
     def __init__(self, config: Config, profile: QWebEngineProfile, parent=None):
         super().__init__(parent)
         self.config = config
@@ -262,6 +267,14 @@ class BookPanel(QFrame):
         self.next_button.setEnabled(count > 0)
         self.update_match_label()
         self._mark_current_match(active, count)
+        # Auto-fill the flashcard's first example from the book, but only for a
+        # match on the Original edition (no cross-edition fuzzing): read the
+        # sentence around the active match and re-emit it. The flashcard side
+        # decides whether to use it (only while its card is unaltered).
+        if count and self.current_view() is self.original_view:
+            self.original_view.match_sentence(
+                self.search_term, active, self.book_sentence_matched.emit
+            )
 
     def go_to_next(self) -> None:
         if not self.match_count:
