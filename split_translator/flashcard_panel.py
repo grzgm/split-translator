@@ -566,6 +566,20 @@ class FlashcardPanel(QWidget):
             return
         self._ensure_active_row().add_example_text(text)
 
+    def autofill_book_example(self, sentence: str) -> None:
+        """Passive auto-fill of the book match sentence into the first sense's
+        first example. Same rule as autofill_pronunciation: only while the card
+        is unaltered, and written through the programmatic guard so the fill
+        itself never marks the card altered (which lets a later book match
+        refill again). A blank sentence is ignored."""
+        sentence = (sentence or "").strip()
+        if not sentence:
+            return
+        if self.state.altered:
+            return
+        with self._programmatic():
+            self._rows()[0].set_first_example(sentence)
+
     # --- pronunciation / auto-grab --------------------------------------
 
     def autofill_pronunciation(

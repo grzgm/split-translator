@@ -729,6 +729,41 @@ class FlashcardPanelTests(unittest.TestCase):
         # First example replaced, later examples untouched.
         self.assertEqual(row.examples(), ["replaced", "second"])
 
+    # --- autofill_book_example -----------------------------------------
+    def test_book_example_fills_first_sense_first_slot_when_unaltered(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("She saw the dog run.")
+        self.assertEqual(
+            panel._rows()[0].examples(), ["She saw the dog run."]
+        )
+
+    def test_book_example_replaces_on_second_call(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("first sentence")
+        panel.autofill_book_example("second sentence")
+        self.assertEqual(panel._rows()[0].examples(), ["second sentence"])
+
+    def test_book_example_does_not_mark_altered(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("a sentence")
+        self.assertFalse(panel.state.altered)
+        # Because it stayed unaltered, a later call still fills (proves the
+        # guard held and the gate stays open).
+        panel.autofill_book_example("next sentence")
+        self.assertEqual(panel._rows()[0].examples(), ["next sentence"])
+
+    def test_book_example_ignored_when_altered(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("edited")  # genuine user edit -> altered
+        panel.autofill_book_example("should be ignored")
+        self.assertEqual(panel._rows()[0].examples(), [])
+
+    def test_book_example_blank_is_noop(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("   ")
+        self.assertEqual(panel._rows()[0].examples(), [])
+        self.assertFalse(panel.state.altered)
+
 
 if __name__ == "__main__":
     unittest.main()
