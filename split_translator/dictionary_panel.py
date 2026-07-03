@@ -218,14 +218,20 @@ class DictionaryPanel(QWidget):
         var uk = grab('uk');
         var us = grab('us');
 
+        // The page headword (span.hw.dhw). This is Cambridge's canonical
+        // spelling of the entry, which differs from the raw search term when
+        // the search redirects to a lemma (searching "running" lands on "run").
+        // We return it so the flashcard editor fills its Headword from the
+        // dictionary rather than the search box.
+        var head = document.querySelector('.hw.dhw');
+        var headword = head ? head.textContent.trim() : null;
+
         // UK/US spelling. Cambridge lists only the differing spelling as a
         // variant (span.spellvar with a .region tag saying UK or US and a .v
         // value); the headword is the opposite region's spelling. So a US
         // variant means us=variant and uk=headword, and vice versa. If there is
         // no variant the word spells the same in both, so leave both null.
         function grabSpelling() {
-            var head = document.querySelector('.hw.dhw');
-            var headword = head ? head.textContent.trim() : null;
             var ukSpelling = null, usSpelling = null;
             var variants = document.querySelectorAll('.spellvar.dspellvar');
             for (var i = 0; i < variants.length; i++) {
@@ -248,6 +254,7 @@ class DictionaryPanel(QWidget):
         // drops a plain object here (it arrives as an empty string), whereas a
         // string round-trips reliably. The Python callback parses it back.
         return JSON.stringify({
+            headword: headword,
             ipa_uk: uk.ipa, ipa_us: us.ipa,
             audio_uk_url: uk.audio, audio_us_url: us.audio,
             spelling_uk: spelling.uk, spelling_us: spelling.us

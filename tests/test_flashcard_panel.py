@@ -318,14 +318,14 @@ class FlashcardPanelTests(unittest.TestCase):
 
     def test_new_card_clears_without_setting_headword(self):
         panel, _ = self._panel()
-        self.assertTrue(panel.new_card("run"))
+        self.assertTrue(panel.new_card())
         self.assertEqual(panel.headword_input.text(), "")
 
     def test_new_card_returns_false_when_discard_declined(self):
         panel, _ = self._panel()
         panel.headword_input.setText("keep")
         panel._confirm_discard = lambda: False
-        self.assertFalse(panel.new_card("run"))
+        self.assertFalse(panel.new_card())
         self.assertEqual(panel.headword_input.text(), "keep")
 
     def test_new_card_force_skips_confirmation(self):
@@ -333,7 +333,7 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.headword_input.setText("keep")
         asked = []
         panel._confirm_discard = lambda: asked.append(True) or False
-        self.assertTrue(panel.new_card("run", force=True))
+        self.assertTrue(panel.new_card(force=True))
         self.assertEqual(asked, [])
         self.assertEqual(panel.headword_input.text(), "")
 
@@ -618,7 +618,7 @@ class FlashcardPanelTests(unittest.TestCase):
         panel, store = self._panel()
         self._seed(panel, store)
         panel._on_saved_clicked(panel.saved_list.item(0))
-        panel.new_card("fresh", force=True)
+        panel.new_card(force=True)
         self.assertTrue(panel.state.is_new)
         panel.headword_input.setText("fresh")
         panel.save_card()

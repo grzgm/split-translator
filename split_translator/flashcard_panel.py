@@ -720,9 +720,11 @@ class FlashcardPanel(QWidget):
     def focus_editor(self) -> None:
         self.headword_input.setFocus()
 
-    def new_card(self, word: str, force: bool = False) -> bool:
+    def new_card(self, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
-        to discard unsaved content. force skips the confirmation."""
+        to discard unsaved content. force skips the confirmation. The headword is
+        not seeded here: the caller re-grabs the Cambridge page, which fills it
+        (see main_window.new_flashcard / on_pronunciation_grabbed)."""
         if not force and self.state.altered and not self._confirm_discard():
             return False
         self._reset_editor()

@@ -303,12 +303,12 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel.load_card(card)
 
     def new_flashcard(self, force: bool = False):
-        word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_dock.show()
-        # Clear first (the editor is then empty, so the grab fills everything).
-        # Skip if the user declined to discard an in-progress card (force bypasses
-        # the confirmation, used on a Ctrl+click of the button).
-        if not self.flashcard_panel.new_card(word, force=force):
+        # Clear first (the editor is then empty, so the grab fills everything,
+        # headword included). Skip if the user declined to discard an in-progress
+        # card (force bypasses the confirmation, used on a Ctrl+click of the
+        # button).
+        if not self.flashcard_panel.new_card(force=force):
             return
         self.dictionary_panel.grab_pronunciation()
 
@@ -385,7 +385,12 @@ class TranslationTool(QMainWindow):
             return
         if not data or not any(data.values()):
             return
-        word = self.dictionary_panel.search_input.text().strip()
+        # Prefer Cambridge's own headword (its canonical spelling, e.g. "run"
+        # for a search of "running") and fall back to the raw search term only
+        # when the page has none.
+        word = (data.get("headword") or "").strip()
+        if not word:
+            word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_panel.autofill_pronunciation(
             data.get("ipa_uk"),
             data.get("ipa_us"),
