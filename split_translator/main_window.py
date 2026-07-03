@@ -176,6 +176,12 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel.save_rejected.connect(
             lambda message: self.statusBar().showMessage(message, 4000)
         )
+        # A book match on the Original edition auto-fills the flashcard's first
+        # example with the sentence around the match (only while the dock is
+        # open and the card is unaltered).
+        self.book_panel.book_sentence_matched.connect(
+            self.on_book_sentence_matched
+        )
 
     def on_word_searched(self, word: str):
         self.history_panel.add_to_history(word)
@@ -375,6 +381,15 @@ class TranslationTool(QMainWindow):
             "background-color: #fff3cd; color: #856404;"
         )
         self.statusBar().showMessage(label, 6000)
+
+    def on_book_sentence_matched(self, sentence):
+        # A book match on the Original edition supplies the sentence around it.
+        # Fill it into the flashcard editor's first example, but only when the
+        # dock is open; the panel itself uses it only while its card is
+        # unaltered (see autofill_book_example).
+        if not self.flashcard_dock.isVisible():
+            return
+        self.flashcard_panel.autofill_book_example(sentence)
 
     def on_pronunciation_grabbed(self, data):
         # Fires on every Cambridge English page load. Only fill the flashcard
