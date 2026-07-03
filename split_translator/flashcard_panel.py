@@ -693,7 +693,15 @@ class FlashcardPanel(QWidget):
         ]
         self.store.save_card_with_links(card, rebased)
         headword = card.headword
-        self._reset_editor()
+        # Save keeps the card loaded rather than clearing the editor: the just
+        # saved card becomes the loaded card in unaltered editing mode, so its
+        # fields stay put and a brand-new card turns into an existing one without
+        # any wipe. Re-seed the staged links from the store (mirroring load_card)
+        # so they are keyed by the card's real id, and refresh the list so the
+        # dot lands on this card's row.
+        self.state.to_editing(card.id, card.created_at or None)
+        self._staged_links = list(self.store.links_for(card.id))
+        self._apply_state_to_ui()
         self._refresh_saved_list()
         self.card_saved.emit(headword)
 

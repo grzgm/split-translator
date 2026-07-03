@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLineEdit
 
 from split_translator.flashcard_panel import FlashcardPanel
@@ -53,16 +54,49 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.save_button.text(), "Add card")
         self.assertEqual(panel.id_input.text(), "")
 
-    def test_save_returns_to_new_mode(self):
+    def test_save_stays_in_editing_mode(self):
         panel, store = self._panel()
         store.cards = [Card(headword="address", id="id-addr")]
         panel._refresh_saved_list()
         panel._on_saved_clicked(panel.saved_list.item(0))
         panel.headword_input.setText("address2")
         panel.save_card()
+        # Save keeps the card loaded: still editing, fields intact, unaltered.
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.save_button.text(), "Save changes")
+        self.assertEqual(panel.id_input.text(), "id-addr")
+        self.assertEqual(panel.headword_input.text(), "address2")
+        self.assertFalse(panel.state.altered)
+
+    def test_saving_new_card_enters_editing_mode_of_that_card(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("newword")
+        panel.ipa_uk_input.setText("/nw/")
         self.assertTrue(panel.state.is_new)
-        self.assertEqual(panel.save_button.text(), "Add card")
-        self.assertEqual(panel.id_input.text(), "")
+        panel.save_card()
+        # The brand-new card becomes the loaded card without any field wipe.
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.id_input.text(), store.cards[0].id)
+        self.assertEqual(panel.save_button.text(), "Save changes")
+        self.assertEqual(panel.headword_input.text(), "newword")
+        self.assertEqual(panel.ipa_uk_input.text(), "/nw/")
+        self.assertFalse(panel.state.altered)
+
+    def test_saved_card_row_shows_the_dot_after_saving_new(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("newword")
+        panel.save_card()
+        # The saved card's own row is the loaded row: not checkable, has the dot.
+        saved_id = store.cards[0].id
+        item = next(
+            panel.saved_list.item(i)
+            for i in range(panel.saved_list.count())
+            if panel.saved_list.item(i).data(Qt.ItemDataRole.UserRole) == saved_id
+        )
+        self.assertFalse(
+            bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        )
+        self.assertFalse(item.icon().isNull())
 
     # --- basic editing --------------------------------------------------
 
@@ -188,14 +222,18 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(card.senses[0].pos, "n")
         self.assertEqual(card.senses[0].polish, "adres")
 
-    def test_save_persists_and_clears(self):
+    def test_save_persists_and_keeps_fields(self):
         panel, store = self._panel()
         panel.headword_input.setText("address")
         panel.set_polish_selection("adres")
         panel.save_card()
         store.shutdown()
         self.assertEqual(len(store.cards), 1)
-        self.assertEqual(panel.headword_input.text(), "")
+        # Fields are kept, not cleared; the editor now edits the saved card.
+        self.assertEqual(panel.headword_input.text(), "address")
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.state.loaded_card_id, store.cards[0].id)
+        self.assertFalse(panel.state.altered)
 
     def test_build_card_carries_star(self):
         panel, _ = self._panel()
@@ -204,14 +242,15 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.set_starred(True)
         self.assertTrue(panel.build_card().starred)
 
-    def test_save_resets_star(self):
+    def test_save_keeps_star_and_persists_it(self):
         panel, store = self._panel()
         panel.headword_input.setText("address")
         panel.set_starred(True)
         panel.save_card()
         store.shutdown()
         self.assertTrue(store.cards[0].starred)
-        self.assertFalse(panel.is_starred())
+        # The card stays loaded, so the star stays set in the editor too.
+        self.assertTrue(panel.is_starred())
 
     # --- auto-grab (autofill_pronunciation) -----------------------------
 
@@ -569,8 +608,11 @@ class FlashcardPanelTests(unittest.TestCase):
         addr = next(c for c in store.cards if c.id == "id-addr")
         self.assertEqual(addr.senses[0].polish, "adres pocztowy")
         self.assertEqual(addr.created_at, "2026-01-01T00:00:00")  # preserved
-        self.assertEqual(panel.headword_input.text(), "")
-        self.assertTrue(panel.state.is_new)
+        # Editor stays on the card, unaltered, fields intact.
+        self.assertEqual(panel.headword_input.text(), "address")
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.state.loaded_card_id, "id-addr")
+        self.assertFalse(panel.state.altered)
 
     def test_save_after_new_card_adds_not_updates(self):
         panel, store = self._panel()
@@ -580,9 +622,15 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.state.is_new)
         panel.headword_input.setText("fresh")
         panel.save_card()
-        store.shutdown()
+        # The new card was added and is now the loaded card.
         self.assertEqual(len(store.cards), 3)
         self.assertEqual(store.cards[0].headword, "fresh")
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.state.loaded_card_id, store.cards[0].id)
+        # Saving again updates in place, does not duplicate.
+        panel.save_card()
+        store.shutdown()
+        self.assertEqual(len(store.cards), 3)
 
     def test_saved_list_refreshes_after_save(self):
         panel, store = self._panel()
