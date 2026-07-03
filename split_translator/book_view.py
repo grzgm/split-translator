@@ -360,9 +360,7 @@ class BookView(QWebEngineView):
             try:
                 data = json.loads(payload)
             except (ValueError, TypeError):
-                # Not a JSON envelope (e.g. a stubbed page in tests); treat the
-                # payload itself as the sentence.
-                callback(payload)
+                callback("")
                 return
             callback(data.get("sentence", "") or "")
 

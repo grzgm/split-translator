@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -33,13 +34,24 @@ class MatchSentenceTests(unittest.TestCase):
         return view, captured
 
     def test_passes_sentence_to_callback(self):
-        view, captured = self._view_with_stub_page("She saw the dog run.")
+        # The real page returns JSON.stringify({sentence: ...}); stub that.
+        view, captured = self._view_with_stub_page(
+            json.dumps({"sentence": "She saw the dog run."})
+        )
         got = []
         view.match_sentence("dog", 2, got.append)
         self.assertEqual(got, ["She saw the dog run."])
         # The term and index were substituted into the JS as JSON.
         self.assertIn('"dog"', captured["js"])
         self.assertIn("2", captured["js"])
+
+    def test_malformed_payload_becomes_empty_string(self):
+        # A non-JSON page result (should not happen in practice) fails soft to
+        # "" rather than feeding garbage into the flashcard example.
+        view, _ = self._view_with_stub_page("not json at all")
+        got = []
+        view.match_sentence("dog", 1, got.append)
+        self.assertEqual(got, [""])
 
     def test_empty_result_becomes_empty_string(self):
         view, _ = self._view_with_stub_page(None)
