@@ -171,8 +171,10 @@ class DictionaryPanel(QWidget):
         self.google_tabs = QTabWidget()
         self.google_meaning_view = self._make_view()
         self.babla_view = self._make_view()
+        self.diki_view = self._make_view()
         self.google_tabs.addTab(self.google_meaning_view, "Meaning")
         self.google_tabs.addTab(self.babla_view, "bab.la")
+        self.google_tabs.addTab(self.diki_view, "diki")
 
         self.google_translate_search = self._make_view()
 
@@ -191,6 +193,7 @@ class DictionaryPanel(QWidget):
             self.cambridge_pl_view,
             self.google_meaning_view,
             self.babla_view,
+            self.diki_view,
             self.google_translate_search,
         ]
 
@@ -466,6 +469,19 @@ class DictionaryPanel(QWidget):
     _BABLA_CAPTURE_PAIRS = [
         {"selector": "ul.sense-group-results li a.scroll-link", "field": "polish"},
     ]
+    # diki.pl's English-Polish page. It renders many "div.dictionaryEntity"
+    # blocks: the searched word first, then cross-references (synonyms,
+    # compounds, phrasal verbs). Only the first entity is the searched word's
+    # own meaning list, so it is scoped with :first-of-type. Each Polish meaning
+    # is the "span.hw a" anchor inside a meaning "li"; the inner anchor holds the
+    # clean word without diki's parenthetical qualifier or grammar tags.
+    _DIKI_CAPTURE_PAIRS = [
+        {
+            "selector": "div.dictionaryEntity:first-of-type "
+            "ol.foreignToNativeMeanings > li span.hw a",
+            "field": "polish",
+        },
+    ]
     # Google's "{word} po polsku" results page. The inline translation widget
     # uses Google's stable "tw-" namespace: the primary translation is the clean
     # word span inside "#tw-target-text" (its trailing ellipsis lives in a
@@ -480,11 +496,12 @@ class DictionaryPanel(QWidget):
     def _setup_capture_buttons(self):
         channel = QWebChannel(self)
         channel.registerObject("captureBridge", self.capture_bridge)
-        # The Cambridge views, the bab.la view and the Google "po polsku" view
-        # share the one bridge object.
+        # The Cambridge views, the bab.la view, the diki view and the Google
+        # "po polsku" view share the one bridge object.
         self.cambridge_en_view.page().setWebChannel(channel)
         self.cambridge_pl_view.page().setWebChannel(channel)
         self.babla_view.page().setWebChannel(channel)
+        self.diki_view.page().setWebChannel(channel)
         self.google_translate_search.page().setWebChannel(channel)
         self._capture_channel = channel
 
@@ -507,6 +524,11 @@ class DictionaryPanel(QWidget):
         self.babla_view.loadFinished.connect(
             lambda ok: self._inject_capture(
                 self.babla_view, self._BABLA_CAPTURE_PAIRS, ok
+            )
+        )
+        self.diki_view.loadFinished.connect(
+            lambda ok: self._inject_capture(
+                self.diki_view, self._DIKI_CAPTURE_PAIRS, ok
             )
         )
         self.google_translate_search.loadFinished.connect(
@@ -567,6 +589,9 @@ class DictionaryPanel(QWidget):
 
         babla_url = f"https://en.bab.la/dictionary/english-polish/{encoded_word}"
         self.babla_view.setUrl(QUrl(babla_url))
+
+        diki_url = f"https://www.diki.pl/{encoded_word}"
+        self.diki_view.setUrl(QUrl(diki_url))
 
         google_translate_url = (
             f"https://www.google.pl/search?q={encoded_word}+po+polsku"
