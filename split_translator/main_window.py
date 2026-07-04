@@ -25,6 +25,8 @@ from .flashcard_graph import FlashcardGraphWindow
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
 from .book_panel import BookPanel
+from .shortcuts import SHORTCUTS
+from .shortcuts_dialog import ShortcutsDialog
 
 
 class TranslationTool(QMainWindow):
@@ -196,21 +198,41 @@ class TranslationTool(QMainWindow):
             f'"{word}" was previously searched on {formatted_date}', 0
         )
 
+    def _resolve_handler(self, handler: str):
+        # Resolve a registry handler name to the bound method it names, walking
+        # dotted paths from self (e.g. "book_panel.go_to_previous"). Keeps the
+        # registry able to target child-panel methods without wrapper methods.
+        target = self
+        for part in handler.split("."):
+            target = getattr(target, part)
+        return target
+
+    def _build_registry_shortcuts(self):
+        # Create a QShortcut for every registry entry that names a handler, and
+        # return them. Display-only entries (handler is None: the two View-menu
+        # shortcuts and the Alt+1..9 range) are skipped here and wired elsewhere.
+        # The handler is walked from self (like _resolve_handler, inlined so the
+        # builder depends only on self carrying the handler attributes, letting a
+        # test drive it with a stub owner as self).
+        created = []
+        for entry in SHORTCUTS:
+            if entry.handler is None:
+                continue
+            target = self
+            for part in entry.handler.split("."):
+                target = getattr(target, part)
+            shortcut = QShortcut(QKeySequence(entry.keys), self)
+            shortcut.activated.connect(target)
+            created.append(shortcut)
+        return created
+
     def setup_shortcuts(self):
-        shortcut_ctrl_l = QShortcut(QKeySequence("Ctrl+L"), self)
-        shortcut_ctrl_l.activated.connect(self.focus_search)
+        # Real bindings come from the shortcut registry (the single source of
+        # truth the Ctrl+/ overlay also renders); see shortcuts.py.
+        self._registry_shortcuts = self._build_registry_shortcuts()
 
-        shortcut_f6 = QShortcut(QKeySequence("F6"), self)
-        shortcut_f6.activated.connect(self.focus_search)
-
-        shortcut_f3 = QShortcut(QKeySequence("F3"), self)
-        shortcut_f3.activated.connect(self.handle_search_and_pdf_navigation)
-        shortcut_ctrl_f = QShortcut(QKeySequence("Ctrl+F"), self)
-        shortcut_ctrl_f.activated.connect(self.handle_search_and_pdf_navigation)
-
-        shortcut_shift_f3 = QShortcut(QKeySequence("Shift+F3"), self)
-        shortcut_shift_f3.activated.connect(self.book_panel.go_to_previous)
-
+        # Alt+1..9 is a range, not one binding, so it stays a loop here (the
+        # overlay lists it as a single display-only entry).
         for i in range(1, 10):
             shortcut = QShortcut(QKeySequence(f"Alt+{i}"), self)
             shortcut.activated.connect(
@@ -220,28 +242,13 @@ class TranslationTool(QMainWindow):
         # Ctrl+Shift+F (Flashcard) and Ctrl+Shift+A (Sync Editor) live on their
         # View-menu actions in setup_menu, which provide the application-wide
         # shortcut. Defining a QShortcut here too would make the sequence
-        # ambiguous and neither would fire.
+        # ambiguous and neither would fire. They are display-only registry
+        # entries so the overlay still lists them.
 
-        shortcut_new_card = QShortcut(QKeySequence("Ctrl+N"), self)
-        shortcut_new_card.activated.connect(self.new_flashcard)
-
-        shortcut_save_card = QShortcut(QKeySequence("Ctrl+S"), self)
-        shortcut_save_card.activated.connect(self.flashcard_panel.save_card)
-
-        shortcut_to_polish = QShortcut(QKeySequence("Alt+P"), self)
-        shortcut_to_polish.activated.connect(self.capture_to_polish)
-
-        shortcut_to_english = QShortcut(QKeySequence("Alt+E"), self)
-        shortcut_to_english.activated.connect(self.capture_to_english)
-
-        shortcut_to_example = QShortcut(QKeySequence("Alt+X"), self)
-        shortcut_to_example.activated.connect(self.capture_to_example)
-
-        shortcut_dock_flashcard = QShortcut(QKeySequence("Alt+D"), self)
-        shortcut_dock_flashcard.activated.connect(self.toggle_flashcard_dock)
-
-        shortcut_translation_prompt = QShortcut(QKeySequence("Ctrl+T"), self)
-        shortcut_translation_prompt.activated.connect(self.copy_translation_prompt)
+    def show_shortcuts(self):
+        # Ctrl+/: open the keyboard-shortcuts cheat sheet, built from the same
+        # registry that created the bindings.
+        ShortcutsDialog(SHORTCUTS, parent=self).exec()
 
     def copy_translation_prompt(self):
         # Ctrl+T: copy an LLM prompt asking for the contextual translation of the
