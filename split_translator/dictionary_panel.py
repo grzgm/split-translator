@@ -466,14 +466,26 @@ class DictionaryPanel(QWidget):
     _BABLA_CAPTURE_PAIRS = [
         {"selector": "ul.sense-group-results li a.scroll-link", "field": "polish"},
     ]
+    # Google's "{word} po polsku" results page. The inline translation widget
+    # uses Google's stable "tw-" namespace: the primary translation is the clean
+    # word span inside "#tw-target-text" (its trailing ellipsis lives in a
+    # separate span, so this selector already excludes it), and every dictionary
+    # alternative is a Polish word span inside a bilingual-entry row (its English
+    # gloss, "div.MaH2Hf", is deliberately not matched).
+    _GOOGLE_PL_CAPTURE_PAIRS = [
+        {"selector": "#tw-target-text span.Y2IQFc", "field": "polish"},
+        {"selector": "div.tw-bilingual-entry span.SvKTZc", "field": "polish"},
+    ]
 
     def _setup_capture_buttons(self):
         channel = QWebChannel(self)
         channel.registerObject("captureBridge", self.capture_bridge)
-        # The Cambridge views and the bab.la view share the one bridge object.
+        # The Cambridge views, the bab.la view and the Google "po polsku" view
+        # share the one bridge object.
         self.cambridge_en_view.page().setWebChannel(channel)
         self.cambridge_pl_view.page().setWebChannel(channel)
         self.babla_view.page().setWebChannel(channel)
+        self.google_translate_search.page().setWebChannel(channel)
         self._capture_channel = channel
 
         self.cambridge_en_view.loadFinished.connect(
@@ -495,6 +507,11 @@ class DictionaryPanel(QWidget):
         self.babla_view.loadFinished.connect(
             lambda ok: self._inject_capture(
                 self.babla_view, self._BABLA_CAPTURE_PAIRS, ok
+            )
+        )
+        self.google_translate_search.loadFinished.connect(
+            lambda ok: self._inject_capture(
+                self.google_translate_search, self._GOOGLE_PL_CAPTURE_PAIRS, ok
             )
         )
 
