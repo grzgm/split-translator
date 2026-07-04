@@ -67,5 +67,52 @@ class BookSentenceEmitTests(unittest.TestCase):
         self.assertEqual(emitted, [])
 
 
+class CurrentMatchSentenceTests(unittest.TestCase):
+    """BookPanel.current_match_sentence extracts the sentence for the CURRENT
+    match on demand (for the Ctrl+T translation prompt), applying the same
+    Original-only gate: it calls back with the sentence only for an Original-tab
+    match, and with "" on the Translation tab or with no current match. Driven
+    against a stubbed panel so no WebEngine page is built."""
+
+    def _panel(self, active_is_original, current_match, sentence="A sentence."):
+        panel = BookPanel.__new__(BookPanel)
+        QFrame.__init__(panel)
+        panel.search_term = "dog"
+        panel.current_match = current_match
+
+        def make_view():
+            v = SimpleNamespace()
+            v.match_sentence = lambda term, index, cb: cb(sentence)
+            return v
+
+        panel.original_view = make_view()
+        panel.translation_view = make_view()
+        panel._active = (
+            panel.original_view if active_is_original else panel.translation_view
+        )
+        panel.current_view = lambda: panel._active
+        return panel
+
+    def test_yields_sentence_on_original_match(self):
+        panel = self._panel(
+            active_is_original=True, current_match=2, sentence="She saw the dog run."
+        )
+        got = []
+        panel.current_match_sentence(got.append)
+        self.assertEqual(got, ["She saw the dog run."])
+
+    def test_empty_on_translation_tab(self):
+        panel = self._panel(active_is_original=False, current_match=2)
+        got = []
+        panel.current_match_sentence(got.append)
+        self.assertEqual(got, [""])
+
+    def test_empty_on_no_current_match(self):
+        panel = self._panel(active_is_original=True, current_match=0)
+        got = []
+        panel.current_match_sentence(got.append)
+        self.assertEqual(got, [""])
+
+
 if __name__ == "__main__":
     unittest.main()

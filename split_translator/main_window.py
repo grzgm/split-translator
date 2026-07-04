@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QHBoxLayout,
     QLabel,
@@ -238,6 +239,37 @@ class TranslationTool(QMainWindow):
 
         shortcut_dock_flashcard = QShortcut(QKeySequence("Alt+D"), self)
         shortcut_dock_flashcard.activated.connect(self.toggle_flashcard_dock)
+
+        shortcut_translation_prompt = QShortcut(QKeySequence("Ctrl+T"), self)
+        shortcut_translation_prompt.activated.connect(self.copy_translation_prompt)
+
+    def copy_translation_prompt(self):
+        # Ctrl+T: copy an LLM prompt asking for the contextual translation of the
+        # search word, using the sentence around the current Original-edition
+        # book match as context. Silent no-op (clipboard untouched) when there is
+        # no search word or no Original match, matching the book auto-fill's
+        # "Original only, no fuzzing" rule; a status note explains why.
+        word = self.dictionary_panel.search_input.text().strip()
+        if not word:
+            self.statusBar().showMessage(
+                "No search word to build a translation prompt", 4000
+            )
+            return
+
+        def _on_sentence(sentence):
+            sentence = (sentence or "").strip()
+            if not sentence:
+                self.statusBar().showMessage(
+                    "No book sentence for the current match", 4000
+                )
+                return
+            prompt = (
+                f'Translate "{word}" to Polish in the context of "{sentence}"'
+            )
+            QApplication.clipboard().setText(prompt)
+            self.statusBar().showMessage("Copied translation prompt", 4000)
+
+        self.book_panel.current_match_sentence(_on_sentence)
 
     def handle_search_and_pdf_navigation(self):
         if self.dictionary_panel.search_input.hasFocus():

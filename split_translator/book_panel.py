@@ -276,6 +276,19 @@ class BookPanel(QFrame):
                 self.search_term, active, self.book_sentence_matched.emit
             )
 
+    def current_match_sentence(self, callback) -> None:
+        """Extract the sentence around the CURRENT match on demand and pass it to
+        callback(str). Same Original-only gate as _on_find_result: yields the
+        sentence only for a match on the Original edition; on the Translation tab
+        or with no current match it calls back with "" (no cross-edition
+        fuzzing). Used by the Ctrl+T contextual-translation prompt."""
+        if self.current_match and self.current_view() is self.original_view:
+            self.original_view.match_sentence(
+                self.search_term, self.current_match, callback
+            )
+        else:
+            callback("")
+
     def go_to_next(self) -> None:
         if not self.match_count:
             return
