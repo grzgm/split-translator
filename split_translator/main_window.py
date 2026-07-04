@@ -343,6 +343,9 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel.load_card(card)
 
     def new_flashcard(self, force: bool = False):
+        # Ctrl+N always opens the editor in the docked state, re-docking it if it
+        # was left floating.
+        self.flashcard_dock.setFloating(False)
         self.flashcard_dock.show()
         # Clear first (the editor is then empty, so the grab fills everything,
         # headword included). Skip if the user declined to discard an in-progress

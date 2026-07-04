@@ -50,7 +50,9 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
             autofill_book_example=lambda s: captured.setdefault("sentence", s),
         )
         carrier = SimpleNamespace(
-            flashcard_dock=SimpleNamespace(show=lambda: None),
+            flashcard_dock=SimpleNamespace(
+                show=lambda: None, setFloating=lambda value: None
+            ),
             flashcard_panel=flashcard_panel,
             dictionary_panel=SimpleNamespace(
                 grab_pronunciation=lambda: captured.setdefault("grabbed", True)
