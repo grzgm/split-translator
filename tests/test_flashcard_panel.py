@@ -150,6 +150,40 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(len(panel._rows()), 2)
         self.assertIs(panel.active_row, panel._rows()[1])
 
+    def test_append_polish_sets_empty_field(self):
+        panel, _ = self._panel()
+        panel.append_polish_selection("ksiazka")
+        self.assertEqual(panel.active_row.polish_input.text(), "ksiazka")
+
+    def test_append_polish_comma_joins_non_empty_field(self):
+        panel, _ = self._panel()
+        panel.set_polish_selection("ksiazka")
+        panel.append_polish_selection("tom")
+        panel.append_polish_selection("wolumin")
+        self.assertEqual(
+            panel.active_row.polish_input.text(), "ksiazka, tom, wolumin"
+        )
+
+    def test_append_polish_skips_blank(self):
+        panel, _ = self._panel()
+        panel.set_polish_selection("ksiazka")
+        panel.append_polish_selection("   ")
+        self.assertEqual(panel.active_row.polish_input.text(), "ksiazka")
+
+    def test_append_english_comma_joins_non_empty_field(self):
+        panel, _ = self._panel()
+        panel.set_english_selection("a book")
+        panel.append_english_selection("a volume")
+        self.assertEqual(
+            panel.active_row.english_input.text(), "a book, a volume"
+        )
+
+    def test_append_scrolls_field_to_start(self):
+        panel, _ = self._panel()
+        long_text = "a very long english definition that overflows the field width"
+        panel.append_english_selection(long_text)
+        self.assertEqual(panel.active_row.english_input.cursorPosition(), 0)
+
     def test_example_capture_appends_to_active_row(self):
         panel, _ = self._panel()
         panel.add_example_selection("She lives at that address.")

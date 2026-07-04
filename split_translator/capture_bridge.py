@@ -12,7 +12,9 @@ from PySide6.QtCore import QObject, Signal, Slot
 class CaptureBridge(QObject):
     """Receives capture clicks from injected page buttons and re-emits them as signals."""
 
-    # field: "polish" | "english"; target: "current" | "new"; pos: "" when unknown.
+    # field: "polish" | "english"; pos: "" when unknown. target is one of
+    # "new" (fresh sense, replace), "<n>" (replace sense n) or "append:<n>"
+    # (append into sense n).
     capture_requested = Signal(str, str, str, str)  # text, field, target, pos
     # A pronunciation clip captured from the page: region "uk"/"us", mp3 URL and
     # the clip's IPA notation ("" when the page block has none).

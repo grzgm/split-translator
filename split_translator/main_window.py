@@ -169,8 +169,11 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel.sense_count_changed.connect(
             self.dictionary_panel.set_sense_count
         )
-        # Sync the initial sense count (the editor starts with one sense).
-        self.dictionary_panel.set_sense_count(len(self.flashcard_panel._rows()))
+        # Sync the initial sense count (the editor starts with one active sense).
+        self.dictionary_panel.set_sense_count(
+            len(self.flashcard_panel._rows()),
+            self.flashcard_panel.active_index(),
+        )
         self.flashcard_panel.card_saved.connect(
             lambda headword: self.statusBar().showMessage(
                 f'Saved flashcard "{headword}"', 4000
@@ -390,24 +393,39 @@ class TranslationTool(QMainWindow):
         self.flashcard_dock.show()
         self._route_capture(field, text)
 
-    def _route_capture(self, field: str, text: str):
+    def _route_capture(self, field: str, text: str, append: bool = False):
         if field == "polish":
-            self.flashcard_panel.set_polish_selection(text)
+            if append:
+                self.flashcard_panel.append_polish_selection(text)
+            else:
+                self.flashcard_panel.set_polish_selection(text)
         elif field == "example":
+            # Examples always accumulate; there is no replace/append split.
             self.flashcard_panel.add_example_selection(text)
         else:
-            self.flashcard_panel.set_english_selection(text)
+            if append:
+                self.flashcard_panel.append_english_selection(text)
+            else:
+                self.flashcard_panel.set_english_selection(text)
 
     def on_sense_capture_requested(
         self, text: str, field: str, target: str, pos: str
     ):
         self.flashcard_dock.show()
+        # Target strings from the injected page controls:
+        #   "new"          -> a fresh sense, replace ("+new" button)
+        #   "<n>"          -> replace sense n ("set" button + dropdown value)
+        #   "append:<n>"   -> append into sense n ("add" button + dropdown value)
+        append = False
         if target == "new":
             self.flashcard_panel.add_sense()
+        elif target.startswith("append:") and target[7:].isdigit():
+            append = True
+            self.flashcard_panel.set_active_index(int(target[7:]))
         elif target.isdigit():
             # A specific 1-based sense index chosen from the page dropdown.
             self.flashcard_panel.set_active_index(int(target))
-        self._route_capture(field, text)
+        self._route_capture(field, text, append)
         if pos:
             row = self.flashcard_panel.active_row
             if row is not None and not row.pos_combo.currentText().strip():
