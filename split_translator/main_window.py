@@ -349,6 +349,14 @@ class TranslationTool(QMainWindow):
         if not self.flashcard_panel.new_card(force=force):
             return
         self.dictionary_panel.grab_pronunciation()
+        # Also pull the current Original-edition book sentence into the fresh
+        # card's first example, so New from word populates it immediately rather
+        # than only on the next book match. current_match_sentence applies the
+        # Original-only gate and hands back "" when there is no match, which
+        # autofill_book_example ignores.
+        self.book_panel.current_match_sentence(
+            self.flashcard_panel.autofill_book_example
+        )
 
     def capture_to_polish(self):
         text = self.dictionary_panel.focused_selection()
