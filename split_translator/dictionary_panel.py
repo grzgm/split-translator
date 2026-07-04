@@ -170,14 +170,14 @@ class DictionaryPanel(QWidget):
 
         self.google_tabs = QTabWidget()
         self.google_meaning_view = self._make_view()
-        self.google_translate_view = self._make_view()
-        self.google_tabs.addTab(self.google_meaning_view, "Meaning")
-        self.google_tabs.addTab(self.google_translate_view, "Po polsku")
-
         self.babla_view = self._make_view()
+        self.google_tabs.addTab(self.google_meaning_view, "Meaning")
+        self.google_tabs.addTab(self.babla_view, "bab.la")
+
+        self.google_translate_search = self._make_view()
 
         right_splitter.addWidget(self.google_tabs)
-        right_splitter.addWidget(self.babla_view)
+        right_splitter.addWidget(self.google_translate_search)
         right_splitter.setSizes([400, 400])
 
         main_splitter.addWidget(left_splitter)
@@ -190,8 +190,8 @@ class DictionaryPanel(QWidget):
             self.cambridge_en_view,
             self.cambridge_pl_view,
             self.google_meaning_view,
-            self.google_translate_view,
             self.babla_view,
+            self.google_translate_search,
         ]
 
     def focused_selection(self) -> str:
@@ -606,13 +606,13 @@ class DictionaryPanel(QWidget):
         google_meaning_url = f"https://www.google.pl/search?q={encoded_word}+meaning"
         self.google_meaning_view.setUrl(QUrl(google_meaning_url))
 
+        babla_url = f"https://en.bab.la/dictionary/english-polish/{encoded_word}"
+        self.babla_view.setUrl(QUrl(babla_url))
+
         google_translate_url = (
             f"https://www.google.pl/search?q={encoded_word}+po+polsku"
         )
-        self.google_translate_view.setUrl(QUrl(google_translate_url))
-
-        babla_url = f"https://www.google.pl/search?q={encoded_word}+po+polsku"
-        self.babla_view.setUrl(QUrl(babla_url))
+        self.google_translate_search.setUrl(QUrl(google_translate_url))
 
         self.word_searched.emit(word)
 
