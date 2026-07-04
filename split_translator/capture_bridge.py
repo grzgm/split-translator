@@ -13,8 +13,8 @@ class CaptureBridge(QObject):
     """Receives capture clicks from injected page buttons and re-emits them as signals."""
 
     # field: "polish" | "english"; pos: "" when unknown. target is one of
-    # "new" (fresh sense, replace), "<n>" (replace sense n) or "append:<n>"
-    # (append into sense n).
+    # "current" (replace the active sense), "append" (append into the active
+    # sense) or "new" (fresh sense, replace).
     capture_requested = Signal(str, str, str, str)  # text, field, target, pos
     # A pronunciation clip captured from the page: region "uk"/"us", mp3 URL and
     # the clip's IPA notation ("" when the page block has none).

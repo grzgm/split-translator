@@ -272,10 +272,6 @@ class FlashcardPanel(QWidget):
 
     card_saved = Signal(str)
     save_rejected = Signal(str)
-    # (sense count, active 1-based index). The injected page dropdowns use both:
-    # the count to list the senses, the active index to default a new dropdown's
-    # selection to the sense being edited.
-    sense_count_changed = Signal(int, int)
 
     _STAR_EMPTY = "Star"
     _STAR_SET = "Starred"
@@ -527,20 +523,10 @@ class FlashcardPanel(QWidget):
         self.senses_container.addWidget(row)
         self.set_active_row(row)
 
-    def active_index(self) -> int:
-        """1-based index of the active sense (1 when none is active)."""
-        rows = self._rows()
-        if self.active_row in rows:
-            return rows.index(self.active_row) + 1
-        return 1
-
     def set_active_row(self, row):
         self.active_row = row
         for candidate in self._rows():
             candidate.set_active(candidate is row)
-        # Any change to the active row (or the row set) re-pushes both the count
-        # and the active index to the injected page dropdowns.
-        self.sense_count_changed.emit(len(self._rows()), self.active_index())
 
     def set_active_index(self, index: int):
         rows = self._rows()
@@ -558,11 +544,7 @@ class FlashcardPanel(QWidget):
         self.senses_container.removeWidget(row)
         row.deleteLater()
         if self.active_row is row:
-            # set_active_row re-pushes count + active index for us.
             self.set_active_row(self._rows()[0])
-        else:
-            # Active row unchanged, but the count shrank: push it.
-            self.sense_count_changed.emit(len(self._rows()), self.active_index())
 
     def _ensure_active_row(self):
         rows = self._rows()

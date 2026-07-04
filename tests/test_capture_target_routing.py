@@ -22,7 +22,6 @@ class SenseCaptureRoutingTests(unittest.TestCase):
         )
         panel = SimpleNamespace(
             add_sense=lambda: calls.append(("add_sense",)),
-            set_active_index=lambda n: calls.append(("active", n)),
             set_polish_selection=lambda t: calls.append(("set_polish", t)),
             append_polish_selection=lambda t: calls.append(("append_polish", t)),
             set_english_selection=lambda t: calls.append(("set_english", t)),
@@ -57,29 +56,28 @@ class SenseCaptureRoutingTests(unittest.TestCase):
         self.assertIn(("set_polish", "tom"), calls)
         self.assertNotIn(("append_polish", "tom"), calls)
 
-    def test_digit_target_replaces_chosen_sense(self):
+    def test_current_target_replaces_active_sense(self):
         carrier, calls = self._carrier()
-        self._run(carrier, "tom", "polish", "2")
-        self.assertIn(("active", 2), calls)
+        self._run(carrier, "tom", "polish", "current")
+        self.assertNotIn(("add_sense",), calls)
         self.assertIn(("set_polish", "tom"), calls)
         self.assertNotIn(("append_polish", "tom"), calls)
 
-    def test_append_target_appends_to_chosen_sense(self):
+    def test_append_target_appends_to_active_sense(self):
         carrier, calls = self._carrier()
-        self._run(carrier, "tom", "polish", "append:2")
-        self.assertIn(("active", 2), calls)
+        self._run(carrier, "tom", "polish", "append")
+        self.assertNotIn(("add_sense",), calls)
         self.assertIn(("append_polish", "tom"), calls)
         self.assertNotIn(("set_polish", "tom"), calls)
 
     def test_append_target_routes_english_to_append(self):
         carrier, calls = self._carrier()
-        self._run(carrier, "a volume", "english", "append:1")
-        self.assertIn(("active", 1), calls)
+        self._run(carrier, "a volume", "english", "append")
         self.assertIn(("append_english", "a volume"), calls)
 
     def test_append_carries_pos_into_empty_combo(self):
         carrier, calls = self._carrier()
-        self._run(carrier, "tom", "polish", "append:1", pos="noun")
+        self._run(carrier, "tom", "polish", "append", pos="noun")
         self.assertIn(("pos", "noun"), calls)
 
 
