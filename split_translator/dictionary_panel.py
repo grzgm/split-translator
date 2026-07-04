@@ -516,13 +516,21 @@ class DictionaryPanel(QWidget):
         {"selector": ".def.ddef_d", "field": "english"},
         {"selector": ".eg.deg", "field": "example"},
     ]
+    # bab.la's English-Polish page. Each Polish translation is a scroll-link
+    # anchor inside the sense-group list; this selector matches those and
+    # excludes the audio ("volume_up") anchors and the "similar translations"
+    # cross-reference block, which are not scroll-links.
+    _BABLA_CAPTURE_PAIRS = [
+        {"selector": "ul.sense-group-results li a.scroll-link", "field": "polish"},
+    ]
 
     def _setup_capture_buttons(self):
         channel = QWebChannel(self)
         channel.registerObject("captureBridge", self.capture_bridge)
-        # Both Cambridge views share the one bridge object.
+        # The Cambridge views and the bab.la view share the one bridge object.
         self.cambridge_en_view.page().setWebChannel(channel)
         self.cambridge_pl_view.page().setWebChannel(channel)
+        self.babla_view.page().setWebChannel(channel)
         self._capture_channel = channel
 
         self.cambridge_en_view.loadFinished.connect(
@@ -539,6 +547,11 @@ class DictionaryPanel(QWidget):
         self.cambridge_pl_view.loadFinished.connect(
             lambda ok: self._inject_capture(
                 self.cambridge_pl_view, self._PL_CAPTURE_PAIRS, ok
+            )
+        )
+        self.babla_view.loadFinished.connect(
+            lambda ok: self._inject_capture(
+                self.babla_view, self._BABLA_CAPTURE_PAIRS, ok
             )
         )
 
@@ -563,7 +576,11 @@ class DictionaryPanel(QWidget):
     def set_sense_count(self, count: int):
         """Tell the injected dropdowns how many senses the editor currently has."""
         self._sense_count = max(1, int(count))
-        for view in (self.cambridge_en_view, self.cambridge_pl_view):
+        for view in (
+            self.cambridge_en_view,
+            self.cambridge_pl_view,
+            self.babla_view,
+        ):
             self._push_sense_count(view)
 
     def _push_sense_count(self, view):
