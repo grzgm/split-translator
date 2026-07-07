@@ -87,5 +87,35 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
         self.assertEqual(captured, {})
 
 
+class WordSearchedClearsEditorTests(unittest.TestCase):
+    """on_word_searched clears the flashcard editor before the search's page
+    loads auto-fill it, so a new word starts from a blank card. Driven as an
+    unbound method against a lightweight carrier (no WebEngine window)."""
+
+    def _carrier(self):
+        order = []
+        carrier = SimpleNamespace(
+            flashcard_panel=SimpleNamespace(
+                prepare_for_new_search=lambda: order.append("prepare")
+            ),
+            history_panel=SimpleNamespace(
+                add_to_history=lambda w: order.append(("history", w))
+            ),
+            book_panel=SimpleNamespace(
+                search=lambda w: order.append(("book", w))
+            ),
+        )
+        return carrier, order
+
+    def test_prepares_editor_first(self):
+        carrier, order = self._carrier()
+        TranslationTool.on_word_searched(carrier, "walk")
+        # The clear runs before the book search (and before anything that could
+        # fill the editor for the new word).
+        self.assertEqual(order[0], "prepare")
+        self.assertIn(("history", "walk"), order)
+        self.assertIn(("book", "walk"), order)
+
+
 if __name__ == "__main__":
     unittest.main()

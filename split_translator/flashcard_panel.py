@@ -771,6 +771,27 @@ class FlashcardPanel(QWidget):
         self._reset_editor()
         return True
 
+    def prepare_for_new_search(self) -> None:
+        """Clear the editor before a new dictionary search auto-fills it, so the
+        new word replaces the previous card completely (senses, examples, star,
+        own notation, staged links, loaded-card id), not just the grab fields.
+
+        Only when the card is unaltered: a freshly saved card, a card loaded for
+        viewing, one holding only a previous passive auto-fill, or an empty card
+        are all reset to a fresh unsaved new card. An altered card is left
+        completely untouched, with no discard prompt (a search is passive, so it
+        never nags); that is why this calls _reset_editor directly rather than
+        new_card/clear_editor, which would prompt.
+
+        Called once per search from main_window.on_word_searched, synchronously
+        before the pronunciation grab and the book-sentence fill. Because it runs
+        up front and NOT inside the repeating page-load handlers, the book
+        example filled afterwards survives later same-search Cambridge reloads.
+        """
+        if self.state.altered:
+            return
+        self._reset_editor()
+
     def clear_editor(self):
         if (
             not self.ctrl_held()

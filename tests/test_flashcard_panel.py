@@ -348,6 +348,127 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "touched")
         self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
 
+    # --- prepare_for_new_search (clear before new-search auto-fill) ------
+
+    def test_prepare_clears_stale_senses_then_new_word_fills(self):
+        # An unaltered loaded card is fully cleared before the new word fills it:
+        # the old senses/examples must not linger under the new word.
+        panel, _ = self._panel()
+        card = Card(
+            headword="old",
+            senses=[
+                Sense(pos="n", polish="stary", examples=["old ex"]),
+                Sense(pos="v", polish="drugi"),
+            ],
+        )
+        panel.load_card(card)
+        self.assertFalse(panel.state.altered)
+        panel.prepare_for_new_search()
+        panel.autofill_pronunciation("/nw/", None, "n.mp3", None, word="new")
+        panel.autofill_book_example("A new sentence.")
+        self.assertEqual(panel.headword_input.text(), "new")
+        self.assertEqual(len(panel._rows()), 1)
+        self.assertEqual(panel._rows()[0].polish_input.text(), "")
+        self.assertEqual(panel._rows()[0].examples(), ["A new sentence."])
+        self.assertTrue(panel.state.is_new)
+        self.assertFalse(panel.state.altered)
+        self.assertIsNone(panel.state.loaded_card_id)
+
+    def test_prepare_clears_star_and_own_notation_and_audio(self):
+        panel, _ = self._panel()
+        card = Card(
+            headword="w",
+            starred=True,
+            own_notation="mine",
+            audio_uk_url="u.mp3",
+            senses=[],
+        )
+        panel.load_card(card)
+        panel.prepare_for_new_search()
+        self.assertFalse(panel.star_button.isChecked())
+        self.assertEqual(panel.own_notation_input.text(), "")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertFalse(panel.play_uk_button.isEnabled())
+
+    def test_prepare_on_freshly_saved_card_clears_it(self):
+        # A just-saved (unaltered, editing) card is cleared to a fresh new card;
+        # the saved card itself still exists in the store.
+        panel, store = self._panel()
+        panel.headword_input.setText("book")
+        panel.active_row.polish_input.setText("ksiazka")
+        panel.save_card()
+        self.assertTrue(panel.state.is_editing)
+        panel.prepare_for_new_search()
+        self.assertEqual(panel.headword_input.text(), "")
+        self.assertEqual(len(panel._rows()), 1)
+        self.assertEqual(panel._rows()[0].polish_input.text(), "")
+        self.assertTrue(panel.state.is_new)
+        self.assertIsNone(panel.state.loaded_card_id)
+        self.assertEqual(len(store.cards), 1)  # the saved card is untouched
+
+    def test_book_example_survives_repeated_grabs_after_prepare(self):
+        # Regression guard for the previous broken attempt: the clear happens
+        # once, up front, so later same-search pronunciation grabs do not wipe
+        # the book example.
+        panel, _ = self._panel()
+        panel.prepare_for_new_search()
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.autofill_book_example("She saw the dog run.")
+        self.assertEqual(panel._rows()[0].examples(), ["She saw the dog run."])
+        for _ in range(2):  # same-search Cambridge reloads
+            panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+            self.assertEqual(panel._rows()[0].examples(), ["She saw the dog run."])
+        self.assertEqual(panel.headword_input.text(), "run")
+        self.assertFalse(panel.state.altered)
+
+    def test_prepare_leaves_altered_card_untouched(self):
+        # An altered card is not cleared and never prompts.
+        panel, _ = self._panel()
+        panel.headword_input.setText("editing")  # user edit -> altered
+        panel._rows()[0].polish_input.setText("robie")
+        panel.star_button.setChecked(True)
+        self.assertTrue(panel.state.altered)
+
+        def _tripwire():
+            raise AssertionError("prepare_for_new_search must not prompt")
+
+        panel._confirm_discard = _tripwire
+        panel.prepare_for_new_search()
+        self.assertEqual(panel.headword_input.text(), "editing")
+        self.assertEqual(panel._rows()[0].polish_input.text(), "robie")
+        self.assertTrue(panel.star_button.isChecked())
+        self.assertTrue(panel.state.altered)
+
+    def test_prepare_then_autofills_skip_altered_card(self):
+        # End to end: a search never clobbers in-progress work.
+        panel, _ = self._panel()
+        panel.headword_input.setText("editing")
+        panel._rows()[0].polish_input.setText("robie")
+        self.assertTrue(panel.state.altered)
+        panel.prepare_for_new_search()
+        panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
+        panel.autofill_book_example("ignored")
+        self.assertEqual(panel.headword_input.text(), "editing")
+        self.assertEqual(panel._rows()[0].examples(), [])
+
+    def test_prepare_on_empty_editor_is_harmless(self):
+        panel, _ = self._panel()
+        self.assertTrue(panel.state.is_new)
+        panel.prepare_for_new_search()
+        self.assertEqual(len(panel._rows()), 1)
+        self.assertEqual(panel._rows()[0].examples(), [])
+        self.assertTrue(panel.state.is_new)
+        self.assertFalse(panel.state.altered)
+
+    def test_ctrl_n_seed_path_does_not_use_prepare(self):
+        # Documents that the Ctrl+N seed order (new_card + grab + book example)
+        # is orthogonal to prepare_for_new_search and keeps its book example.
+        panel, _ = self._panel()
+        panel.new_card(force=True)
+        panel.autofill_pronunciation("/aa/", None, "a.mp3", None, word="run")
+        panel.autofill_book_example("seed sentence")
+        self.assertEqual(panel._rows()[0].examples(), ["seed sentence"])
+
     # --- explicit-action prompts ----------------------------------------
 
     def test_new_card_clears_without_setting_headword(self):

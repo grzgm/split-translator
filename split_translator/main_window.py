@@ -182,6 +182,12 @@ class TranslationTool(QMainWindow):
         )
 
     def on_word_searched(self, word: str):
+        # A new search starts a fresh card: clear the editor first (only when the
+        # current card is unaltered; an altered card is left alone) so the word's
+        # pronunciation and the book sentence fill into a blank card, not on top
+        # of the previous word's senses and examples. Runs once per search,
+        # before the repeating page-load grabs.
+        self.flashcard_panel.prepare_for_new_search()
         self.history_panel.add_to_history(word)
         self.book_panel.search(word)
 
