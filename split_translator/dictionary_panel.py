@@ -6,7 +6,11 @@ from urllib.parse import quote
 from PySide6.QtCore import QFile, QIODevice, Qt, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PySide6.QtWebEngineCore import (
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineScript,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication,
@@ -54,6 +58,34 @@ _BLOCK_PRON_JS = r"""
                 audio: audio
             };
         }
+"""
+
+
+# diki plays the searched word's pronunciation clip on load (its Howler.js
+# bundle calls HTMLMediaElement.play() automatically, at document "interactive",
+# with no user gesture), which is unwanted noise on every search. This gate,
+# injected at document creation before diki's own scripts run, blocks play()
+# until the user has interacted with the page. The auto-play fires during load,
+# before any click, so it is suppressed; every speaker-icon click happens after
+# a user gesture, so it still plays. Scoped to the diki view only.
+_DIKI_AUDIO_GATE_JS = r"""
+(function () {
+    var interacted = false;
+    var events = ['pointerdown', 'mousedown', 'click', 'keydown', 'touchstart'];
+    events.forEach(function (ev) {
+        window.addEventListener(ev, function () { interacted = true; }, true);
+    });
+    var origPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+        if (!interacted) {
+            try { this.pause(); } catch (e) {}
+            return Promise.reject(
+                new DOMException('blocked before user gesture', 'NotAllowedError')
+            );
+        }
+        return origPlay.apply(this, arguments);
+    };
+})();
 """
 
 
@@ -137,6 +169,19 @@ class DictionaryPanel(QWidget):
         if text:
             self.selection_capture_requested.emit(field, text)
 
+    def _install_diki_audio_gate(self, view: QWebEngineView) -> None:
+        """Suppress diki's on-load pronunciation clip while keeping the
+        speaker-icon click playback working (see _DIKI_AUDIO_GATE_JS)."""
+        script = QWebEngineScript()
+        script.setName("diki-audio-gate")
+        script.setInjectionPoint(
+            QWebEngineScript.InjectionPoint.DocumentCreation
+        )
+        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        script.setRunsOnSubFrames(False)
+        script.setSourceCode(_DIKI_AUDIO_GATE_JS)
+        view.page().scripts().insert(script)
+
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -172,6 +217,7 @@ class DictionaryPanel(QWidget):
         self.google_meaning_view = self._make_view()
         self.babla_view = self._make_view()
         self.diki_view = self._make_view()
+        self._install_diki_audio_gate(self.diki_view)
         self.google_tabs.addTab(self.google_meaning_view, "Meaning")
         self.google_tabs.addTab(self.babla_view, "bab.la")
         self.google_tabs.addTab(self.diki_view, "diki")
