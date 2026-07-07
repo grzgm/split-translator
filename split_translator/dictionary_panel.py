@@ -427,13 +427,13 @@ class DictionaryPanel(QWidget):
                 holder.className = 'st-capture-holder';
                 holder.style.cssText = 'white-space:nowrap;display:inline-block;';
                 // All three act on the sense currently active in the editor:
-                // "set" replaces its field, "add" appends to it as a
-                // comma-separated item, "+new" starts a fresh sense (replace).
-                holder.appendChild(makeButton('set', 'Set the active sense', function() {
-                    window.captureBridge.capture(text, field, 'current', pos);
-                }));
+                // "add" appends to its field as a comma-separated item, "set"
+                // replaces the field, "+new" starts a fresh sense (replace).
                 holder.appendChild(makeButton('add', 'Append to the active sense', function() {
                     window.captureBridge.capture(text, field, 'append', pos);
+                }));
+                holder.appendChild(makeButton('set', 'Set the active sense', function() {
+                    window.captureBridge.capture(text, field, 'current', pos);
                 }));
                 holder.appendChild(makeButton('+new', 'Add to new sense', function() {
                     window.captureBridge.capture(text, field, 'new', pos);
