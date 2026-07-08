@@ -155,6 +155,12 @@ class DictionaryPanel(QWidget):
         # couples to that page's internal scripting). Lazily built on first use.
         self._player: QMediaPlayer | None = None
         self._audio_output: QAudioOutput | None = None
+        # Armed by search() so the passive auto-grab on the next Cambridge English
+        # load fires only for an app-initiated lookup. A load the user causes by
+        # searching or clicking inside the page leaves this False, so it is not
+        # grabbed. Consumed (cleared) by the first English loadFinished after a
+        # search, whether that load succeeded or not.
+        self._app_search_pending = False
         self.init_ui()
         self._setup_capture_buttons()
 
@@ -560,12 +566,11 @@ class DictionaryPanel(QWidget):
                 self.cambridge_en_view, self._EN_CAPTURE_PAIRS, ok
             )
         )
-        # Once the English page loads, read the headword's grammar (plural-only
-        # marker) and its pronunciation. The pronunciation result is emitted on
-        # every load; the flashcard editor decides whether to use it.
-        self.cambridge_en_view.loadFinished.connect(
-            lambda ok: self._on_english_loaded() if ok else None
-        )
+        # Once the English page loads from an app search, read the headword's
+        # grammar (plural-only marker) and its pronunciation. _on_english_loaded
+        # grabs only for the app's own search load, not a manual in-page one; the
+        # flashcard editor then decides whether to use the result.
+        self.cambridge_en_view.loadFinished.connect(self._on_english_loaded)
         self.cambridge_pl_view.loadFinished.connect(
             lambda ok: self._inject_capture(
                 self.cambridge_pl_view, self._PL_CAPTURE_PAIRS, ok
@@ -587,7 +592,14 @@ class DictionaryPanel(QWidget):
             )
         )
 
-    def _on_english_loaded(self):
+    def _on_english_loaded(self, ok: bool):
+        # Consume the armed flag on every English load, so a load that is not an
+        # app search (or a failed app-search load) never leaks the grab onto the
+        # next, manual load. Grab only when this load was the app's own search.
+        was_app_search = self._app_search_pending
+        self._app_search_pending = False
+        if not (ok and was_app_search):
+            return
         self.grab_grammar()
         self.grab_pronunciation()
 
@@ -619,6 +631,11 @@ class DictionaryPanel(QWidget):
         word = self.search_input.text().strip()
         if not word:
             return
+
+        # Arm the passive auto-grab for the Cambridge English load this search is
+        # about to start. Only this app-initiated load grabs; the user searching
+        # or clicking inside the page afterwards does not.
+        self._app_search_pending = True
 
         encoded_word = quote(word)
 

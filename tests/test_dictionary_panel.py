@@ -117,6 +117,70 @@ class AudioPlaybackTests(unittest.TestCase):
         self.assertEqual(played, [])
 
 
+class AppSearchGrabGateTests(unittest.TestCase):
+    """The passive auto-grab (grammar + pronunciation) must fire only for the
+    Cambridge English load started by the app's own search bar, not for a load
+    the user causes by searching or clicking inside the page."""
+
+    def _panel(self):
+        return DictionaryPanel(QWebEngineProfile.defaultProfile())
+
+    def _spy_grabs(self, panel):
+        calls = []
+        panel.grab_grammar = lambda: calls.append("grammar")
+        panel.grab_pronunciation = lambda: calls.append("pronunciation")
+        return calls
+
+    def test_grab_runs_for_the_app_search_load(self):
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel.search_input.setText("run")
+        panel.search()  # arms the app-search flag
+        panel._on_english_loaded(True)
+        self.assertEqual(calls, ["grammar", "pronunciation"])
+
+    def test_second_load_after_a_search_does_not_grab(self):
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel.search_input.setText("run")
+        panel.search()
+        panel._on_english_loaded(True)  # app search load, grabs
+        calls.clear()
+        panel._on_english_loaded(True)  # manual in-page navigation, must not grab
+        self.assertEqual(calls, [])
+
+    def test_load_without_a_preceding_search_does_not_grab(self):
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel._on_english_loaded(True)  # user typed in Cambridge's own box
+        self.assertEqual(calls, [])
+
+    def test_failed_app_search_load_consumes_the_flag(self):
+        # A failed load (ok=False) still consumes the armed flag, so it does not
+        # leak onto the next, manual load.
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel.search_input.setText("run")
+        panel.search()
+        panel._on_english_loaded(False)  # app search load failed, no grab
+        self.assertEqual(calls, [])
+        panel._on_english_loaded(True)  # next load is manual, must not grab
+        self.assertEqual(calls, [])
+
+    def test_direct_grab_calls_are_unaffected(self):
+        # New-from-word and the toggle path call the grabbers directly; those
+        # never go through the gate.
+        panel = self._panel()
+        pron, gram = [], []
+        panel.pronunciation_grabbed.connect(lambda d: pron.append(d))
+        panel.grammar_grabbed.connect(lambda d: gram.append(d))
+        # No search armed the flag, yet a direct call still emits.
+        panel._on_pronunciation("")
+        panel._on_grammar("")
+        self.assertEqual(len(pron), 1)
+        self.assertEqual(len(gram), 1)
+
+
 class AudioCaptureBridgeTests(unittest.TestCase):
     def test_bridge_captureAudio_emits_region_url_and_ipa(self):
         from split_translator.capture_bridge import CaptureBridge
