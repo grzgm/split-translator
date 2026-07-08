@@ -120,6 +120,13 @@ class AnchorBookView(BookView):
         self._channel.registerObject("anchorBridge", self._bridge)
         self.page().setWebChannel(self._channel)
 
+        # The anchored highlight is often requested before the page has finished
+        # loading (the editor highlights saved anchors at construction, while the
+        # async load is still in flight). window.stSetAnchored is only defined by
+        # the injected _ANCHOR_JS below, so an early set_anchored is a no-op.
+        # Remember the ids and re-apply them once the page (and the helpers) load.
+        self._anchored_ids: list[str] = []
+
         # setHtml (run in BookView.__init__) is async; inject once it has loaded.
         self.page().loadFinished.connect(self._on_load_finished)
 
@@ -128,6 +135,11 @@ class AnchorBookView(BookView):
             return
         js = _ANCHOR_JS.replace("__CHANNEL_JS__", _qwebchannel_js())
         self.page().runJavaScript(js)
+        # Now that stSetAnchored exists, re-apply any anchored ids requested
+        # before the load so they highlight on first open, not only after the
+        # next set_anchored call.
+        if self._anchored_ids:
+            self.set_anchored(self._anchored_ids)
 
     def set_selected(self, block_id: str) -> None:
         self.page().runJavaScript(f"window.stSetSelected({json.dumps(block_id)})")
@@ -135,7 +147,13 @@ class AnchorBookView(BookView):
     def set_jump(self, block_id: str) -> None:
         self.page().runJavaScript(f"window.stSetJump({json.dumps(block_id)})")
 
+    def remember_anchored(self, block_ids: list[str]) -> None:
+        """Record the anchored set without touching the page, so it can be
+        re-applied once the page (and stSetAnchored) have loaded."""
+        self._anchored_ids = list(block_ids)
+
     def set_anchored(self, block_ids: list[str]) -> None:
+        self.remember_anchored(block_ids)
         self.page().runJavaScript(
             f"window.stSetAnchored({json.dumps(json.dumps(block_ids))})"
         )

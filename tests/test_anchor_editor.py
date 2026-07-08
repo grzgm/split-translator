@@ -101,6 +101,29 @@ class AnchorBookViewTests(unittest.TestCase):
         view._bridge.clicked("b3")
         self.assertEqual(received, ["b3"])
 
+    def test_anchored_ids_reapplied_after_load(self):
+        # set_anchored can run before the page has loaded (the editor highlights
+        # at construction, while setHtml is still async). The highlight JS is
+        # only defined once the page loads, so the view must remember the ids and
+        # re-apply them in the load handler, or the anchors never light up until
+        # the next set_anchored call.
+        view = AnchorBookView(_doc(), QWebEngineProfile.defaultProfile())
+        calls = []
+        view.set_anchored = lambda ids: calls.append(list(ids))
+        view.remember_anchored(["b0", "b1"])  # what the editor asks to highlight
+        calls.clear()
+        view._on_load_finished(True)
+        self.assertEqual(calls, [["b0", "b1"]])
+
+    def test_no_reapply_when_load_fails(self):
+        view = AnchorBookView(_doc(), QWebEngineProfile.defaultProfile())
+        calls = []
+        view.set_anchored = lambda ids: calls.append(list(ids))
+        view.remember_anchored(["b0"])
+        calls.clear()
+        view._on_load_finished(False)  # a failed load re-applies nothing
+        self.assertEqual(calls, [])
+
 
 class AnchorEditorSelectionTests(unittest.TestCase):
     def _editor(self):
