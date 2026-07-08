@@ -73,6 +73,19 @@ class AnchorEditorTests(unittest.TestCase):
         editor.refresh()
         self.assertEqual(editor.anchor_list.count(), 1)
 
+    def test_each_find_bar_has_a_search_button(self):
+        # One Search button per edition (alongside Prev / Next), so a search can
+        # be run by button as well as by pressing Enter.
+        from PySide6.QtWidgets import QPushButton
+
+        editor, _ = self._editor()
+        search_buttons = [
+            b
+            for b in editor.findChildren(QPushButton)
+            if b.text() == "Search"
+        ]
+        self.assertEqual(len(search_buttons), 2)
+
 class AnchorClickBridgeTests(unittest.TestCase):
     def test_clicked_emits_block_clicked(self):
         bridge = AnchorClickBridge()
@@ -80,6 +93,84 @@ class AnchorClickBridgeTests(unittest.TestCase):
         bridge.block_clicked.connect(received.append)
         bridge.clicked("b7")
         self.assertEqual(received, ["b7"])
+
+
+from split_translator.anchor_editor import _EditorSearch
+
+
+class _FakeView:
+    """Stands in for an AnchorBookView: records finds and jump highlights, and
+    replays a scripted (active, count) for each find so the helper's counter and
+    stepping logic can be driven without a live page."""
+
+    def __init__(self, script):
+        # script: list of (active, count) tuples, consumed one per find() call.
+        self._script = list(script)
+        self.find_calls = []  # (term, forward)
+        self.jump_calls = []  # block ids passed to set_jump
+        self.block_for_index = {}  # active index -> block id for matched_block_id
+
+    def find(self, term, forward, callback):
+        self.find_calls.append((term, forward))
+        active, count = self._script.pop(0) if self._script else (0, 0)
+        callback(active, count)
+
+    def matched_block_id(self, term, index, callback):
+        callback(self.block_for_index.get(index, ""))
+
+    def set_jump(self, block_id):
+        self.jump_calls.append(block_id)
+
+
+class EditorSearchTests(unittest.TestCase):
+    def _search(self, view):
+        self.labels = []
+        return _EditorSearch(view, self.labels.append)
+
+    def test_search_finds_forward_and_shows_the_counter(self):
+        view = _FakeView([(3, 12)])
+        view.block_for_index = {3: "b5"}
+        search = self._search(view)
+        search.search("word")
+        self.assertEqual(view.find_calls, [("word", True)])
+        self.assertEqual(self.labels[-1], "3 / 12")
+        self.assertEqual(view.jump_calls[-1], "b5")  # match block highlighted
+
+    def test_empty_term_clears_the_jump_and_label(self):
+        view = _FakeView([(3, 12)])
+        view.block_for_index = {3: "b5"}
+        search = self._search(view)
+        search.search("word")
+        view.jump_calls.clear()
+        search.search("   ")  # blank
+        self.assertEqual(view.find_calls, [("word", True)])  # no new find
+        self.assertEqual(view.jump_calls, [""])  # jump cleared
+        self.assertEqual(self.labels[-1], "")
+
+    def test_no_matches_reports_and_clears_jump(self):
+        view = _FakeView([(0, 0)])
+        search = self._search(view)
+        search.search("zzz")
+        self.assertEqual(self.labels[-1], "No matches")
+        self.assertEqual(view.jump_calls[-1], "")
+
+    def test_next_and_prev_step_the_active_term(self):
+        view = _FakeView([(1, 3), (2, 3), (1, 3)])
+        search = self._search(view)
+        search.search("a")  # find #1, forward
+        search.next()  # find #2, forward
+        search.prev()  # find #3, backward
+        self.assertEqual(
+            view.find_calls,
+            [("a", True), ("a", True), ("a", False)],
+        )
+
+    def test_step_without_a_term_does_nothing(self):
+        view = _FakeView([])
+        search = self._search(view)
+        search.next()  # nothing searched yet
+        search.prev()
+        self.assertEqual(view.find_calls, [])
 
 
 from split_translator.anchor_book_view import AnchorBookView

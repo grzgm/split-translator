@@ -7,6 +7,8 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -22,6 +24,58 @@ from .book_sync import BookSync
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
 _TRANSLATION_ID_ROLE = 257  # Qt.UserRole + 1
+
+
+class _EditorSearch:
+    """Drives one editor view's find bar. Independent per side: it owns the
+    current term and match position for its own view and never touches the other.
+
+    Numbers come from Chromium's own activeMatch/numberOfMatches (like the
+    reader's BookPanel), so the counter is the match's absolute position and
+    cannot disagree with the highlighted block. A hit is highlighted with the
+    same dashed jump outline the anchor-list click uses; a miss (or a cleared
+    box) clears it."""
+
+    def __init__(self, view, on_label):
+        self._view = view
+        self._on_label = on_label
+        self._term = ""
+        self._count = 0
+        self._current = 0
+
+    def search(self, term: str) -> None:
+        self._term = term.strip()
+        if not self._term:
+            # Clearing the box clears this side's match highlight and counter.
+            self._count = 0
+            self._current = 0
+            self._view.set_jump("")
+            self._on_label("")
+            return
+        self._current = 0
+        self._view.find(self._term, True, self._on_result)
+
+    def next(self) -> None:
+        if self._term:
+            self._view.find(self._term, True, self._on_result)
+
+    def prev(self) -> None:
+        if self._term:
+            self._view.find(self._term, False, self._on_result)
+
+    def _on_result(self, active: int, count: int) -> None:
+        self._count = count
+        self._current = active if count else 0
+        if not count:
+            self._on_label("No matches")
+            self._view.set_jump("")
+            return
+        self._on_label(f"{self._current} / {self._count}")
+        # Highlight the block holding the active match, located by its 1-based
+        # index (not the scroll), matching the reader's approach.
+        self._view.matched_block_id(
+            self._term, self._current, self._view.set_jump
+        )
 
 
 class AnchorEditor(QWidget):
@@ -112,8 +166,29 @@ class AnchorEditor(QWidget):
         self.translation_view.scrolled.connect(
             lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
         )
-        views.addWidget(self.original_view)
-        views.addWidget(self.translation_view)
+        # Each edition gets its own find bar above it. The two are independent:
+        # one searches the original, the other the translation.
+        self.original_search = _EditorSearch(
+            self.original_view, self._set_original_match_label
+        )
+        self.translation_search = _EditorSearch(
+            self.translation_view, self._set_translation_match_label
+        )
+        # Equal stretch so the two columns split the width evenly.
+        views.addWidget(
+            self._make_search_column(
+                self.original_view, self.original_search, "Find in original"
+            ),
+            1,
+        )
+        views.addWidget(
+            self._make_search_column(
+                self.translation_view,
+                self.translation_search,
+                "Find in translation",
+            ),
+            1,
+        )
         splitter.addWidget(views_container)
 
         # The controls stay attached to the list so they are not squashed when
@@ -150,6 +225,52 @@ class AnchorEditor(QWidget):
         splitter.setSizes([640, 160])
 
         layout.addWidget(splitter)
+
+    def _make_search_column(self, view, search, placeholder: str) -> QWidget:
+        """Build a column: a find bar (box, Search, Prev, Next, match counter)
+        above the given view. The bar drives `search`, which searches only
+        `view`. The view takes all the vertical space so it stays large on a
+        tall screen; the bar keeps its natural height."""
+        column = QWidget()
+        column_layout = QVBoxLayout(column)
+        column_layout.setContentsMargins(0, 0, 0, 0)
+
+        bar = QHBoxLayout()
+        box = QLineEdit()
+        box.setPlaceholderText(placeholder)
+        box.returnPressed.connect(lambda: search.search(box.text()))
+        search_button = QPushButton("Search")
+        search_button.clicked.connect(lambda: search.search(box.text()))
+        prev_button = QPushButton("Prev")
+        prev_button.clicked.connect(search.prev)
+        next_button = QPushButton("Next")
+        next_button.clicked.connect(search.next)
+        label = QLabel("")
+        # The box takes the horizontal slack; the buttons and counter stay at
+        # their natural width so the bar does not sprawl on a wide screen.
+        bar.addWidget(box, 1)
+        bar.addWidget(search_button)
+        bar.addWidget(prev_button)
+        bar.addWidget(next_button)
+        bar.addWidget(label)
+        # Stretch 0 for the bar (natural height), 1 for the view (all the rest),
+        # so on a 4K screen the book view grows instead of leaving empty space
+        # around the controls.
+        column_layout.addLayout(bar, 0)
+        column_layout.addWidget(view, 1)
+
+        # The label setter (passed into _EditorSearch) writes here.
+        if view is self.original_view:
+            self._original_match_label = label
+        else:
+            self._translation_match_label = label
+        return column
+
+    def _set_original_match_label(self, text: str) -> None:
+        self._original_match_label.setText(text)
+
+    def _set_translation_match_label(self, text: str) -> None:
+        self._translation_match_label.setText(text)
 
     def toggle_sync(self, state) -> None:
         self.sync_enabled = state == Qt.CheckState.Checked.value
