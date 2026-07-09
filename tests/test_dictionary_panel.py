@@ -106,6 +106,36 @@ class HeadwordSearchTests(unittest.TestCase):
         self.assertEqual(searches, ["address"])
         self.assertTrue(panel._app_search_pending)
 
+    def _search_button(self, panel):
+        # The Search button is a local in init_ui, not stored on the panel; find
+        # it by its label so the test drives its real clicked() wiring.
+        from PySide6.QtWidgets import QPushButton
+
+        for button in panel.findChildren(QPushButton):
+            if button.text() == "Search":
+                return button
+        self.fail("Search button not found")
+
+    def test_search_button_click_emits_word_searched(self):
+        # Regression: QPushButton.clicked emits a `checked` bool. If the button is
+        # bound straight to search(), that bool lands on emit_searched=False and
+        # the lookup silently records no history and drives no book search. The
+        # button must emit word_searched exactly like pressing Enter.
+        panel = self._panel()
+        searches = []
+        panel.word_searched.connect(searches.append)
+        panel.search_input.setText("address")
+        self._search_button(panel).click()
+        self.assertEqual(searches, ["address"])
+
+    def test_return_pressed_emits_word_searched(self):
+        panel = self._panel()
+        searches = []
+        panel.word_searched.connect(searches.append)
+        panel.search_input.setText("address")
+        panel.search_input.returnPressed.emit()
+        self.assertEqual(searches, ["address"])
+
 
 class AudioPlaybackTests(unittest.TestCase):
     def _panel(self):

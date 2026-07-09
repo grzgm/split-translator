@@ -197,9 +197,14 @@ class DictionaryPanel(QWidget):
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Enter word to translate...")
-        self.search_input.returnPressed.connect(self.search)
+        # Both trigger a normal search. Wrap them so no signal argument reaches
+        # search(): QPushButton.clicked emits a `checked` bool, and binding it to
+        # search() positionally would land on emit_searched=False, silently
+        # skipping the history add and the book search. returnPressed carries no
+        # argument, but is wrapped too so the two paths call search identically.
+        self.search_input.returnPressed.connect(lambda: self.search())
         search_button = QPushButton("Search")
-        search_button.clicked.connect(self.search)
+        search_button.clicked.connect(lambda: self.search())
         correction_button = QPushButton("Get Correction")
         correction_button.clicked.connect(self.get_correction)
         search_layout.addWidget(self.search_input)
