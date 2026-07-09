@@ -133,6 +133,7 @@ class DictionaryPanel(QWidget):
     pronunciation_grabbed = Signal(object)
     grammar_grabbed = Signal(object)  # {"plural": bool} from the Cambridge page
     correction_applied = Signal(str, str)  # wrong word, corrected word
+    correction_unavailable = Signal(str)  # searched word with no correction found
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
     # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
     sense_capture_requested = Signal(str, str, str, str)
@@ -668,28 +669,70 @@ class DictionaryPanel(QWidget):
         self.word_searched.emit(word)
 
     def get_correction(self):
-        """Read Google's 'Did you mean' spelling correction and re-search with it."""
+        """Read Google's spelling correction and re-search with it.
+
+        Google no longer serves the old "Did you mean" `spell=1` link for these
+        searches; it now shows a "Showing results for <correction>" block (in
+        Polish "W tym wyniki dla <correction>") whose first link points at the
+        corrected query and bolds the corrected word. The "Search only for
+        <original>" link in the same block carries `nirf=`/`nfpr=` and must be
+        skipped (its text is the misspelling, not the correction). We read the
+        correction from that block and keep the legacy `spell=1` link as a
+        fallback. Returns a JSON string {"word": <correction or "">} so an
+        empty result can be told apart from a dropped bare object (runJavaScript
+        turns a bare object into an empty string; see the module conventions)."""
         js_code = r"""
         (function() {
-            const link = document.querySelector('a[href*="spell=1"]');
-            if (!link) return null;
+            function clean(text) {
+                return (text || '').trim().replace(/\s+/g, ' ')
+                    .replace(/\s+meaning$/i, '').trim();
+            }
 
-            const fullText = link.textContent.trim().replace(/\s+/g, ' ');
+            // Legacy: classic "Did you mean" correction link.
+            var legacy = document.querySelector('a[href*="spell=1"]');
+            if (legacy) {
+                var word = clean(legacy.textContent);
+                if (word) return JSON.stringify({ word: word });
+            }
 
-            // Remove the trailing "meaning" added by the app.
-            return fullText.replace(/\s+meaning$/i, '');
+            // Current markup: the correction is the block's link that points at
+            // the corrected query. The "search only for <original>" link in the
+            // same block carries nirf=/nfpr=, so skip those. Prefer the bolded
+            // corrected term inside the link.
+            var links = document.querySelectorAll('a[href*="/search?"]');
+            for (var i = 0; i < links.length; i++) {
+                var a = links[i];
+                var href = a.getAttribute('href') || '';
+                if (href.indexOf('nirf=') !== -1 || href.indexOf('nfpr=') !== -1) {
+                    continue;
+                }
+                if (!/[?&]q=/.test(href)) continue;
+                if (!/meaning$/i.test((a.textContent || '').trim())) continue;
+                var bold = a.querySelector('b, i');
+                var word = clean(bold ? bold.textContent : a.textContent);
+                if (word) return JSON.stringify({ word: word });
+            }
+
+            return JSON.stringify({ word: '' });
         })();
         """
         self.google_meaning_view.page().runJavaScript(js_code, self._handle_correction)
 
     def _handle_correction(self, result):
-        if not result:
-            return
-        corrected = result.replace(" meaning", "").strip()
-        if not corrected:
+        wrong = self.search_input.text().strip()
+        corrected = ""
+        if result:
+            try:
+                corrected = (json.loads(result).get("word") or "").strip()
+            except (ValueError, TypeError):
+                corrected = ""
+        if not corrected or corrected == wrong:
+            # No correction on the page (or the meaning view hit an anti-bot
+            # wall, which returns nothing to scrape). Tell the user rather than
+            # silently doing nothing.
+            self.correction_unavailable.emit(wrong)
             return
         # The word that was wrong is whatever is in the box before we re-search.
-        wrong = self.search_input.text().strip()
         if wrong and wrong != corrected:
             # Let the owner drop the misspelled history entry; the re-search
             # below adds the corrected word as a normal lookup.

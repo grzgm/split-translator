@@ -144,6 +144,9 @@ class TranslationTool(QMainWindow):
         self.dictionary_panel.correction_applied.connect(
             lambda wrong, corrected: self.history_panel.remove_word(wrong)
         )
+        self.dictionary_panel.correction_unavailable.connect(
+            self.show_correction_unavailable
+        )
 
         # Flashcard editor wiring. A Ctrl+click on the button skips the discard
         # confirmation; the Ctrl+N shortcut keeps the confirmation (Ctrl is part
@@ -198,6 +201,17 @@ class TranslationTool(QMainWindow):
         self.statusBar().showMessage(
             f'"{word}" was previously searched on {formatted_date}', 0
         )
+
+    def show_correction_unavailable(self, word: str):
+        # Get Correction found nothing to apply (no spelling suggestion on the
+        # Google meaning page, or the page hit an anti-bot wall). Say so instead
+        # of failing silently. Clear any lingering "previous search" style first.
+        self.statusBar().setStyleSheet("")
+        if word:
+            message = f'No spelling correction found for "{word}"'
+        else:
+            message = "No word to correct"
+        self.statusBar().showMessage(message, 4000)
 
     def _resolve_handler(self, handler: str):
         # Resolve a registry handler name to the bound method it names, walking

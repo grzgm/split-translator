@@ -17,37 +17,61 @@ class CorrectionTests(unittest.TestCase):
         return DictionaryPanel(QWebEngineProfile.defaultProfile())
 
     def _collect(self, panel):
-        corrections, searches = [], []
+        corrections, searches, unavailable = [], [], []
         panel.correction_applied.connect(
             lambda w, c: corrections.append((w, c))
         )
         panel.word_searched.connect(lambda w: searches.append(w))
-        return corrections, searches
+        panel.correction_unavailable.connect(lambda w: unavailable.append(w))
+        return corrections, searches, unavailable
 
     def test_correction_emits_wrong_and_corrected(self):
+        # _handle_correction takes the JSON string the injected JS returns
+        # ({"word": <correction>}); runJavaScript drops a bare object, so the
+        # correction is carried as a JSON string (see the module conventions).
         panel = self._panel()
-        corrections, searches = self._collect(panel)
+        corrections, searches, unavailable = self._collect(panel)
         panel.search_input.setText("recieve")
-        panel._handle_correction("receive meaning")
+        panel._handle_correction(json.dumps({"word": "receive"}))
         self.assertEqual(corrections, [("recieve", "receive")])
         self.assertEqual(searches, ["receive"])
+        self.assertEqual(unavailable, [])
         self.assertEqual(panel.search_input.text(), "receive")
 
-    def test_no_emit_when_correction_equals_current_word(self):
+    def test_unavailable_when_correction_equals_current_word(self):
+        # The page's correction is the word already in the box, so there is
+        # nothing to correct: no re-search, report it as unavailable.
         panel = self._panel()
-        corrections, searches = self._collect(panel)
+        corrections, searches, unavailable = self._collect(panel)
         panel.search_input.setText("receive")
-        panel._handle_correction("receive meaning")
-        self.assertEqual(corrections, [])  # nothing to correct
-        self.assertEqual(searches, ["receive"])
-
-    def test_no_action_when_no_correction_found(self):
-        panel = self._panel()
-        corrections, searches = self._collect(panel)
-        panel.search_input.setText("recieve")
-        panel._handle_correction(None)
+        panel._handle_correction(json.dumps({"word": "receive"}))
         self.assertEqual(corrections, [])
         self.assertEqual(searches, [])
+        self.assertEqual(unavailable, ["receive"])
+
+    def test_unavailable_when_no_correction_on_page(self):
+        # An empty word (the "Showing results for" block was absent, e.g. the
+        # meaning page hit an anti-bot wall) reports unavailable and re-searches
+        # nothing.
+        panel = self._panel()
+        corrections, searches, unavailable = self._collect(panel)
+        panel.search_input.setText("recieve")
+        panel._handle_correction(json.dumps({"word": ""}))
+        self.assertEqual(corrections, [])
+        self.assertEqual(searches, [])
+        self.assertEqual(unavailable, ["recieve"])
+
+    def test_unavailable_when_result_is_none_or_malformed(self):
+        # runJavaScript can hand back None (nothing returned) or non-JSON; both
+        # are treated as no correction.
+        panel = self._panel()
+        corrections, searches, unavailable = self._collect(panel)
+        panel.search_input.setText("recieve")
+        panel._handle_correction(None)
+        panel._handle_correction("not json")
+        self.assertEqual(corrections, [])
+        self.assertEqual(searches, [])
+        self.assertEqual(unavailable, ["recieve", "recieve"])
 
 
 class AudioPlaybackTests(unittest.TestCase):
