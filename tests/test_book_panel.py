@@ -615,6 +615,96 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             self.assertEqual(marks["trans"], [None])
 
 
+class BookPanelForceOriginalSearchTests(unittest.TestCase):
+    """The reader searches the Original edition only. A search, Next or Prev
+    started while the Translation tab is showing switches to Original and finds
+    there; the Translation view is never a find target."""
+
+    def _panel(self, cfg, profile):
+        panel = BookPanel(cfg, profile)
+        self.addCleanup(panel.anchor_store.shutdown)
+        self.addCleanup(panel.anchor_store.filepath.unlink, missing_ok=True)
+        return panel
+
+    def _stub_finds(self, panel):
+        # Record which view find() runs on (and the forward flag), without
+        # running the real page JS. Also stub marking so no page read follows.
+        finds = {"orig": [], "trans": []}
+        panel.original_view.find = (
+            lambda term, forward, cb: finds["orig"].append((term, forward))
+        )
+        panel.translation_view.find = (
+            lambda term, forward, cb: finds["trans"].append((term, forward))
+        )
+        panel.original_view.matched_block_id = lambda term, index, cb: cb("")
+        panel.original_view.mark_search_block = lambda bid: None
+        panel.translation_view.mark_search_block = lambda bid: None
+        panel.original_view.clear_search_mark = lambda: None
+        panel.translation_view.clear_search_mark = lambda: None
+        return finds
+
+    def test_search_from_translation_tab_switches_to_original_and_finds_there(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            panel.tabs.setCurrentIndex(1)  # Translation showing
+            finds = self._stub_finds(panel)
+            panel.search("needle")
+            self.assertEqual(panel.tabs.currentIndex(), 0)  # switched to Original
+            self.assertEqual(finds["orig"], [("needle", True)])
+            self.assertEqual(finds["trans"], [])  # never searches Translation
+
+    def test_search_from_original_tab_stays_and_finds_on_original(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            finds = self._stub_finds(panel)  # Original is the default tab
+            panel.search("needle")
+            self.assertEqual(panel.tabs.currentIndex(), 0)
+            self.assertEqual(finds["orig"], [("needle", True)])
+            self.assertEqual(finds["trans"], [])
+
+    def test_next_from_translation_tab_switches_and_finds_forward_on_original(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            finds = self._stub_finds(panel)
+            panel.search_term = "needle"
+            panel.match_count = 3  # a prior search found matches
+            panel.tabs.setCurrentIndex(1)  # user then read the Translation
+            finds["orig"].clear()  # ignore the search above
+            panel.go_to_next()
+            self.assertEqual(panel.tabs.currentIndex(), 0)
+            self.assertEqual(finds["orig"], [("needle", True)])
+            self.assertEqual(finds["trans"], [])
+
+    def test_prev_from_translation_tab_switches_and_finds_backward_on_original(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            finds = self._stub_finds(panel)
+            panel.search_term = "needle"
+            panel.match_count = 3
+            panel.tabs.setCurrentIndex(1)
+            finds["orig"].clear()
+            panel.go_to_previous()
+            self.assertEqual(panel.tabs.currentIndex(), 0)
+            self.assertEqual(finds["orig"], [("needle", False)])
+            self.assertEqual(finds["trans"], [])
+
+    def test_next_with_no_matches_does_not_switch_or_find(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            finds = self._stub_finds(panel)
+            panel.match_count = 0  # nothing found yet
+            panel.tabs.setCurrentIndex(1)
+            panel.go_to_next()
+            self.assertEqual(panel.tabs.currentIndex(), 1)  # stayed put
+            self.assertEqual(finds["orig"], [])
+            self.assertEqual(finds["trans"], [])
+
+
 class BookPanelEditorTests(unittest.TestCase):
     def test_open_anchor_editor_is_callable_and_reseeds_sync(self):
         with tempfile.TemporaryDirectory() as d:

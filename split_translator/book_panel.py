@@ -246,6 +246,15 @@ class BookPanel(QFrame):
         else:
             self.match_label.setText(f"{self.current_match} / {self.match_count}")
 
+    def _ensure_original_tab(self) -> None:
+        # The reader searches the Original edition only, so every find runs
+        # against original_view. If the Translation tab is showing, switch to
+        # Original first so the highlighted match the user steps through is on
+        # the tab they are looking at. (The Translation edition is still fully
+        # readable; it just is not the search target.)
+        if self.tabs.currentIndex() != 0:
+            self.tabs.setCurrentIndex(0)
+
     def search(self, term: str) -> None:
         self.search_term = term.strip()
         if not self.search_term:
@@ -254,7 +263,8 @@ class BookPanel(QFrame):
             self.translation_view.clear_search_mark()
             return
         self.current_match = 0
-        self.current_view().find(self.search_term, True, self._on_find_result)
+        self._ensure_original_tab()
+        self.original_view.find(self.search_term, True, self._on_find_result)
 
     def _on_find_result(self, active: int, count: int) -> None:
         # Single landing point for every find (initial search and Next/Prev). The
@@ -267,22 +277,23 @@ class BookPanel(QFrame):
         self.next_button.setEnabled(count > 0)
         self.update_match_label()
         self._mark_current_match(active, count)
-        # Auto-fill the flashcard's first example from the book, but only for a
-        # match on the Original edition (no cross-edition fuzzing): read the
+        # Auto-fill the flashcard's first example from the book. Search always
+        # runs on the Original edition (no cross-edition fuzzing), so read the
         # sentence around the active match and re-emit it. The flashcard side
         # decides whether to use it (only while its card is unaltered).
-        if count and self.current_view() is self.original_view:
+        if count:
             self.original_view.match_sentence(
                 self.search_term, active, self.book_sentence_matched.emit
             )
 
     def current_match_sentence(self, callback) -> None:
         """Extract the sentence around the CURRENT match on demand and pass it to
-        callback(str). Same Original-only gate as _on_find_result: yields the
-        sentence only for a match on the Original edition; on the Translation tab
-        or with no current match it calls back with "" (no cross-edition
-        fuzzing). Used by the Ctrl+T contextual-translation prompt."""
-        if self.current_match and self.current_view() is self.original_view:
+        callback(str). Search always runs on the Original edition, so the current
+        match is always an Original one; yields its sentence, or "" when there is
+        no current match. Used by the Ctrl+T contextual-translation prompt. The
+        active tab is not consulted: the user may have switched to Translation to
+        read after searching, but the match still belongs to the Original."""
+        if self.current_match:
             self.original_view.match_sentence(
                 self.search_term, self.current_match, callback
             )
@@ -292,26 +303,27 @@ class BookPanel(QFrame):
     def go_to_next(self) -> None:
         if not self.match_count:
             return
-        self.current_view().find(self.search_term, True, self._on_find_result)
+        self._ensure_original_tab()
+        self.original_view.find(self.search_term, True, self._on_find_result)
 
     def go_to_previous(self) -> None:
         if not self.match_count:
             return
-        self.current_view().find(self.search_term, False, self._on_find_result)
+        self._ensure_original_tab()
+        self.original_view.find(self.search_term, False, self._on_find_result)
 
     def _mark_current_match(self, active: int, count: int) -> None:
-        # Highlight the section holding the active match in the active edition,
-        # and the anchor-equivalent section in the other edition. With no match
-        # (or a blank term) clear both marks. The block is located from `active`
-        # (the find's 1-based match index), not the scroll position, so a
-        # wrap-around to the first match marks the right block even though the
-        # findText callback can fire before the scroll has moved.
-        view = self.current_view()
-        other = (
-            self.translation_view
-            if view is self.original_view
-            else self.original_view
-        )
+        # Highlight the section holding the active match, and the anchor-
+        # equivalent section in the other edition. Search always runs on the
+        # Original edition, so the active match is always an Original one: mark
+        # original_view and mirror onto translation_view, without inferring the
+        # side from the active tab. With no match (or a blank term) clear both
+        # marks. The block is located from `active` (the find's 1-based match
+        # index), not the scroll position, so a wrap-around to the first match
+        # marks the right block even though the findText callback can fire before
+        # the scroll has moved.
+        view = self.original_view
+        other = self.translation_view
         if not count or not active or not self.search_term:
             view.clear_search_mark()
             other.clear_search_mark()
