@@ -74,6 +74,39 @@ class CorrectionTests(unittest.TestCase):
         self.assertEqual(unavailable, ["recieve", "recieve"])
 
 
+class HeadwordSearchTests(unittest.TestCase):
+    """A flashcard-selection lookup runs the search but records no history and
+    does not arm the passive Cambridge auto-grab (which would overwrite the
+    just-loaded card)."""
+
+    def _panel(self):
+        return DictionaryPanel(QWebEngineProfile.defaultProfile())
+
+    def test_search_headword_does_not_emit_word_searched(self):
+        panel = self._panel()
+        searches = []
+        panel.word_searched.connect(searches.append)
+        panel.search_headword("address")
+        # The box is filled so a following normal search would work, but no
+        # word_searched fires (so the main window adds no history entry).
+        self.assertEqual(panel.search_input.text(), "address")
+        self.assertEqual(searches, [])
+
+    def test_search_headword_does_not_arm_the_grab(self):
+        panel = self._panel()
+        panel.search_headword("address")
+        self.assertFalse(panel._app_search_pending)
+
+    def test_normal_search_still_emits_and_arms(self):
+        panel = self._panel()
+        searches = []
+        panel.word_searched.connect(searches.append)
+        panel.search_input.setText("address")
+        panel.search()
+        self.assertEqual(searches, ["address"])
+        self.assertTrue(panel._app_search_pending)
+
+
 class AudioPlaybackTests(unittest.TestCase):
     def _panel(self):
         return DictionaryPanel(QWebEngineProfile.defaultProfile())

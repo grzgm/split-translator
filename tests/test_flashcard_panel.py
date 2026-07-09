@@ -827,6 +827,27 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertFalse(panel.load_card(store.cards[1]))
         self.assertEqual(asked, [True])
 
+    # --- card_loaded signal (drives the no-history dictionary lookup) ----
+
+    def test_load_emits_card_loaded_with_headword(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        loaded = []
+        panel.card_loaded.connect(loaded.append)
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertEqual(loaded, ["address"])
+
+    def test_declined_load_does_not_emit_card_loaded(self):
+        panel, store = self._panel()
+        self._seed(panel, store)
+        panel.headword_input.setText("inprogress")
+        panel.ctrl_held = lambda: False
+        panel._confirm_discard = lambda: False
+        loaded = []
+        panel.card_loaded.connect(loaded.append)
+        self.assertFalse(panel.load_card(store.cards[0]))
+        self.assertEqual(loaded, [])
+
     # --- editor / saved-list splitter -----------------------------------
 
     def test_editor_splitter_holds_scroll_then_list(self):

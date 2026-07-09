@@ -177,6 +177,10 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel.save_rejected.connect(
             lambda message: self.statusBar().showMessage(message, 4000)
         )
+        # Selecting a flashcard (saved-list click or graph activation) looks its
+        # headword up in the dictionary and the book, but records no history and
+        # leaves the loaded card untouched.
+        self.flashcard_panel.card_loaded.connect(self.on_flashcard_loaded)
         # A book match on the Original edition auto-fills the flashcard's first
         # example with the sentence around the match (only while the dock is
         # open and the card is unaltered).
@@ -192,6 +196,18 @@ class TranslationTool(QMainWindow):
         # before the repeating page-load grabs.
         self.flashcard_panel.prepare_for_new_search()
         self.history_panel.add_to_history(word)
+        self.book_panel.search(word)
+
+    def on_flashcard_loaded(self, headword: str):
+        # A flashcard was selected and loaded into the editor. Look its headword
+        # up in the dictionary and drive the book search, but skip the history
+        # add and the editor reset that on_word_searched does: the card was just
+        # loaded and must stay put. search_headword also disarms the passive
+        # auto-grab so the Cambridge load cannot overwrite the loaded card.
+        word = (headword or "").strip()
+        if not word:
+            return
+        self.dictionary_panel.search_headword(word)
         self.book_panel.search(word)
 
     def show_previous_search_notice(self, word: str, formatted_date: str):

@@ -272,6 +272,7 @@ class FlashcardPanel(QWidget):
 
     card_saved = Signal(str)
     save_rejected = Signal(str)
+    card_loaded = Signal(str)  # headword of a card just loaded into the editor
 
     _STAR_EMPTY = "Star"
     _STAR_SET = "Starred"
@@ -946,6 +947,9 @@ class FlashcardPanel(QWidget):
         self.state.to_editing(card.id, card.created_at or None)
         self._apply_state_to_ui()
         self._refresh_saved_list()
+        # Announce the load so the main window can look the headword up in the
+        # dictionary (without touching history); a no-op if nothing listens.
+        self.card_loaded.emit(card.headword)
         return True
 
     def _confirm_discard(self) -> bool:

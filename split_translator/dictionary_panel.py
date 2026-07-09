@@ -628,15 +628,29 @@ class DictionaryPanel(QWidget):
         self.search_input.setText(word)
         self.search()
 
-    def search(self):
+    def search_headword(self, word: str):
+        """Run a lookup for a word without recording history or auto-grabbing.
+
+        Used when a flashcard is selected: the dictionary panes update to the
+        card's headword, but the search must not add a history entry and must
+        not let the passive Cambridge auto-grab overwrite the just-loaded card
+        (which is still unaltered). word_searched is not emitted, so the main
+        window drives only the book search, not the history add or the editor
+        reset."""
+        self.search_input.setText(word)
+        self.search(emit_searched=False, arm_grab=False)
+
+    def search(self, emit_searched: bool = True, arm_grab: bool = True):
         word = self.search_input.text().strip()
         if not word:
             return
 
         # Arm the passive auto-grab for the Cambridge English load this search is
         # about to start. Only this app-initiated load grabs; the user searching
-        # or clicking inside the page afterwards does not.
-        self._app_search_pending = True
+        # or clicking inside the page afterwards does not. A flashcard-selection
+        # search leaves it disarmed so it cannot overwrite the loaded card.
+        if arm_grab:
+            self._app_search_pending = True
 
         encoded_word = quote(word)
 
@@ -666,7 +680,8 @@ class DictionaryPanel(QWidget):
         )
         self.google_translate_search.setUrl(QUrl(google_translate_url))
 
-        self.word_searched.emit(word)
+        if emit_searched:
+            self.word_searched.emit(word)
 
     def get_correction(self):
         """Read Google's spelling correction and re-search with it.
