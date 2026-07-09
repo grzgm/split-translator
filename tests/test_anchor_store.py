@@ -195,3 +195,64 @@ class AnchorStoreTests(unittest.TestCase):
             store.get_scroll(READER_SURFACE), (("b3", 0.25), ("b7", 0.5))
         )
         self.assertEqual(store.get_scroll(EDITOR_SURFACE), (None, None))
+
+    # --- paragraph-normalisation flag (per surface, default ON) ----------
+
+    def test_normalise_defaults_to_on_for_both_surfaces(self):
+        store = self._store()
+        self.assertTrue(store.get_normalise(READER_SURFACE))
+        self.assertTrue(store.get_normalise(EDITOR_SURFACE))
+
+    def test_set_normalise_then_reload_round_trips(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.set_normalise(READER_SURFACE, False)
+        store.shutdown()
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertFalse(reloaded.get_normalise(READER_SURFACE))
+
+    def test_reader_and_editor_normalise_are_independent(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.set_normalise(READER_SURFACE, False)
+        store.set_normalise(EDITOR_SURFACE, True)
+        store.shutdown()
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertFalse(reloaded.get_normalise(READER_SURFACE))
+        self.assertTrue(reloaded.get_normalise(EDITOR_SURFACE))
+
+    def test_set_normalise_keeps_existing_anchors(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(path)
+        store.add("b3", "b5")
+        store.set_normalise(READER_SURFACE, False)
+        store.shutdown()
+        reloaded = AnchorStore(path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(reloaded.anchors, [("b3", "b5")])
+        self.assertFalse(reloaded.get_normalise(READER_SURFACE))
+
+    def test_old_file_without_normalise_defaults_on(self):
+        # A file written before this feature has no "normalise" block; both
+        # surfaces must then report the default (ON).
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        path.write_text('{"version": 1, "anchors": []}', encoding="utf-8")
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        self.assertTrue(store.get_normalise(READER_SURFACE))
+        self.assertTrue(store.get_normalise(EDITOR_SURFACE))
+
+    def test_get_normalise_honours_an_explicit_default(self):
+        # A caller may pass default=False; an unset surface then reports False.
+        store = self._store()
+        self.assertFalse(store.get_normalise(READER_SURFACE, default=False))

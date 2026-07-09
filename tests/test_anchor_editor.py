@@ -86,6 +86,34 @@ class AnchorEditorTests(unittest.TestCase):
         ]
         self.assertEqual(len(search_buttons), 2)
 
+    def test_normalise_checkbox_defaults_on(self):
+        editor, _ = self._editor()
+        self.assertTrue(editor.normalise_checkbox.isChecked())
+        self.assertTrue(editor._normalise)
+
+    def test_toggle_normalise_sets_both_views_and_persists(self):
+        editor, store = self._editor()
+        seen = {"orig": [], "trans": []}
+        editor.original_view.set_normalise = lambda v: seen["orig"].append(v)
+        editor.translation_view.set_normalise = lambda v: seen["trans"].append(v)
+        editor.normalise_checkbox.setChecked(False)
+        self.assertFalse(editor._normalise)
+        self.assertEqual(seen["orig"], [False])
+        self.assertEqual(seen["trans"], [False])
+        from split_translator.anchor_store import EDITOR_SURFACE
+
+        self.assertFalse(store.get_normalise(EDITOR_SURFACE))
+
+    def test_editor_normalise_is_independent_of_reader(self):
+        # Toggling the editor's flag off must not change the reader-surface flag.
+        editor, store = self._editor()
+        from split_translator.anchor_store import EDITOR_SURFACE, READER_SURFACE
+
+        editor.normalise_checkbox.setChecked(False)
+        self.assertFalse(store.get_normalise(EDITOR_SURFACE))
+        self.assertTrue(store.get_normalise(READER_SURFACE))  # untouched default
+
+
 class AnchorClickBridgeTests(unittest.TestCase):
     def test_clicked_emits_block_clicked(self):
         bridge = AnchorClickBridge()

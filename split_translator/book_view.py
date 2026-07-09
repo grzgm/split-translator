@@ -93,6 +93,66 @@ _SEARCH_STYLE_JS = """
 })();
 """
 
+# The paragraph-spacing normalisation rules, applied when the Normalise toggle is
+# on. The app strips each book's own stylesheet (see book_loader), so a book
+# falls back to the browser's default sheet, where <p> carries a 1em block margin
+# but <div> carries none. Books built with <p> paragraphs (and empty <p>&nbsp;</p>
+# spacers) then look far roomier than <div>-paragraph books whose stripped-CSS
+# spacer <div>s collapse to nothing. These rules re-level that for ANY book: zero
+# every block's default margin, give the text blocks one uniform gap, and collapse
+# blank spacer blocks so they add no height.
+#
+# Two kinds of blank block must collapse. A truly empty one (<div></div>) is
+# caught by the CSS :empty selector. But a block that only holds whitespace or a
+# non-breaking space (<p>&nbsp;</p>) or only empty inline wrappers
+# (<div><span></span></div>) is NOT :empty, and CSS cannot match "whitespace
+# only". Those are found at runtime (see the walk in _NORMALISE_STYLE_JS) and
+# tagged with the st-blank class, which this rule zeroes too. Kept as a plain
+# string so it can be toggled via the style element's `disabled` flag.
+_NORMALISE_CSS = (
+    "body { line-height: 1.55; }"
+    " p, div, blockquote, li, h1, h2, h3, h4, h5, h6 { margin: 0; }"
+    " p, div, blockquote, li { margin-block: 0.6em; }"
+    " p:empty, div:empty, .st-blank { margin: 0; height: 0; }"
+)
+
+# Injected on every load and on every toggle. Adds the normalisation style
+# element once (idempotent) and sets its enabled state from %(enabled)s (a JS
+# boolean), so a later toggle just flips the element's `disabled` flag: no reload
+# or re-render, the scroll position is kept.
+#
+# It also re-tags blank spacer blocks each time. A block counts as blank when it
+# has no visible text (textContent is empty once trimmed of whitespace and
+# non-breaking spaces) and contains no <img>, so an image-only block is never
+# collapsed. When enabled it adds the st-blank class to such blocks; when disabled
+# it strips the class, restoring the book's raw spacing. The walk is over
+# [data-stid] blocks only and runs once per call, which is negligible. %(css)s is
+# the JSON-quoted rule text.
+_NORMALISE_STYLE_JS = """
+(function(css, enabled) {
+    var style = document.getElementById('st-normalise-style');
+    if (!style) {
+        style = document.createElement('style');
+        style.id = 'st-normalise-style';
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
+    }
+    style.disabled = !enabled;
+    var blocks = document.querySelectorAll('[data-stid]');
+    for (var i = 0; i < blocks.length; i++) {
+        var b = blocks[i];
+        if (!enabled) {
+            b.classList.remove('st-blank');
+            continue;
+        }
+        var text = (b.textContent || '').replace(/[\\s\\u00a0]+/g, '');
+        var blank = text === '' && !b.querySelector('img');
+        if (blank) b.classList.add('st-blank');
+        else b.classList.remove('st-blank');
+    }
+})(%(css)s, %(enabled)s);
+"""
+
 # Toggles the search-block class. Self-contained (no dependency on a pre-injected
 # helper), so a mark or clear issued before the style injection still works; it
 # just lacks the colour until the style lands on load. %(id)s is a JSON-quoted
@@ -210,11 +270,15 @@ class BookView(QWebEngineView):
         profile: QWebEngineProfile,
         parent=None,
         initial_scroll: tuple[str, float] | None = None,
+        normalise: bool = False,
     ):
         super().__init__(parent)
         self._document = document
         self._suppress_scroll = False
         self._initial_scroll = initial_scroll
+        # Whether paragraph-spacing normalisation is on. Applied on every load and
+        # toggled live via set_normalise; see _NORMALISE_CSS.
+        self._normalise = normalise
         # A pending (block_id, fraction) to re-apply once the layout settles. A
         # hidden tab lays out against a provisional height, so a scroll computed
         # then bakes a wrong pixel offset; this is re-run on the next reflow.
@@ -322,6 +386,27 @@ class BookView(QWebEngineView):
         if not ok:
             return
         self.page().runJavaScript(_SEARCH_STYLE_JS)
+        # Re-apply the current normalisation state on every load, so a reload (or
+        # the initial load) keeps the setting rather than reverting to the book's
+        # raw spacing.
+        self._apply_normalise()
+
+    def _apply_normalise(self) -> None:
+        # Inject (once) the normalisation style element and set its enabled state
+        # to match self._normalise. Safe to call before the page has loaded: the
+        # IIFE creates the element on first run and only flips its flag after.
+        js = _NORMALISE_STYLE_JS % {
+            "css": json.dumps(_NORMALISE_CSS),
+            "enabled": "true" if self._normalise else "false",
+        }
+        self.page().runJavaScript(js)
+
+    def set_normalise(self, enabled: bool) -> None:
+        """Turn paragraph-spacing normalisation on or off live. Flips the injected
+        style element's `disabled` flag; no reload or re-render, so the scroll
+        position is kept."""
+        self._normalise = bool(enabled)
+        self._apply_normalise()
 
     def mark_search_block(self, block_id: str) -> None:
         """Highlight the block holding the current search match (clears any prior

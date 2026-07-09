@@ -130,6 +130,11 @@ class AnchorEditor(QWidget):
             self.anchor_store.get_scroll(EDITOR_SURFACE)
         )
 
+        # Paragraph-spacing normalisation for the editor, persisted per book pair
+        # and independent of the reader's flag (default ON). Seeded so both views
+        # build with it already applied.
+        self._normalise = self.anchor_store.get_normalise(EDITOR_SURFACE)
+
         self.init_ui()
         self.refresh()
         self._refresh_highlights()
@@ -149,11 +154,13 @@ class AnchorEditor(QWidget):
             self.original_document,
             self._profile_ref,
             initial_scroll=self._original_scroll,
+            normalise=self._normalise,
         )
         self.translation_view = AnchorBookView(
             self.translation_document,
             self._profile_ref,
             initial_scroll=self._translation_scroll,
+            normalise=self._normalise,
         )
         self.original_view.block_clicked.connect(self._on_original_clicked)
         self.translation_view.block_clicked.connect(self._on_translation_clicked)
@@ -206,8 +213,14 @@ class AnchorEditor(QWidget):
         self.sync_checkbox = QCheckBox("Sync")
         self.sync_checkbox.setChecked(True)
         self.sync_checkbox.stateChanged.connect(self.toggle_sync)
+        # Even out paragraph spacing across books, independent of the reader's
+        # flag. Seeded from the persisted editor-surface value (default on).
+        self.normalise_checkbox = QCheckBox("Normalise")
+        self.normalise_checkbox.setChecked(self._normalise)
+        self.normalise_checkbox.stateChanged.connect(self.toggle_normalise)
         controls.addWidget(self.add_button)
         controls.addWidget(self.remove_button)
+        controls.addWidget(self.normalise_checkbox)
         controls.addWidget(self.sync_checkbox)
         controls.addStretch()
         bottom.addLayout(controls)
@@ -274,6 +287,15 @@ class AnchorEditor(QWidget):
 
     def toggle_sync(self, state) -> None:
         self.sync_enabled = state == Qt.CheckState.Checked.value
+
+    def toggle_normalise(self, state) -> None:
+        # Flip paragraph-spacing normalisation on both editor views live (no
+        # reload, so scroll positions are kept) and persist for this book pair
+        # under the editor surface, independent of the reader's flag.
+        self._normalise = state == Qt.CheckState.Checked.value
+        self.original_view.set_normalise(self._normalise)
+        self.translation_view.set_normalise(self._normalise)
+        self.anchor_store.set_normalise(EDITOR_SURFACE, self._normalise)
 
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         """Mirror a scroll on one side to the other through the anchor mapping.

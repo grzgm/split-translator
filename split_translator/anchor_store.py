@@ -105,6 +105,21 @@ def load_scroll(filepath: Path) -> dict[str, _ScrollPair]:
     return result
 
 
+def load_normalise(filepath: Path) -> dict[str, bool]:
+    """Load each surface's saved paragraph-normalisation flag. Returns a dict
+    keyed by surface name (reader / editor); a surface with no stored flag is
+    absent (the caller supplies the default). A missing or malformed "normalise"
+    block yields an empty dict, so every surface then falls back to its default."""
+    raw = _load_raw(filepath).get("normalise", {})
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, bool] = {}
+    for surface in (READER_SURFACE, EDITOR_SURFACE):
+        if surface in raw:
+            result[surface] = bool(raw[surface])
+    return result
+
+
 def write_anchors(filepath: Path, data: dict) -> None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
@@ -147,6 +162,9 @@ class AnchorStore:
         # Last-known scroll position per surface (reader / editor), each an
         # (original, translation) pair, restored on the next launch.
         self.scroll: dict[str, _ScrollPair] = load_scroll(filepath)
+        # Paragraph-normalisation flag per surface (reader / editor). A surface
+        # absent here uses the caller's default (ON); see get_normalise.
+        self.normalise: dict[str, bool] = load_normalise(filepath)
 
     def add(self, original_id: str, translation_id: str) -> None:
         self.anchors.append((original_id, translation_id))
@@ -189,6 +207,18 @@ class AnchorStore:
             self.scroll[surface] = (original, translation)
         self.save()
 
+    def get_normalise(self, surface: str, default: bool = True) -> bool:
+        """Return a surface's saved paragraph-normalisation flag, or `default`
+        (ON) when the surface has none stored (a fresh book pair, or a file
+        written before this feature)."""
+        return self.normalise.get(surface, default)
+
+    def set_normalise(self, surface: str, value: bool) -> None:
+        """Store a surface's paragraph-normalisation flag and persist. The two
+        surfaces (reader / editor) are kept independent, like the scroll state."""
+        self.normalise[surface] = bool(value)
+        self.save()
+
     @staticmethod
     def _scroll_dict(position: tuple[str, float] | None) -> dict | None:
         if position is None:
@@ -222,6 +252,8 @@ class AnchorStore:
                 scroll[surface] = side
         if scroll:
             data["scroll"] = scroll
+        if self.normalise:
+            data["normalise"] = dict(self.normalise)
         return data
 
     def save(self) -> None:

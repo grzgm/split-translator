@@ -210,6 +210,68 @@ class BookViewSearchMarkTests(unittest.TestCase):
         self.assertEqual(got, [""])  # None becomes ""
 
 
+class BookViewNormaliseTests(unittest.TestCase):
+    """The paragraph-spacing normalisation toggle injects a style element and
+    flips its enabled state, without reloading the page."""
+
+    def test_default_is_off_and_injects_disabled(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)  # normalise defaults to False
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view._apply_normalise()
+        self.assertEqual(len(calls), 1)
+        self.assertIn("st-normalise-style", calls[0])
+        self.assertIn("false", calls[0].rsplit(")", 2)[-2])  # enabled arg is false
+
+    def test_constructed_with_normalise_applies_enabled(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile, normalise=True)
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view._apply_normalise()
+        self.assertIn("st-normalise-style", calls[0])
+        self.assertTrue(calls[0].rstrip().endswith("true);"))  # enabled = true
+
+    def test_set_normalise_toggles_the_flag(self):
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view.set_normalise(True)
+        self.assertTrue(view._normalise)
+        self.assertTrue(calls[-1].rstrip().endswith("true);"))
+        view.set_normalise(False)
+        self.assertFalse(view._normalise)
+        self.assertTrue(calls[-1].rstrip().endswith("false);"))
+
+    def test_normalise_css_carries_the_expected_rules(self):
+        # The injected CSS zeroes block margins, sets a uniform paragraph gap and
+        # collapses blank spacer blocks (truly empty AND whitespace-only tagged
+        # st-blank), so any book (p- or div-paragraph) levels.
+        from split_translator.book_view import _NORMALISE_CSS
+
+        self.assertIn("margin-block: 0.6em", _NORMALISE_CSS)
+        self.assertIn("p:empty, div:empty", _NORMALISE_CSS)
+        self.assertIn(".st-blank", _NORMALISE_CSS)
+        self.assertIn("line-height", _NORMALISE_CSS)
+
+    def test_normalise_js_walks_blocks_to_tag_whitespace_spacers(self):
+        # A <p>&nbsp;</p> spacer is not :empty, so the injected script must tag
+        # whitespace-only, image-free blocks with st-blank (and strip it when
+        # disabled). Assert the walk and its guards are present in the emitted JS.
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile, normalise=True)
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view._apply_normalise()
+        js = calls[0]
+        self.assertIn("[data-stid]", js)
+        self.assertIn("textContent", js)
+        self.assertIn("st-blank", js)
+        self.assertIn("querySelector('img')", js)  # image-only blocks kept
+
+
 import tempfile
 
 from split_translator.config import Config
@@ -703,6 +765,67 @@ class BookPanelForceOriginalSearchTests(unittest.TestCase):
             self.assertEqual(panel.tabs.currentIndex(), 1)  # stayed put
             self.assertEqual(finds["orig"], [])
             self.assertEqual(finds["trans"], [])
+
+
+class BookPanelNormaliseTests(unittest.TestCase):
+    """The reader's Normalise checkbox seeds from the persisted per-book-pair
+    flag, toggles both views live, and persists the choice."""
+
+    def _panel(self, cfg, profile):
+        panel = BookPanel(cfg, profile)
+        self.addCleanup(panel.anchor_store.shutdown)
+        self.addCleanup(panel.anchor_store.filepath.unlink, missing_ok=True)
+        return panel
+
+    def test_checkbox_defaults_on(self):
+        # No stored flag -> default ON, and the checkbox reflects it.
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            self.assertTrue(panel.normalise_checkbox.isChecked())
+            self.assertTrue(panel._normalise)
+
+    def test_toggle_off_sets_both_views_and_persists(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            seen = {"orig": [], "trans": []}
+            panel.original_view.set_normalise = lambda v: seen["orig"].append(v)
+            panel.translation_view.set_normalise = lambda v: seen["trans"].append(v)
+            panel.normalise_checkbox.setChecked(False)
+            self.assertFalse(panel._normalise)
+            self.assertEqual(seen["orig"], [False])
+            self.assertEqual(seen["trans"], [False])
+            # Persisted for the reader surface.
+            from split_translator.anchor_store import READER_SURFACE
+
+            self.assertFalse(panel.anchor_store.get_normalise(READER_SURFACE))
+
+    def test_seeds_checkbox_from_a_stored_off_flag(self):
+        # A book pair whose stored reader flag is OFF opens with the box cleared
+        # and the views constructed un-normalised.
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _config(d)
+            profile = QWebEngineProfile()
+            from split_translator.anchor_store import (
+                AnchorStore,
+                READER_SURFACE,
+                anchor_path_for,
+            )
+            from split_translator.config import CONFIG_DIR
+
+            path = anchor_path_for(
+                cfg.original_path, cfg.translation_path, CONFIG_DIR
+            )
+            seed = AnchorStore(path)
+            seed.set_normalise(READER_SURFACE, False)
+            seed.shutdown()
+            self.addCleanup(path.unlink, missing_ok=True)
+
+            panel = self._panel(cfg, profile)
+            self.assertFalse(panel.normalise_checkbox.isChecked())
+            self.assertFalse(panel.original_view._normalise)
+            self.assertFalse(panel.translation_view._normalise)
 
 
 class BookPanelEditorTests(unittest.TestCase):

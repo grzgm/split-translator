@@ -70,6 +70,11 @@ class BookPanel(QFrame):
             self.anchor_store.get_scroll(READER_SURFACE)
         )
 
+        # Paragraph-spacing normalisation for the reader, persisted per book pair
+        # (default ON). Seeded here so the views can be built with it already
+        # applied, avoiding a flash of the book's raw spacing on open.
+        self._normalise = self.anchor_store.get_normalise(READER_SURFACE)
+
         # The anchor-mapped target the hidden tab SHOULD be at, set when a scroll
         # on the active tab is mirrored. This is the source of truth for the
         # hidden side on a tab switch: it is layout-independent (block id +
@@ -103,10 +108,17 @@ class BookPanel(QFrame):
         self.sync_checkbox.setChecked(True)
         self.sync_checkbox.stateChanged.connect(self.toggle_sync)
 
+        # Even out paragraph spacing across books (see BookView._NORMALISE_CSS).
+        # Seeded from the persisted per-book-pair flag (default on).
+        self.normalise_checkbox = QCheckBox("Normalise")
+        self.normalise_checkbox.setChecked(self._normalise)
+        self.normalise_checkbox.stateChanged.connect(self.toggle_normalise)
+
         nav_layout.addWidget(self.prev_button)
         nav_layout.addWidget(self.next_button)
         nav_layout.addWidget(self.match_label)
         nav_layout.addStretch()
+        nav_layout.addWidget(self.normalise_checkbox)
         nav_layout.addWidget(self.sync_checkbox)
         nav_layout.addWidget(self.position_label)
         layout.addLayout(nav_layout)
@@ -116,11 +128,13 @@ class BookPanel(QFrame):
             self.original_document,
             self.profile,
             initial_scroll=self._original_scroll,
+            normalise=self._normalise,
         )
         self.translation_view = BookView(
             self.translation_document,
             self.profile,
             initial_scroll=self._translation_scroll,
+            normalise=self._normalise,
         )
         self.tabs.addTab(self.original_view, "Original")
         self.tabs.addTab(self.translation_view, "Translation")
@@ -234,6 +248,16 @@ class BookPanel(QFrame):
 
     def toggle_sync(self, state):
         self.sync_enabled = state == Qt.CheckState.Checked.value
+
+    def toggle_normalise(self, state):
+        # Flip paragraph-spacing normalisation on both editions live (no reload,
+        # so the scroll position is kept) and persist the choice for this book
+        # pair. The hidden tab picks up the same flag; its style toggle is
+        # layout-independent, so it is correct when the user switches to it.
+        self._normalise = state == Qt.CheckState.Checked.value
+        self.original_view.set_normalise(self._normalise)
+        self.translation_view.set_normalise(self._normalise)
+        self.anchor_store.set_normalise(READER_SURFACE, self._normalise)
 
     def current_view(self) -> BookView:
         if self.tabs.currentIndex() == 0:
