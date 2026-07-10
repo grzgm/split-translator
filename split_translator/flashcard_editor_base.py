@@ -2,11 +2,13 @@
 
 FlashcardEditorBase holds everything about building and saving one card that
 is common to every editor variant. Saved-list row behaviour that differs
-between variants (for example FlashcardPanel's tick-to-link controls) is
-factored behind four overridable hooks (_configure_saved_item,
-_on_saved_item_changed, _saved_controls_widget, _on_saved_list_refreshed) and
-a link-persistence seam (_links_to_persist, _after_save) around save_card, so
-a subclass can add its own saved-list semantics without touching this file."""
+between variants (for example FlashcardPanel's tick-to-link controls, or
+FlashcardPrintPanel's tick-to-print checkboxes) is factored behind five
+overridable hooks (_configure_saved_item, _on_saved_item_changed,
+_saved_controls_widget, _on_saved_list_refreshed, _loaded_row_is_checkable)
+and a link-persistence seam (_links_to_persist, _after_save) around
+save_card, so a subclass can add its own saved-list semantics without
+touching this file."""
 
 from contextlib import contextmanager
 from datetime import datetime
@@ -275,13 +277,15 @@ class FlashcardEditorBase(QWidget):
     refreshed by _apply_state_to_ui so they can never disagree.
 
     Saved-list row behaviour that a subclass wants to add (for example
-    tick-to-link checkboxes) is factored behind four hooks called at fixed
+    tick-to-link checkboxes) is factored behind five hooks called at fixed
     seams: _configure_saved_item (per non-loaded row, on refresh),
     _on_saved_item_changed (a row's check-state changed),
-    _saved_controls_widget (an optional widget placed under the list) and
-    _on_saved_list_refreshed (called once, at the end of a refresh). Saving
-    with subclass-owned links alongside the card goes through
-    _links_to_persist and _after_save around save_card."""
+    _saved_controls_widget (an optional widget placed under the list),
+    _on_saved_list_refreshed (called once, at the end of a refresh) and
+    _loaded_row_is_checkable (whether the loaded card's own row is routed
+    through _configure_saved_item too, base default False). Saving with
+    subclass-owned links alongside the card goes through _links_to_persist
+    and _after_save around save_card."""
 
     card_saved = Signal(str)
     save_rejected = Signal(str)
@@ -747,6 +751,12 @@ class FlashcardEditorBase(QWidget):
         """Called at the end of _refresh_saved_list. Base default: nothing."""
         return None
 
+    def _loaded_row_is_checkable(self) -> bool:
+        """Whether the currently-loaded card's own row may be checked. Base
+        default False (the dock uses the checkbox for linking, and a card cannot
+        link to itself)."""
+        return False
+
     def _saved_item_changed_dispatch(self, item) -> None:
         if getattr(self, "_suppress_item_changed", False):
             return
@@ -906,12 +916,15 @@ class FlashcardEditorBase(QWidget):
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
                 if card.id == self.state.loaded_card_id:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                     item.setIcon(self._loaded_marker_icon())
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
                     item.setBackground(QBrush(QColor("#e8f0fe")))
+                    if self._loaded_row_is_checkable():
+                        self._configure_saved_item(item, card)
+                    else:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                 else:
                     self._configure_saved_item(item, card)
                 self.saved_list.addItem(item)
