@@ -1,0 +1,173 @@
+"""Pure-logic builder for the flashcard print HTML.
+
+No Qt import, so the grid maths, the front/back interleaving and the
+column-mirrored backs unit-test headless. Each card contributes a fixed-size
+front tile and back tile; sheets are emitted front, back, front, back, ... so
+a long-edge duplex flip puts each back behind its own front. Overflowing tile
+content is clipped (the physical size is fixed) and flagged on screen only."""
+
+import html as _html
+from dataclasses import dataclass
+
+from .flashcards import Card
+
+
+@dataclass(frozen=True)
+class PageSpec:
+    paper_w_mm: float = 210.0
+    paper_h_mm: float = 297.0
+    margin_mm: float = 8.0
+    card_w_mm: float = 72.0
+    card_h_mm: float = 65.0
+
+
+PAGE = PageSpec()
+
+
+def grid_dims(page: PageSpec) -> tuple[int, int]:
+    """Columns and rows that fit inside the printable area, packed tightly."""
+    usable_w = page.paper_w_mm - 2 * page.margin_mm
+    usable_h = page.paper_h_mm - 2 * page.margin_mm
+    cols = max(1, int(usable_w // page.card_w_mm))
+    rows = max(1, int(usable_h // page.card_h_mm))
+    return cols, rows
+
+
+def _mirror_rows(cells: list, cols: int) -> list:
+    """Reverse the column order within each row (for the back sheet)."""
+    out = []
+    for start in range(0, len(cells), cols):
+        row = cells[start:start + cols]
+        out.extend(reversed(row))
+    return out
+
+
+def paginate(cards: list[Card], page: PageSpec) -> list[dict]:
+    """Sheets in print order: for each group of cols*rows cards, a front sheet
+    (natural order) then a back sheet (each row column-reversed). Cells are
+    padded with None to a full grid so the mirror and cut lines stay aligned."""
+    cols, rows = grid_dims(page)
+    per_sheet = cols * rows
+    sheets = []
+    for start in range(0, len(cards), per_sheet):
+        group = list(cards[start:start + per_sheet])
+        group += [None] * (per_sheet - len(group))
+        sheets.append({"kind": "front", "cells": list(group)})
+        sheets.append({"kind": "back", "cells": _mirror_rows(group, cols)})
+    return sheets
+
+
+_STAR_SVG = (
+    '<svg class="star" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" '
+    'width="16" height="16" fill="#000000">'
+    '<path d="m233-120 65-281L80-590l288-25 112-265 112 265 288 25-218 189 65 '
+    '281-247-149-247 149Z"/></svg>'
+)
+
+
+def _esc(text: str) -> str:
+    return _html.escape(text or "")
+
+
+def render_card_tile(card: Card, side: str) -> str:
+    """Inner HTML of one tile. side is 'front' or 'back'."""
+    if card is None:
+        return '<div class="tile tile--empty"></div>'
+    if side == "front":
+        star = _STAR_SVG if card.starred else ""
+        notation = (
+            f'<div class="own-notation">{_esc(card.own_notation)}</div>'
+            if card.own_notation else ""
+        )
+        examples = ""
+        first = card.senses[0] if card.senses else None
+        if first and first.examples:
+            items = "".join(
+                f'<div class="example">{_esc(ex)}</div>' for ex in first.examples
+            )
+            examples = f'<div class="example-list">{items}</div>'
+        return (
+            f'<div class="tile tile--front" data-card-id="{_esc(card.id)}">'
+            f'{star}'
+            f'<div class="headword">{_esc(card.headword)}</div>'
+            f'{notation}{examples}'
+            f'</div>'
+        )
+    senses = ""
+    for sense in card.senses:
+        pos = f'<div class="part-of-speech">{_esc(sense.pos)}</div>' if sense.pos else '<div class="part-of-speech"></div>'
+        meanings = (
+            f'<div class="meanings">'
+            f'<div class="meaning--polish">{_esc(sense.polish)}</div>'
+            f'<div class="meaning--english">{_esc(sense.english)}</div>'
+            f'</div>'
+        )
+        senses += f'<div class="sense">{pos}{meanings}</div>'
+    return (
+        f'<div class="tile tile--back" data-card-id="{_esc(card.id)}">'
+        f'{senses}'
+        f'</div>'
+    )
+
+
+def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
+    star_css = ".star { position: absolute; top: 3mm; right: 3mm; }" if has_starred else ""
+    return f"""
+@page {{ size: {int(page.paper_w_mm)}mm {int(page.paper_h_mm)}mm; margin: {int(page.margin_mm)}mm; }}
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
+.sheet {{
+  display: grid;
+  grid-template-columns: repeat({cols}, {int(page.card_w_mm)}mm);
+  grid-auto-rows: {int(page.card_h_mm)}mm;
+  gap: 0;
+}}
+.sheet + .sheet {{ break-before: page; }}
+.tile {{
+  position: relative;
+  width: {int(page.card_w_mm)}mm;
+  height: {int(page.card_h_mm)}mm;
+  padding: 4mm;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}}
+{star_css}
+.headword {{ font-family: "Inter", sans-serif; font-size: 12pt; text-align: center; }}
+.own-notation {{ font-family: "Inter", sans-serif; text-align: center; margin: 1mm 0 3mm; }}
+.own-notation::before {{ content: "["; }}
+.own-notation::after {{ content: "]"; }}
+.example-list {{ display: flex; flex-direction: column; gap: 1mm; }}
+.example {{ font-family: "Lora", serif; font-size: 8pt; }}
+.sense {{ display: flex; margin-bottom: 2mm; }}
+.part-of-speech {{ font-family: "Inter", sans-serif; box-sizing: border-box; flex: 0 0 3.75ch; text-align: center; font-size: 8pt; }}
+.part-of-speech::before {{ content: "{{"; }}
+.part-of-speech::after {{ content: "}}"; }}
+.meanings {{ display: flex; flex-direction: column; gap: 1mm; }}
+.meaning--polish {{ font-family: "Inter", sans-serif; font-size: 8pt; }}
+.meaning--english {{ font-family: "Lora", serif; font-size: 8pt; }}
+@media screen {{
+  .tile.is-overflow {{ outline: 2px solid red; outline-offset: -2px; }}
+  body.show-borders .tile {{ border: 1px solid #000000; }}
+}}
+@media print {{
+  .tile.is-overflow {{ outline: none; }}
+}}
+"""
+
+
+def render_html(cards: list[Card], page: PageSpec = PAGE) -> str:
+    cols, _rows = grid_dims(page)
+    sheets = paginate(cards, page)
+    body = ""
+    for sheet in sheets:
+        tiles = "".join(
+            render_card_tile(cell, sheet["kind"]) for cell in sheet["cells"]
+        )
+        body += f'<div class="sheet sheet--{sheet["kind"]}">{tiles}</div>'
+    has_starred = any(card is not None and card.starred for card in cards)
+    return (
+        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
+        f"<style>{_styles(page, cols, has_starred)}</style></head>"
+        f"<body>{body}</body></html>"
+    )
