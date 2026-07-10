@@ -306,6 +306,9 @@ class FlashcardEditorBase(QWidget):
         # is being repopulated/reticked programmatically, so those check-state
         # changes never reach _on_saved_item_changed.
         self._suppress_item_changed = False
+        # Set while a checkbox click is being processed so the itemClicked that
+        # co-fires with itemChanged does not also load the card.
+        self._checkbox_click = False
         self.init_ui()
         self.add_sense()
         self._refresh_saved_list()
@@ -747,6 +750,7 @@ class FlashcardEditorBase(QWidget):
     def _saved_item_changed_dispatch(self, item) -> None:
         if getattr(self, "_suppress_item_changed", False):
             return
+        self._checkbox_click = True
         self._on_saved_item_changed(item)
 
     # --- link persistence seam (overridden by subclasses) ----------------
@@ -923,6 +927,9 @@ class FlashcardEditorBase(QWidget):
             item.setHidden(bool(needle) and needle not in item.text().lower())
 
     def _on_saved_clicked(self, item):
+        if self._checkbox_click:
+            self._checkbox_click = False
+            return
         card_id = item.data(Qt.ItemDataRole.UserRole)
         card = next((c for c in self.store.cards if c.id == card_id), None)
         if card is not None:

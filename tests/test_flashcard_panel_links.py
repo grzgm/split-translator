@@ -160,6 +160,29 @@ class TickLinkingTests(unittest.TestCase):
         panel._on_saved_clicked(self._item(panel, "large"))
         self.assertEqual(panel.state.loaded_card_id, "large")
 
+    def test_checkbox_click_does_not_load_the_card(self):
+        # A checkbox click co-fires itemChanged then itemClicked. The changed
+        # handler must suppress the click so ticking a link does NOT load that
+        # card (which would pop a discard dialog and could wipe edits).
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # "big" is loaded
+        self._set_category(panel, "synonym")
+        large = self._item(panel, "large")
+
+        # Ticking marks the editor altered, so an un-suppressed click would
+        # reach load_card()'s discard prompt. Fail loudly instead of hanging
+        # on a real QMessageBox if the suppression regresses.
+        def _tripwire():
+            raise AssertionError("a checkbox click must not prompt to discard")
+
+        panel._confirm_discard = _tripwire
+
+        # Simulate the real signal order a click produces:
+        large.setCheckState(Qt.CheckState.Checked)   # fires itemChanged
+        panel._on_saved_clicked(large)               # itemClicked co-fires
+        # The loaded card must still be "big"; the click was suppressed.
+        self.assertEqual(panel.state.loaded_card_id, "big")
+
     def test_ticking_while_creating_new_card_persists_on_first_save(self):
         panel, store = self._panel()
         # brand-new card, never saved
