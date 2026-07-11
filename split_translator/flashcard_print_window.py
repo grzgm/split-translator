@@ -39,9 +39,6 @@ class FlashcardPrintWindow(QWidget):
         # A card edited and saved here (or elsewhere) refreshes the preview and
         # keeps a deleted/renamed card out of it.
         self.store.cards_changed.connect(self.refresh_preview)
-        self.print_view.borders_checkbox.toggled.connect(
-            lambda _checked: self.refresh_preview()
-        )
 
     def refresh_preview(self) -> None:
         self.print_view.set_cards(self.panel.selected_cards())

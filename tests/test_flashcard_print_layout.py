@@ -94,6 +94,14 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertIn("<html", html.lower())
         self.assertNotIn('class="tile', html)
 
+    def test_zero_sense_card_renders_without_crashing(self):
+        # A card with no senses is a plausible partially-filled state. Its back
+        # tile is blank (no sense rows), but rendering must not crash and the
+        # front still shows the headword.
+        html = render_html([Card(headword="lonely", id="ls")])
+        self.assertIn("lonely", html)
+        self.assertIn("tile--back", html)
+
 
 if __name__ == "__main__":
     unittest.main()
