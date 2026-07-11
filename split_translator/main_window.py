@@ -22,6 +22,7 @@ from .config import Config, CONFIG_DIR
 from .dictionary_panel import DictionaryPanel
 from .flashcard_panel import FlashcardPanel
 from .flashcard_graph import FlashcardGraphWindow
+from .flashcard_print_window import FlashcardPrintWindow
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
 from .book_panel import BookPanel
@@ -42,6 +43,7 @@ class TranslationTool(QMainWindow):
         self.flashcard_store = FlashcardStore(flashcards_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
         self.flashcard_graph_window = None
+        self.flashcard_print_window = None
 
         self.init_ui()
         self.setup_menu()
@@ -114,10 +116,15 @@ class TranslationTool(QMainWindow):
         graph_action = QAction("Flashcard Graph", self)
         graph_action.triggered.connect(self.open_flashcard_graph)
 
+        print_action = QAction("Print Flashcards", self)
+        print_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        print_action.triggered.connect(self.open_flashcard_print)
+
         view_menu = QMenu("View", self)
         view_menu.addAction(flashcard_action)
         view_menu.addAction(anchor_action)
         view_menu.addAction(graph_action)
+        view_menu.addAction(print_action)
 
         view_button = QToolButton()
         view_button.setText("View")
@@ -363,6 +370,15 @@ class TranslationTool(QMainWindow):
         self.flashcard_graph_window.show()
         self.flashcard_graph_window.raise_()
         self.flashcard_graph_window.activateWindow()
+
+    def open_flashcard_print(self):
+        if self.flashcard_print_window is None:
+            self.flashcard_print_window = FlashcardPrintWindow(self.flashcard_store)
+        self.flashcard_print_window.panel._refresh_saved_list()
+        self.flashcard_print_window.refresh_preview()
+        self.flashcard_print_window.show()
+        self.flashcard_print_window.raise_()
+        self.flashcard_print_window.activateWindow()
 
     def refresh_flashcard_graph(self):
         window = self.flashcard_graph_window

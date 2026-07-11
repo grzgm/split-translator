@@ -62,6 +62,7 @@ SHORTCUTS = [
     # View
     ShortcutEntry("Ctrl+Shift+F", "Flashcard editor (View menu)", "View"),
     ShortcutEntry("Ctrl+Shift+A", "Sync editor (View menu)", "View"),
+    ShortcutEntry("Ctrl+Shift+P", "Print flashcards (View menu)", "View"),
     ShortcutEntry("Ctrl+/", "Show this keyboard-shortcuts list", "View",
                   handler="show_shortcuts"),
 ]

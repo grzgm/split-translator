@@ -67,7 +67,7 @@ class ShortcutsRegistryTests(unittest.TestCase):
     def test_view_menu_shortcuts_are_display_only(self):
         # Ctrl+Shift+F / Ctrl+Shift+A live on their View-menu QActions; they must
         # NOT get a QShortcut here, so their handler must be None.
-        for keys in ("Ctrl+Shift+F", "Ctrl+Shift+A"):
+        for keys in ("Ctrl+Shift+F", "Ctrl+Shift+A", "Ctrl+Shift+P"):
             entry = next((e for e in SHORTCUTS if e.keys == keys), None)
             self.assertIsNotNone(entry, f"missing overlay entry: {keys}")
             self.assertIsNone(entry.handler, f"{keys} must be display-only")
