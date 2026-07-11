@@ -153,6 +153,13 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
   .sheet {{ break-before: page; }}
   .sheet--first {{ break-before: auto; }}
   .tile.is-overflow {{ outline: none; }}
+  /* The card grid is narrower than the printable width, so it sits at the left
+     margin. A long-edge duplex flip mirrors the page left-to-right, so the back
+     grid has to be right-aligned to land on top of the flipped front (the front
+     stays left-aligned). Span the full printable width and push the columns to
+     the right edge; combined with the per-row column reversal, each back then
+     sits exactly behind its own front. */
+  .sheet--back {{ width: 100%; justify-content: end; }}
 }}
 @media screen {{
   body {{ background: #e9ebf0; padding: 16px; }}

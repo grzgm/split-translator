@@ -107,11 +107,13 @@ class RenderHtmlTests(unittest.TestCase):
 
     def test_front_and_back_are_grouped_in_a_pair(self):
         # One card yields a front sheet and a back sheet; they are wrapped in a
-        # single sheet-pair so the preview can show them side by side.
+        # single sheet-pair so the preview can show them side by side. Match the
+        # sheet class use (`class="sheet sheet--front"`), not a bare token, since
+        # the print CSS also names `.sheet--back` in a rule.
         html = render_html(_cards(1))
         self.assertEqual(html.count('class="sheet-pair"'), 1)
-        self.assertEqual(html.count("sheet--front"), 1)
-        self.assertEqual(html.count("sheet--back"), 1)
+        self.assertEqual(html.count('class="sheet sheet--front'), 1)
+        self.assertEqual(html.count('class="sheet sheet--back'), 1)
 
     def test_two_full_sheets_make_two_pairs(self):
         # 9 cards span two physical sheets (8 + 1), so two front/back pairs.
@@ -140,6 +142,18 @@ class RenderHtmlTests(unittest.TestCase):
         # Exactly one sheet element carries the first-sheet class (the CSS rule
         # `.sheet--first {` also contains the token, so match the class use).
         self.assertEqual(html.count("sheet--front sheet--first"), 1)
+
+    def test_back_sheet_is_right_aligned_for_duplex(self):
+        # The card grid is narrower than the printable width, so it is
+        # left-aligned by default. A long-edge duplex flip mirrors the page
+        # horizontally, so the back grid must be RIGHT-aligned to land on top of
+        # the flipped front; otherwise both sides hug the same edge and the backs
+        # miss their fronts. Assert the print CSS right-aligns the back grid.
+        html = render_html(_cards(2))
+        # Isolate the print block.
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        self.assertIn(".sheet--back", print_block)
+        self.assertIn("justify-content: end", print_block)
 
     def test_caption_is_hidden_by_default_and_shown_on_screen(self):
         html = render_html(_cards(1))
