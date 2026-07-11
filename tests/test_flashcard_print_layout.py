@@ -143,6 +143,18 @@ class RenderHtmlTests(unittest.TestCase):
         # `.sheet--first {` also contains the token, so match the class use).
         self.assertEqual(html.count("sheet--front sheet--first"), 1)
 
+    def test_print_cut_lines_are_a_thin_print_only_outline(self):
+        # A hairline cut guide can be printed between the tightly-packed cards.
+        # It must be print-only, gated on a body class (so it is a toggle), and
+        # use outline (not border) so it never shifts the card content.
+        html = render_html(_cards(1))
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        self.assertIn("body.print-cut-lines .tile", print_block)
+        self.assertIn("outline", print_block)
+        # It is a hairline (sub-millimetre) and uses outline, not border, so it
+        # does not consume layout space.
+        self.assertNotIn("body.print-cut-lines .tile { border", print_block)
+
     def test_back_sheet_is_right_aligned_for_duplex(self):
         # The card grid is narrower than the printable width, so it is
         # left-aligned by default. A long-edge duplex flip mirrors the page

@@ -160,6 +160,13 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      the right edge; combined with the per-row column reversal, each back then
      sits exactly behind its own front. */
   .sheet--back {{ width: 100%; justify-content: end; }}
+  /* Optional hairline cut guides between the tightly packed cards, toggled by a
+     body class. outline (not border) is used so the line never consumes layout
+     space or shifts the card content; adjacent tiles share an edge (gap is 0),
+     so their outlines coincide into a single thin cut line. The higher
+     specificity here also restores the line on an overflow tile, whose
+     screen-only red outline is cleared above. */
+  body.print-cut-lines .tile {{ outline: 0.1mm solid #000000; outline-offset: -0.05mm; }}
 }}
 @media screen {{
   body {{ background: #e9ebf0; padding: 16px; }}

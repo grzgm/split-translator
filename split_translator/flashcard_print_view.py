@@ -20,7 +20,8 @@ from .flashcards import Card
 
 
 class PrintView(QWidget):
-    """Preview + Print button + Show cut borders toggle."""
+    """Preview + Print button + Show cut borders (screen) and Print cut lines
+    (print) toggles."""
 
     # Marks every tile whose content overflows its fixed box. Runs after each
     # load; toggles a class in-page, so no value returns to Python.
@@ -50,9 +51,20 @@ class PrintView(QWidget):
             "They are not printed."
         )
         self.borders_checkbox.toggled.connect(self._on_borders_toggled)
+        # Prints a hairline between the cards so they are easy to cut apart. On by
+        # default. The line is drawn with an outline, so it never shifts the card
+        # content, and it appears only in the printed output.
+        self.cut_lines_checkbox = QCheckBox("Print cut lines")
+        self.cut_lines_checkbox.setToolTip(
+            "Print a thin cut guide between the cards to make them easy to cut "
+            "out. Only affects the printed output, not the on-screen preview."
+        )
+        self.cut_lines_checkbox.setChecked(True)
+        self.cut_lines_checkbox.toggled.connect(self._on_cut_lines_toggled)
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_cards)
         controls.addWidget(self.borders_checkbox)
+        controls.addWidget(self.cut_lines_checkbox)
         controls.addStretch()
         controls.addWidget(self.print_button)
         outer.addLayout(controls)
@@ -64,6 +76,9 @@ class PrintView(QWidget):
     def show_borders(self) -> bool:
         return self.borders_checkbox.isChecked()
 
+    def print_cut_lines(self) -> bool:
+        return self.cut_lines_checkbox.isChecked()
+
     def set_cards(self, cards: list[Card]) -> None:
         self._cards = list(cards)
         self.view.setHtml(render_html(self._cards, PAGE))
@@ -73,6 +88,7 @@ class PrintView(QWidget):
             return
         page = self.view.page()
         page.runJavaScript(self._borders_js(self.show_borders()))
+        page.runJavaScript(self._cut_lines_js(self.print_cut_lines()))
         page.runJavaScript(self._OVERFLOW_JS)
 
     def _borders_js(self, on: bool) -> str:
@@ -81,6 +97,13 @@ class PrintView(QWidget):
 
     def _on_borders_toggled(self, checked: bool) -> None:
         self.view.page().runJavaScript(self._borders_js(checked))
+
+    def _cut_lines_js(self, on: bool) -> str:
+        action = "add" if on else "remove"
+        return f"document.body.classList.{action}('print-cut-lines');"
+
+    def _on_cut_lines_toggled(self, checked: bool) -> None:
+        self.view.page().runJavaScript(self._cut_lines_js(checked))
 
     def print_cards(self) -> None:
         from PySide6.QtPrintSupport import QPrintDialog, QPrinter

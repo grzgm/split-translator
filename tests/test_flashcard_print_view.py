@@ -32,6 +32,17 @@ class PrintViewTests(unittest.TestCase):
         self.assertIn("is-overflow", view._OVERFLOW_JS)
         self.assertIn("scrollHeight", view._OVERFLOW_JS)
 
+    def test_cut_lines_checkbox_defaults_on(self):
+        view = PrintView()
+        self.assertIsNotNone(view.cut_lines_checkbox)
+        self.assertTrue(view.print_cut_lines())
+
+    def test_cut_lines_js_toggles_body_class(self):
+        view = PrintView()
+        self.assertIn("add", view._cut_lines_js(True))
+        self.assertIn("remove", view._cut_lines_js(False))
+        self.assertIn("print-cut-lines", view._cut_lines_js(True))
+
 
 if __name__ == "__main__":
     unittest.main()
