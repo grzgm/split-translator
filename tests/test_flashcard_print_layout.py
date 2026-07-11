@@ -63,10 +63,13 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertIn("65mm", html)
 
     def test_star_only_for_starred_cards(self):
+        # Assert on the star marker itself (the SVG element and its CSS rule), not
+        # a bare "star" substring: unrelated CSS words such as "start" contain
+        # "star" and would otherwise trip the check.
         plain = render_html([Card(headword="x", id="x")])
         starred = render_html([Card(headword="y", id="y", starred=True)])
-        self.assertNotIn("star", plain.lower())
-        self.assertIn("star", starred.lower())
+        self.assertNotIn('class="star"', plain)
+        self.assertIn('class="star"', starred)
 
     def test_overflow_and_border_rules_are_screen_scoped(self):
         html = render_html(_cards(1))
@@ -101,6 +104,48 @@ class RenderHtmlTests(unittest.TestCase):
         html = render_html([Card(headword="lonely", id="ls")])
         self.assertIn("lonely", html)
         self.assertIn("tile--back", html)
+
+    def test_front_and_back_are_grouped_in_a_pair(self):
+        # One card yields a front sheet and a back sheet; they are wrapped in a
+        # single sheet-pair so the preview can show them side by side.
+        html = render_html(_cards(1))
+        self.assertEqual(html.count('class="sheet-pair"'), 1)
+        self.assertEqual(html.count("sheet--front"), 1)
+        self.assertEqual(html.count("sheet--back"), 1)
+
+    def test_two_full_sheets_make_two_pairs(self):
+        # 9 cards span two physical sheets (8 + 1), so two front/back pairs.
+        html = render_html(_cards(9))
+        self.assertEqual(html.count('class="sheet-pair"'), 2)
+
+    def test_pair_is_a_flex_row_on_screen(self):
+        html = render_html(_cards(1))
+        # The side-by-side pairing is screen-only (flex-wrap so it stacks when
+        # narrow); print keeps one sheet per page.
+        self.assertIn(".sheet-pair {", html)
+        self.assertIn("flex-wrap: wrap", html)
+
+    def test_each_sheet_has_a_page_border_and_caption_on_screen(self):
+        html = render_html(_cards(1))
+        # A visible page border for each sheet, and a caption naming it.
+        self.assertIn("Sheet 1 front", html)
+        self.assertIn("Sheet 1 back", html)
+        self.assertIn("sheet-caption", html)
+
+    def test_print_keeps_one_sheet_per_page(self):
+        # The print invariant must survive the screen-only pairing: every sheet
+        # page-breaks except the first, so duplex stays one sheet per page.
+        html = render_html(_cards(9))  # 4 sheets across 2 pairs
+        self.assertIn("break-before: page", html)
+        # Exactly one sheet element carries the first-sheet class (the CSS rule
+        # `.sheet--first {` also contains the token, so match the class use).
+        self.assertEqual(html.count("sheet--front sheet--first"), 1)
+
+    def test_caption_is_hidden_by_default_and_shown_on_screen(self):
+        html = render_html(_cards(1))
+        # Base rule hides the caption; the screen block reveals it. This keeps it
+        # out of the printed output.
+        self.assertIn(".sheet-caption { display: none; }", html)
 
 
 if __name__ == "__main__":

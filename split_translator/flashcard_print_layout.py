@@ -122,7 +122,6 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
   grid-auto-rows: {int(page.card_h_mm)}mm;
   gap: 0;
 }}
-.sheet + .sheet {{ break-before: page; }}
 .tile {{
   position: relative;
   width: {int(page.card_w_mm)}mm;
@@ -146,25 +145,81 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 .meanings {{ display: flex; flex-direction: column; gap: 1mm; }}
 .meaning--polish {{ font-family: "Inter", sans-serif; font-size: 8pt; }}
 .meaning--english {{ font-family: "Lora", serif; font-size: 8pt; }}
+.sheet-caption {{ display: none; }}
+@media print {{
+  /* One sheet per physical page: every sheet starts a new page except the
+     first. The pair wrappers are transparent to the page flow. */
+  .sheet-pair {{ display: block; }}
+  .sheet {{ break-before: page; }}
+  .sheet--first {{ break-before: auto; }}
+  .tile.is-overflow {{ outline: none; }}
+}}
 @media screen {{
+  body {{ background: #e9ebf0; padding: 16px; }}
+  /* Front and back of one physical sheet sit side by side in a row when the
+     window is wide enough, and wrap to stack when it is not. */
+  .sheet-pair {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 24px;
+    align-items: flex-start;
+  }}
+  /* Each sheet is drawn as a clearly bordered page with a caption. */
+  .sheet {{
+    border: 1px solid #7a7f8a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    background: #ffffff;
+  }}
+  .sheet-caption {{
+    display: block;
+    font-family: "Inter", sans-serif;
+    font-size: 9pt;
+    color: #55606e;
+    margin: 0 0 4px 2px;
+  }}
   .tile.is-overflow {{ outline: 2px solid red; outline-offset: -2px; }}
   body.show-borders .tile {{ border: 1px solid #000000; }}
 }}
-@media print {{
-  .tile.is-overflow {{ outline: none; }}
-}}
 """
+
+
+_KIND_LABEL = {"front": "front", "back": "back"}
+
+
+def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool) -> str:
+    """One sheet: a screen-only caption plus the tile grid. `first` marks the
+    very first sheet in the document so print does not page-break before it."""
+    tiles = "".join(render_card_tile(cell, kind_of_sheet) for cell in sheet["cells"])
+    first_class = " sheet--first" if first else ""
+    caption = (
+        f'<div class="sheet-caption">Sheet {sheet_number} '
+        f'{_KIND_LABEL.get(kind_of_sheet, kind_of_sheet)}</div>'
+    )
+    return (
+        f'<div class="sheet-page">{caption}'
+        f'<div class="sheet sheet--{kind_of_sheet}{first_class}">{tiles}</div>'
+        f'</div>'
+    )
 
 
 def render_html(cards: list[Card], page: PageSpec = PAGE) -> str:
     cols, _rows = grid_dims(page)
     sheets = paginate(cards, page)
+    # paginate emits sheets as consecutive front, back, front, back, ... pairs.
+    # On screen each pair is shown side by side; on paper each sheet is its own
+    # page. Group them two at a time into a pair wrapper.
     body = ""
-    for sheet in sheets:
-        tiles = "".join(
-            render_card_tile(cell, sheet["kind"]) for cell in sheet["cells"]
-        )
-        body += f'<div class="sheet sheet--{sheet["kind"]}">{tiles}</div>'
+    for pair_index in range(0, len(sheets), 2):
+        pair = sheets[pair_index:pair_index + 2]
+        sheet_number = pair_index // 2 + 1
+        blocks = ""
+        for offset, sheet in enumerate(pair):
+            is_first_sheet = pair_index == 0 and offset == 0
+            blocks += _sheet_block(
+                sheet, sheet["kind"], sheet_number, is_first_sheet
+            )
+        body += f'<div class="sheet-pair">{blocks}</div>'
     has_starred = any(card is not None and card.starred for card in cards)
     return (
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
