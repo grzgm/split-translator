@@ -15,12 +15,14 @@ class FlashcardPrintPanel(FlashcardEditorBase):
     selection_changed = Signal()
 
     def _configure_saved_item(self, item: QListWidgetItem, card: Card) -> None:
-        # Every non-loaded row is a print checkbox, unchecked by default. (The
-        # loaded row is handled by the base, which keeps it visually marked; make
-        # it checkable here too so the card being edited can also be printed.)
+        # Every row is a print checkbox, unchecked by default. Both steps are
+        # needed for a box to actually render: the ItemIsUserCheckable flag AND a
+        # value in the CheckStateRole data role. A QListWidgetItem draws no check
+        # indicator until its check state has been set at least once, so set it
+        # explicitly here (the list is rebuilt from scratch on every refresh, so
+        # there is no prior tick on this item to preserve).
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        if item.checkState() not in (Qt.CheckState.Checked, Qt.CheckState.Unchecked):
-            item.setCheckState(Qt.CheckState.Unchecked)
+        item.setCheckState(Qt.CheckState.Unchecked)
 
     def _on_saved_item_changed(self, item: QListWidgetItem) -> None:
         self.selection_changed.emit()

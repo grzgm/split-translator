@@ -40,6 +40,36 @@ class FlashcardPrintPanelTests(unittest.TestCase):
         panel, _ = self._panel()
         self.assertEqual(panel.selected_cards(), [])
 
+    def test_rows_render_a_checkbox_after_refresh(self):
+        # A QListWidgetItem only draws a checkbox indicator when it carries a
+        # value in the CheckStateRole data role. Setting only the
+        # ItemIsUserCheckable flag is not enough: without the role, no box is
+        # painted (which is why the checkboxes were invisible). Assert every
+        # freshly built row carries the role, so the box actually renders. This
+        # must hold WITHOUT the test setting the check state itself.
+        panel, _ = self._panel()
+        for card_id in ("a", "b", "c"):
+            item = self._item(panel, card_id)
+            self.assertTrue(
+                bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable),
+                f"{card_id} row must be checkable",
+            )
+            self.assertIsNotNone(
+                item.data(Qt.ItemDataRole.CheckStateRole),
+                f"{card_id} row must carry a CheckStateRole so a box is drawn",
+            )
+            self.assertEqual(item.checkState(), Qt.CheckState.Unchecked)
+
+    def test_loaded_cards_row_also_renders_a_checkbox(self):
+        # The card currently loaded for editing keeps its dot/bold/tint but must
+        # still be checkable AND carry the check-state role, so it too can be
+        # ticked for printing (its box must render like the others).
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])  # "a" becomes the loaded row
+        item = self._item(panel, "a")
+        self.assertTrue(bool(item.flags() & Qt.ItemFlag.ItemIsUserCheckable))
+        self.assertIsNotNone(item.data(Qt.ItemDataRole.CheckStateRole))
+
     def test_ticking_selects_that_card(self):
         panel, _ = self._panel()
         self._item(panel, "b").setCheckState(Qt.CheckState.Checked)
