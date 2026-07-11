@@ -19,6 +19,11 @@ class PageSpec:
     margin_mm: float = 8.0
     card_w_mm: float = 72.0
     card_h_mm: float = 65.0
+    # Duplex registration nudge: how many mm to raise the back sheet so it lands
+    # on its front despite the printer's mechanical two-sided offset. Positive
+    # moves the back up. Defaults to 3mm to compensate the known printer drift; 0
+    # applies no shift.
+    back_offset_mm: float = 3.0
 
 
 PAGE = PageSpec()
@@ -110,8 +115,20 @@ def render_card_tile(card: Card, side: str) -> str:
     )
 
 
+def _fmt_mm(value: float) -> str:
+    """Format a mm length without a trailing ``.0`` (3.0 -> "3", 2.5 -> "2.5")."""
+    return f"{value:g}"
+
+
 def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
     star_css = ".star { position: absolute; top: 3mm; right: 3mm; }" if has_starred else ""
+    # Raise the back sheet by the configured duplex nudge (positive = up). Emit
+    # nothing when it is zero so there is no needless transform.
+    back_transform = (
+        f" transform: translateY(-{_fmt_mm(page.back_offset_mm)}mm);"
+        if page.back_offset_mm
+        else ""
+    )
     return f"""
 /* The @page margin is left at 0 and the page margin is applied as padding on a
    full-page sheet box in the print block below. Relying on the @page margin put
@@ -170,8 +187,10 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      margin. A long-edge duplex flip mirrors the page left-to-right, so the back
      grid has to be right-aligned to land on top of the flipped front (the front
      stays left-aligned). Push the columns to the right edge; combined with the
-     per-row column reversal, each back then sits exactly behind its own front. */
-  .sheet--back {{ justify-content: end; }}
+     per-row column reversal, each back then sits exactly behind its own front.
+     The transform (when set) raises the back by the duplex nudge to cancel the
+     printer's mechanical two-sided offset. */
+  .sheet--back {{ justify-content: end;{back_transform} }}
   /* Optional cut guides between the tightly packed cards, toggled by a body
      class. outline (not border) is used so the line never consumes layout space
      or shifts the card content; with no offset, adjacent tiles' shared edges

@@ -6,9 +6,13 @@ The live rendering, the overflow marking and the actual print cannot be unit
 tested (they need a live QWebEngineView); they are verified with a runtime
 walkthrough. Only construction and the JS-builder strings are covered by tests."""
 
+from dataclasses import replace
+
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDoubleSpinBox,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -61,10 +65,26 @@ class PrintView(QWidget):
         )
         self.cut_lines_checkbox.setChecked(True)
         self.cut_lines_checkbox.toggled.connect(self._on_cut_lines_toggled)
+        # Duplex registration nudge: raises the printed back side by this many mm
+        # so it lands on its front despite the printer's mechanical two-sided
+        # offset. Only affects the printed output, not the on-screen preview.
+        back_offset_label = QLabel("Back offset (mm)")
+        self.back_offset_spin = QDoubleSpinBox()
+        self.back_offset_spin.setRange(-15.0, 15.0)
+        self.back_offset_spin.setSingleStep(0.5)
+        self.back_offset_spin.setValue(PAGE.back_offset_mm)
+        self.back_offset_spin.setToolTip(
+            "Raise the printed back side by this many mm so it lines up with its "
+            "front (compensates the printer's two-sided registration). Only "
+            "affects the printed output, not the preview."
+        )
+        self.back_offset_spin.valueChanged.connect(self._on_back_offset_changed)
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_cards)
         controls.addWidget(self.borders_checkbox)
         controls.addWidget(self.cut_lines_checkbox)
+        controls.addWidget(back_offset_label)
+        controls.addWidget(self.back_offset_spin)
         controls.addStretch()
         controls.addWidget(self.print_button)
         outer.addLayout(controls)
@@ -79,9 +99,22 @@ class PrintView(QWidget):
     def print_cut_lines(self) -> bool:
         return self.cut_lines_checkbox.isChecked()
 
+    def back_offset(self) -> float:
+        return self.back_offset_spin.value()
+
+    def _render(self) -> str:
+        """Build the print HTML for the current cards and back offset."""
+        page = replace(PAGE, back_offset_mm=self.back_offset())
+        return render_html(self._cards, page)
+
     def set_cards(self, cards: list[Card]) -> None:
         self._cards = list(cards)
-        self.view.setHtml(render_html(self._cards, PAGE))
+        self.view.setHtml(self._render())
+
+    def _on_back_offset_changed(self, _value: float) -> None:
+        # The offset only shows in print, so the on-screen preview is unchanged,
+        # but re-render so the next Print uses the new value.
+        self.view.setHtml(self._render())
 
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:

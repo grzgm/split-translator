@@ -172,6 +172,24 @@ class RenderHtmlTests(unittest.TestCase):
         # does not consume layout space.
         self.assertNotIn("body.print-cut-lines .tile { border", print_block)
 
+    def test_back_offset_shifts_the_back_sheet_up_in_print(self):
+        # A per-printer duplex registration nudge: the back sheet can be moved up
+        # by a configurable number of mm so it lands on its front despite the
+        # printer's mechanical offset. It is a print-only vertical transform on
+        # the back sheet, and the default moves the back up by 3mm.
+        from dataclasses import replace
+        html = render_html(_cards(1), replace(PAGE, back_offset_mm=3.0))
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        self.assertIn("translateY(-3", print_block)
+        # Zero offset draws no transform (nothing to compensate).
+        zero = render_html(_cards(1), replace(PAGE, back_offset_mm=0.0))
+        zero_print = zero.split("@media print")[1].split("@media screen")[0]
+        self.assertNotIn("translateY", zero_print)
+
+    def test_default_page_has_a_3mm_back_offset(self):
+        # The shipped default compensates the known printer drift.
+        self.assertEqual(PAGE.back_offset_mm, 3.0)
+
     def test_back_sheet_is_right_aligned_for_duplex(self):
         # The card grid is narrower than the printable width, so it is
         # left-aligned by default. A long-edge duplex flip mirrors the page

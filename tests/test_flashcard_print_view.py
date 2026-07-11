@@ -43,6 +43,19 @@ class PrintViewTests(unittest.TestCase):
         self.assertIn("remove", view._cut_lines_js(False))
         self.assertIn("print-cut-lines", view._cut_lines_js(True))
 
+    def test_back_offset_spinbox_defaults_to_3mm(self):
+        view = PrintView()
+        self.assertIsNotNone(view.back_offset_spin)
+        self.assertEqual(view.back_offset(), 3.0)
+
+    def test_set_cards_uses_the_back_offset(self):
+        # The rendered HTML must reflect the chosen back offset, so changing the
+        # spinbox actually moves the back sheet.
+        view = PrintView()
+        view.back_offset_spin.setValue(5.0)
+        html = view._render()
+        self.assertIn("translateY(-5mm)", html)
+
 
 if __name__ == "__main__":
     unittest.main()
