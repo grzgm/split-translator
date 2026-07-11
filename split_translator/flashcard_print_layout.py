@@ -113,7 +113,12 @@ def render_card_tile(card: Card, side: str) -> str:
 def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
     star_css = ".star { position: absolute; top: 3mm; right: 3mm; }" if has_starred else ""
     return f"""
-@page {{ size: {int(page.paper_w_mm)}mm {int(page.paper_h_mm)}mm; margin: {int(page.margin_mm)}mm; }}
+/* The @page margin is left at 0 and the page margin is applied as padding on a
+   full-page sheet box in the print block below. Relying on the @page margin put
+   the content at the physical page corner in the web engine's PDF export (the
+   margin was not honoured), which misaligned every sheet and let the grid bleed
+   onto the next page. A full-page sheet with internal padding is exact. */
+@page {{ size: {int(page.paper_w_mm)}mm {int(page.paper_h_mm)}mm; margin: 0; }}
 * {{ box-sizing: border-box; }}
 html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 .sheet {{
@@ -147,26 +152,34 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 .meaning--english {{ font-family: "Lora", serif; font-size: 8pt; }}
 .sheet-caption {{ display: none; }}
 @media print {{
-  /* One sheet per physical page: every sheet starts a new page except the
-     first. The pair wrappers are transparent to the page flow. */
+  /* Each sheet is exactly one physical page and carries the page margin as its
+     own padding, so the card grid is inset correctly and every sheet breaks
+     cleanly at the page boundary (no bleed onto the next page). align-content
+     keeps the rows at the top rather than stretching them. */
   .sheet-pair {{ display: block; }}
-  .sheet {{ break-before: page; }}
+  .sheet {{
+    width: {int(page.paper_w_mm)}mm;
+    height: {int(page.paper_h_mm)}mm;
+    padding: {int(page.margin_mm)}mm;
+    align-content: start;
+    break-before: page;
+  }}
   .sheet--first {{ break-before: auto; }}
   .tile.is-overflow {{ outline: none; }}
   /* The card grid is narrower than the printable width, so it sits at the left
      margin. A long-edge duplex flip mirrors the page left-to-right, so the back
      grid has to be right-aligned to land on top of the flipped front (the front
-     stays left-aligned). Span the full printable width and push the columns to
-     the right edge; combined with the per-row column reversal, each back then
-     sits exactly behind its own front. */
-  .sheet--back {{ width: 100%; justify-content: end; }}
-  /* Optional hairline cut guides between the tightly packed cards, toggled by a
-     body class. outline (not border) is used so the line never consumes layout
-     space or shifts the card content; adjacent tiles share an edge (gap is 0),
-     so their outlines coincide into a single thin cut line. The higher
-     specificity here also restores the line on an overflow tile, whose
-     screen-only red outline is cleared above. */
-  body.print-cut-lines .tile {{ outline: 0.1mm solid #000000; outline-offset: -0.05mm; }}
+     stays left-aligned). Push the columns to the right edge; combined with the
+     per-row column reversal, each back then sits exactly behind its own front. */
+  .sheet--back {{ justify-content: end; }}
+  /* Optional cut guides between the tightly packed cards, toggled by a body
+     class. outline (not border) is used so the line never consumes layout space
+     or shifts the card content; with no offset, adjacent tiles' shared edges
+     coincide into a single line rather than two. The web engine's PDF export
+     clamps every stroke to about 0.75pt, so this is as thin as a printed line
+     can be. The higher specificity also restores the line on an overflow tile,
+     whose screen-only red outline is cleared above. */
+  body.print-cut-lines .tile {{ outline: 0.1mm solid #000000; outline-offset: 0; }}
 }}
 @media screen {{
   body {{ background: #e9ebf0; padding: 16px; }}

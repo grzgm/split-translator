@@ -143,6 +143,23 @@ class RenderHtmlTests(unittest.TestCase):
         # `.sheet--first {` also contains the token, so match the class use).
         self.assertEqual(html.count("sheet--front sheet--first"), 1)
 
+    def test_page_margin_is_zero_and_applied_as_sheet_padding(self):
+        # The web engine's PDF export did not honour an @page margin (content
+        # landed at the physical page corner and the grid bled onto the next
+        # page). Instead the @page margin is 0 and each print sheet is a full-page
+        # box that carries the margin as its own padding.
+        html = render_html(_cards(1), PAGE)
+        # The @page at-rule (not the explanatory comment that also names it) sets
+        # a zero margin.
+        page_rule = html.split("@page {")[1].split("}")[0]
+        self.assertIn("margin: 0", page_rule)
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        # The print sheet is sized to the full physical page and padded by the
+        # margin so the card grid is inset correctly.
+        self.assertIn(f"width: {int(PAGE.paper_w_mm)}mm", print_block)
+        self.assertIn(f"height: {int(PAGE.paper_h_mm)}mm", print_block)
+        self.assertIn(f"padding: {int(PAGE.margin_mm)}mm", print_block)
+
     def test_print_cut_lines_are_a_thin_print_only_outline(self):
         # A hairline cut guide can be printed between the tightly-packed cards.
         # It must be print-only, gated on a body class (so it is a toggle), and
