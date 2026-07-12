@@ -75,6 +75,27 @@ class FlashcardPanelTests(unittest.TestCase):
         panel, _ = self._panel()
         self.assertFalse(panel.saved_list.hasAutoScroll())
 
+    def test_enter_loads_the_focused_card(self):
+        # Arrowing to a row and pressing Enter loads that card, like clicking it.
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        panel, store = self._panel()
+        store.cards = [Card(headword="address", id="a1"), Card(headword="book", id="b1")]
+        panel._refresh_saved_list()
+        loaded = []
+        panel.card_loaded.connect(lambda hw: loaded.append(hw))
+        panel.saved_list.setCurrentRow(1)  # "book"
+
+        event = QKeyEvent(
+            QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier
+        )
+        panel.saved_list.keyPressEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.state.loaded_card_id, "b1")
+        self.assertEqual(loaded, ["book"])
+
     def test_loading_a_card_keeps_the_saved_list_scroll_position(self):
         # Clicking a card partway down the saved list loads it, which rebuilds
         # the list to move the loaded-row markers. That rebuild must not scroll

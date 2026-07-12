@@ -90,6 +90,39 @@ def _append(field: QLineEdit, text: str) -> None:
     _fill(field, f"{existing}, {text}" if existing else text)
 
 
+class SavedCardsList(QListWidget):
+    """The saved-cards list, with Enter/Return set to load the focused card.
+
+    Arrowing through the list moves the focus row; Space toggles that row's
+    checkbox (the default list behaviour, left untouched); Enter or Return loads
+    the focused card, mirroring a click on its text. ``item_activated_by_key``
+    carries the focused item so the editor can load it. All other keys fall
+    through to the default handler.
+
+    ``key_handled`` fires after each key press is handled. The editor uses it to
+    clear the "a checkbox click is in progress" guard: that guard exists to stop
+    the mouse click that co-fires with a mouse checkbox toggle from also loading
+    the card, but a keyboard Space toggle fires no such click, so without this the
+    guard would linger and swallow the next real text click."""
+
+    item_activated_by_key = Signal(QListWidgetItem)
+    key_handled = Signal()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            item = self.currentItem()
+            if item is not None:
+                self.item_activated_by_key.emit(item)
+                event.accept()
+                return
+        # Default handling first: a Space press toggles the current row's
+        # checkbox here, which sets the editor's checkbox-click guard. Announce
+        # afterwards so the editor can clear that guard (a keyboard toggle fires
+        # no co-firing mouse click for the guard to suppress).
+        super().keyPressEvent(event)
+        self.key_handled.emit()
+
+
 class SenseRow(QFrame):
     """One editable sense: POS combo, Polish field, English field, a remove button
     and a small list of usage examples beneath them."""
@@ -478,16 +511,22 @@ class FlashcardEditorBase(QWidget):
         self.saved_filter.setClearButtonEnabled(True)
         self.saved_filter.textChanged.connect(self._apply_saved_filter)
         saved_layout.addWidget(self.saved_filter)
-        self.saved_list = QListWidget()
+        self.saved_list = SavedCardsList()
         # Clicking a row selects it, and a selected item is normally scrolled into
         # view. When a card partway down the list is clicked to load it, that
         # auto-scroll would move the list out from under the click, so turn it off
         # (the scroll position is preserved across the load instead).
         self.saved_list.setAutoScroll(False)
         self.saved_list.setToolTip(
-            "Click a card's text to load it; tick its box to link it in the chosen category"
+            "Click a card's text (or focus it with the arrow keys and press "
+            "Enter) to load it; tick its box (or press Space) to toggle it"
         )
         self.saved_list.itemClicked.connect(self._on_saved_clicked)
+        # Enter/Return on the keyboard-focused row loads it, like a text click.
+        self.saved_list.item_activated_by_key.connect(self._on_saved_activated)
+        # After a key press (e.g. a Space checkbox toggle), clear the checkbox
+        # guard so it cannot swallow the next real text click.
+        self.saved_list.key_handled.connect(self._clear_checkbox_click_guard)
         self.saved_list.itemChanged.connect(self._saved_item_changed_dispatch)
         saved_layout.addWidget(self.saved_list, stretch=1)
 
@@ -768,6 +807,13 @@ class FlashcardEditorBase(QWidget):
         self._checkbox_click = True
         self._on_saved_item_changed(item)
 
+    def _clear_checkbox_click_guard(self) -> None:
+        # Called after a key press on the list. A keyboard Space toggles the
+        # checkbox (setting the guard) but produces no co-firing mouse click for
+        # the guard to suppress, so clear it here or it would swallow the next
+        # real text click.
+        self._checkbox_click = False
+
     # --- link persistence seam (overridden by subclasses) ----------------
 
     def _links_to_persist(self, card) -> list:
@@ -919,16 +965,23 @@ class FlashcardEditorBase(QWidget):
         # range.
         scrollbar = self.saved_list.verticalScrollBar()
         scroll_value = scrollbar.value()
+        # The rebuild also drops the list's current row (the native keyboard
+        # cursor the arrow keys move from). Remember it, and note the loaded
+        # card's new row, so the cursor can be restored afterwards: arrowing then
+        # continues from the loaded card, not from the top.
+        previous_row = self.saved_list.currentRow()
+        loaded_row = -1
         self._suppress_item_changed = True
         try:
             self.saved_list.clear()
-            for card in self.store.cards:
+            for index, card in enumerate(self.store.cards):
                 label = card.headword
                 if card.starred:
                     label = f"{self._STAR_SET}: {label}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
                 if card.id == self.state.loaded_card_id:
+                    loaded_row = index
                     item.setIcon(self._loaded_marker_icon())
                     font = item.font()
                     font.setBold(True)
@@ -952,6 +1005,20 @@ class FlashcardEditorBase(QWidget):
         # list genuinely shrank, e.g. a card was deleted).
         self.saved_list.doItemsLayout()
         scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
+        # Restore the native keyboard cursor: onto the loaded card if there is
+        # one (so its blue-marked row and the arrow-key cursor coincide),
+        # otherwise back onto the previously focused row (clamped, in case the
+        # list shrank). Setting the current row does not load a card (it fires no
+        # click), so this only moves the keyboard focus. Guarded so no item-change
+        # handler treats it as a user edit.
+        count = self.saved_list.count()
+        target_row = loaded_row if loaded_row >= 0 else previous_row
+        if count and target_row >= 0:
+            self._suppress_item_changed = True
+            try:
+                self.saved_list.setCurrentRow(min(target_row, count - 1))
+            finally:
+                self._suppress_item_changed = False
         self._on_saved_list_refreshed()
 
     def _apply_saved_filter(self, text: str = "") -> None:
@@ -964,6 +1031,15 @@ class FlashcardEditorBase(QWidget):
         if self._checkbox_click:
             self._checkbox_click = False
             return
+        self._load_item(item)
+
+    def _on_saved_activated(self, item):
+        # Enter/Return on the keyboard-focused row. Unlike a click, no checkbox
+        # change co-fires here, so load unconditionally (no _checkbox_click
+        # guard).
+        self._load_item(item)
+
+    def _load_item(self, item) -> None:
         card_id = item.data(Qt.ItemDataRole.UserRole)
         card = next((c for c in self.store.cards if c.id == card_id), None)
         if card is not None:

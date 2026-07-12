@@ -221,6 +221,101 @@ class FlashcardPrintPanelTests(unittest.TestCase):
         panel, _ = self._panel()
         self.assertFalse(panel.saved_list.hasAutoScroll())
 
+    def _press(self, panel, key):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        event = QKeyEvent(
+            QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier
+        )
+        panel.saved_list.keyPressEvent(event)
+        return event
+
+    def test_enter_loads_the_focused_card(self):
+        # Arrowing to a row and pressing Enter loads that card, like clicking it.
+        panel, store = self._panel()
+        loaded = []
+        panel.card_loaded.connect(lambda hw: loaded.append(hw))
+        panel.saved_list.setCurrentRow(1)  # "bravo"
+
+        event = self._press(panel, Qt.Key.Key_Return)
+        self.assertTrue(event.isAccepted())
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.state.loaded_card_id, "b")
+        self.assertEqual(loaded, ["bravo"])
+
+    def test_enter_with_no_focused_row_is_a_noop(self):
+        panel, _ = self._panel()
+        loaded = []
+        panel.card_loaded.connect(lambda hw: loaded.append(hw))
+        panel.saved_list.setCurrentRow(-1)
+
+        event = self._press(panel, Qt.Key.Key_Return)
+        self.assertFalse(event.isAccepted())
+        self.assertEqual(loaded, [])
+
+    def test_enter_leaves_the_cursor_on_the_loaded_card(self):
+        # After loading a card, the native keyboard cursor (current row) sits on
+        # that card's row, so a following arrow key continues from there rather
+        # than jumping back to the top. The loaded card also keeps its own row.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [Card(headword=f"c{i:03d}", id=str(i)) for i in range(20)]
+        panel = FlashcardPrintPanel(store)
+        panel._refresh_saved_list()
+        panel.saved_list.setCurrentRow(10)
+
+        self._press(panel, Qt.Key.Key_Return)
+        self.assertEqual(panel.state.loaded_card_id, "10")
+        self.assertEqual(panel.saved_list.currentRow(), 10)
+        # The current item is the loaded card, so Down would move to row 11.
+        self.assertEqual(
+            panel.saved_list.currentItem().data(Qt.ItemDataRole.UserRole), "10"
+        )
+
+    def test_cursor_stays_on_loaded_card_after_a_refresh(self):
+        # A plain refresh (e.g. after a save) keeps the cursor on the loaded card.
+        panel, store = self._panel()
+        panel.load_card(store.cards[1])  # "b"
+        panel._refresh_saved_list()
+        self.assertEqual(
+            panel.saved_list.currentItem().data(Qt.ItemDataRole.UserRole), "b"
+        )
+
+    def test_space_toggles_the_checkbox_without_loading(self):
+        from PySide6.QtTest import QTest
+
+        panel, _ = self._panel()
+        loaded = []
+        panel.card_loaded.connect(lambda hw: loaded.append(hw))
+        panel.saved_list.setCurrentRow(1)  # "bravo"
+
+        QTest.keyClick(panel.saved_list, Qt.Key.Key_Space)
+        self.assertEqual(
+            panel.saved_list.item(1).checkState(), Qt.CheckState.Checked
+        )
+        self.assertEqual(panel.selected_ids(), ["b"])
+        self.assertEqual(loaded, [], "Space must not load the card")
+
+    def test_space_then_click_still_loads(self):
+        # A Space checkbox toggle must not leave the checkbox-click guard set, or
+        # it would swallow the next text click's load.
+        from PySide6.QtTest import QTest
+
+        panel, store = self._panel()
+        loaded = []
+        panel.card_loaded.connect(lambda hw: loaded.append(hw))
+        panel.saved_list.setCurrentRow(0)
+
+        QTest.keyClick(panel.saved_list, Qt.Key.Key_Space)  # tick "alpha"
+        self.assertFalse(panel._checkbox_click)
+        # A subsequent text click on another row loads it.
+        panel._on_saved_clicked(panel.saved_list.item(2))  # "charlie"
+        self.assertEqual(loaded, ["charlie"])
+        self.assertEqual(panel.state.loaded_card_id, "c")
+
     def test_loading_a_card_keeps_the_saved_list_scroll_position(self):
         # Loading a card rebuilds the list; the scroll must not jump to the top.
         tmp = tempfile.TemporaryDirectory()
