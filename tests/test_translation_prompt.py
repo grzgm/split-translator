@@ -30,8 +30,10 @@ class CopyTranslationPromptTests(unittest.TestCase):
         carrier = SimpleNamespace(
             dictionary_panel=dictionary_panel,
             book_panel=book_panel,
-            statusBar=lambda: SimpleNamespace(
-                showMessage=lambda msg, *a: messages.append(msg)
+            # The window reports through the status bar's show_message (see
+            # status_bar.py); these notes are transient, not dismissible notices.
+            status_bar=SimpleNamespace(
+                show_message=lambda msg, *a: messages.append(msg)
             ),
         )
         return carrier, messages

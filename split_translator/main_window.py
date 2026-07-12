@@ -28,6 +28,7 @@ from .history import HistoryPanel
 from .book_panel import BookPanel
 from .shortcuts import SHORTCUTS
 from .shortcuts_dialog import ShortcutsDialog
+from .status_bar import StatusBar
 
 
 class TranslationTool(QMainWindow):
@@ -80,10 +81,10 @@ class TranslationTool(QMainWindow):
         main_layout.addWidget(content_splitter)
         self.dictionary_panel.set_focus()
 
-        # Prepare status bar. Drop any highlight style once the bar goes empty
-        # (for example when a timed notice clears) so the colour does not linger.
-        self.statusBar().showMessage("", 0)
-        self.statusBar().messageChanged.connect(self._on_status_message_changed)
+        # The status bar owns its own highlighting, arrival flash and close
+        # button (see status_bar.py); the window only says what to show.
+        self.status_bar = StatusBar(self)
+        self.setStatusBar(self.status_bar)
 
         self.flashcard_dock = QDockWidget("Flashcard", self)
         self.flashcard_dock.setWidget(self.flashcard_panel)
@@ -134,7 +135,9 @@ class TranslationTool(QMainWindow):
         # A permanent widget sits on the right of the status bar and is never
         # hidden by showMessage. (A normal addWidget would be covered the moment
         # a status notice is shown, which is why the button kept disappearing.)
-        self.statusBar().addPermanentWidget(view_button)
+        # It is added after the bar's own close button, so it sits to the right
+        # of it and the close button stays next to the notice text.
+        self.status_bar.addPermanentWidget(view_button)
 
     def connect_signals(self):
         # A dictionary lookup records history and drives the book search.
@@ -177,12 +180,12 @@ class TranslationTool(QMainWindow):
             self.flashcard_panel.set_audio
         )
         self.flashcard_panel.card_saved.connect(
-            lambda headword: self.statusBar().showMessage(
-                f'Saved flashcard "{headword}"', 4000
+            lambda headword: self.status_bar.show_message(
+                f'Saved flashcard "{headword}"'
             )
         )
         self.flashcard_panel.save_rejected.connect(
-            lambda message: self.statusBar().showMessage(message, 4000)
+            self.status_bar.show_message
         )
         # Selecting a flashcard (saved-list click or graph activation) looks its
         # headword up in the dictionary and the book, but records no history and
@@ -218,23 +221,21 @@ class TranslationTool(QMainWindow):
         self.book_panel.search(word)
 
     def show_previous_search_notice(self, word: str, formatted_date: str):
-        self.statusBar().setStyleSheet(
-            "background-color: #fff3cd; color: #856404;"
-        )
-        self.statusBar().showMessage(
-            f'"{word}" was previously searched on {formatted_date}', 0
+        # A notice, not a timed message: it stays until dismissed, so a word you
+        # have already looked up cannot be missed by glancing away.
+        self.status_bar.show_notice(
+            f'"{word}" was previously searched on {formatted_date}'
         )
 
     def show_correction_unavailable(self, word: str):
         # Get Correction found nothing to apply (no spelling suggestion on the
         # Google meaning page, or the page hit an anti-bot wall). Say so instead
-        # of failing silently. Clear any lingering "previous search" style first.
-        self.statusBar().setStyleSheet("")
+        # of failing silently.
         if word:
             message = f'No spelling correction found for "{word}"'
         else:
             message = "No word to correct"
-        self.statusBar().showMessage(message, 4000)
+        self.status_bar.show_message(message)
 
     def _resolve_handler(self, handler: str):
         # Resolve a registry handler name to the bound method it names, walking
@@ -296,23 +297,23 @@ class TranslationTool(QMainWindow):
         # "Original only, no fuzzing" rule; a status note explains why.
         word = self.dictionary_panel.search_input.text().strip()
         if not word:
-            self.statusBar().showMessage(
-                "No search word to build a translation prompt", 4000
+            self.status_bar.show_message(
+                "No search word to build a translation prompt"
             )
             return
 
         def _on_sentence(sentence):
             sentence = (sentence or "").strip()
             if not sentence:
-                self.statusBar().showMessage(
-                    "No book sentence for the current match", 4000
+                self.status_bar.show_message(
+                    "No book sentence for the current match"
                 )
                 return
             prompt = (
                 f'Translate "{word}" to Polish in the context of "{sentence}"'
             )
             QApplication.clipboard().setText(prompt)
-            self.statusBar().showMessage("Copied translation prompt", 4000)
+            self.status_bar.show_message("Copied translation prompt")
 
         self.book_panel.current_match_sentence(_on_sentence)
 
@@ -473,21 +474,14 @@ class TranslationTool(QMainWindow):
             if row is not None and not row.pos_combo.currentText().strip():
                 row.pos_combo.setCurrentText(pos)
 
-    def _on_status_message_changed(self, message: str):
-        if not message:
-            self.statusBar().setStyleSheet("")
-
     def on_grammar_grabbed(self, data):
         if not data or not data.get("plural"):
             return
         word = self.dictionary_panel.search_input.text().strip()
         label = f'"{word}" is plural' if word else "This word is plural"
-        # Same yellow highlight as the previously-searched notice; a timeout so it
-        # clears on its own.
-        self.statusBar().setStyleSheet(
-            "background-color: #fff3cd; color: #856404;"
-        )
-        self.statusBar().showMessage(label, 6000)
+        # A notice like the previously-searched one: highlighted, and dismissed
+        # by hand rather than on a timeout.
+        self.status_bar.show_notice(label)
 
     def on_book_sentence_matched(self, sentence):
         # A book match on the Original edition supplies the sentence around it.
