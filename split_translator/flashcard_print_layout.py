@@ -19,11 +19,13 @@ class PageSpec:
     margin_mm: float = 8.0
     card_w_mm: float = 72.0
     card_h_mm: float = 65.0
-    # Duplex registration nudge: how many mm to raise the back sheet so it lands
-    # on its front despite the printer's mechanical two-sided offset. Positive
-    # moves the back up. Defaults to 3mm to compensate the known printer drift; 0
-    # applies no shift.
+    # Duplex registration nudge: how many mm to shift the back sheet so it lands
+    # on its front despite the printer's mechanical two-sided offset. back_offset_mm
+    # is the vertical nudge (positive moves the back up); back_offset_x_mm is the
+    # horizontal nudge (positive moves the back right). Vertical defaults to 3mm to
+    # compensate the known printer drift; 0 on either axis applies no shift there.
     back_offset_mm: float = 3.0
+    back_offset_x_mm: float = 0.0
 
 
 PAGE = PageSpec()
@@ -116,19 +118,24 @@ def render_card_tile(card: Card, side: str) -> str:
 
 
 def _fmt_mm(value: float) -> str:
-    """Format a mm length without a trailing ``.0`` (3.0 -> "3", 2.5 -> "2.5")."""
+    """Format a mm length without a trailing ``.0`` (3.0 -> "3", 2.5 -> "2.5").
+    Negative zero is normalised to "0" so a zero axis never reads "-0"."""
+    if value == 0:
+        value = 0.0
     return f"{value:g}"
 
 
 def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
     star_css = ".star { position: absolute; top: 3mm; right: 3mm; }" if has_starred else ""
-    # Raise the back sheet by the configured duplex nudge (positive = up). Emit
-    # nothing when it is zero so there is no needless transform.
-    back_transform = (
-        f" transform: translateY(-{_fmt_mm(page.back_offset_mm)}mm);"
-        if page.back_offset_mm
-        else ""
-    )
+    # Shift the back sheet by the configured duplex nudge: positive vertical moves
+    # it up (negative Y), positive horizontal moves it right (positive X). Emit a
+    # transform only when at least one axis is non-zero.
+    if page.back_offset_mm or page.back_offset_x_mm:
+        dx = _fmt_mm(page.back_offset_x_mm)
+        dy = _fmt_mm(-page.back_offset_mm)
+        back_transform = f" transform: translate({dx}mm, {dy}mm);"
+    else:
+        back_transform = ""
     return f"""
 /* The @page margin is left at 0 and the page margin is applied as padding on a
    full-page sheet box in the print block below. Relying on the @page margin put
@@ -192,13 +199,23 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      printer's mechanical two-sided offset. */
   .sheet--back {{ justify-content: end;{back_transform} }}
   /* Optional cut guides between the tightly packed cards, toggled by a body
-     class. outline (not border) is used so the line never consumes layout space
-     or shifts the card content; with no offset, adjacent tiles' shared edges
-     coincide into a single line rather than two. The web engine's PDF export
-     clamps every stroke to about 0.75pt, so this is as thin as a printed line
-     can be. The higher specificity also restores the line on an overflow tile,
-     whose screen-only red outline is cleared above. */
-  body.print-cut-lines .tile {{ outline: 0.1mm solid #000000; outline-offset: 0; }}
+     class. Each interior line is drawn exactly once: every tile draws its top
+     and left edge, the last column adds a right edge and the last row a bottom
+     edge, so a shared edge is never drawn twice (which would double its
+     thickness). A thin border with box-sizing: border-box keeps the tile at its
+     exact size. The web engine's PDF export clamps every stroke to about 0.75pt,
+     so this is as thin as a printed line can be. Empty trailing cells are still
+     tiles, so the grid (padded to a full page) always draws a complete block. */
+  body.print-cut-lines .tile {{
+    border-top: 0.1mm solid #000000;
+    border-left: 0.1mm solid #000000;
+  }}
+  body.print-cut-lines .tile:nth-child({cols}n) {{
+    border-right: 0.1mm solid #000000;
+  }}
+  body.print-cut-lines .tile:nth-last-child(-n+{cols}) {{
+    border-bottom: 0.1mm solid #000000;
+  }}
 }}
 @media screen {{
   body {{ background: #e9ebf0; padding: 16px; }}
@@ -211,12 +228,22 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
     margin-bottom: 24px;
     align-items: flex-start;
   }}
-  /* Each sheet is drawn as a clearly bordered page with a caption. */
+  /* Show the whole physical page on screen (not just the card block): the sheet
+     is the full paper size with the margin as padding, so the empty page margins
+     around the cards are visible and it is clear how the cards sit on the page.
+     align-content keeps the grid at the top of the page as it prints. */
   .sheet {{
+    width: {int(page.paper_w_mm)}mm;
+    height: {int(page.paper_h_mm)}mm;
+    padding: {int(page.margin_mm)}mm;
+    align-content: start;
     border: 1px solid #7a7f8a;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
     background: #ffffff;
   }}
+  /* The back grid sits where it will print: right-aligned. (The duplex nudge is
+     print-only, so it is not applied on screen.) */
+  .sheet--back {{ justify-content: end; }}
   .sheet-caption {{
     display: block;
     font-family: "Inter", sans-serif;

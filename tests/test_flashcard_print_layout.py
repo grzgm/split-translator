@@ -160,31 +160,47 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertIn(f"height: {int(PAGE.paper_h_mm)}mm", print_block)
         self.assertIn(f"padding: {int(PAGE.margin_mm)}mm", print_block)
 
-    def test_print_cut_lines_are_a_thin_print_only_outline(self):
-        # A hairline cut guide can be printed between the tightly-packed cards.
-        # It must be print-only, gated on a body class (so it is a toggle), and
-        # use outline (not border) so it never shifts the card content.
+    def test_print_cut_lines_draw_each_edge_once(self):
+        # A hairline cut guide is printed between the tightly-packed cards, toggled
+        # by a body class (print-only). Each shared edge is drawn exactly once: a
+        # tile draws its top and left, the last column adds a right edge and the
+        # last row a bottom edge. Drawing all four sides on every tile would double
+        # every interior line's thickness, which is the bug this avoids.
+        cols, _rows = grid_dims(PAGE)
         html = render_html(_cards(1))
         print_block = html.split("@media print")[1].split("@media screen")[0]
         self.assertIn("body.print-cut-lines .tile", print_block)
-        self.assertIn("outline", print_block)
-        # It is a hairline (sub-millimetre) and uses outline, not border, so it
-        # does not consume layout space.
-        self.assertNotIn("body.print-cut-lines .tile { border", print_block)
+        self.assertIn("border-top", print_block)
+        self.assertIn("border-left", print_block)
+        # The outer right/bottom edges are drawn once via the last column/row.
+        self.assertIn(f".tile:nth-child({cols}n)", print_block)
+        self.assertIn(f".tile:nth-last-child(-n+{cols})", print_block)
 
     def test_back_offset_shifts_the_back_sheet_up_in_print(self):
-        # A per-printer duplex registration nudge: the back sheet can be moved up
-        # by a configurable number of mm so it lands on its front despite the
-        # printer's mechanical offset. It is a print-only vertical transform on
-        # the back sheet, and the default moves the back up by 3mm.
+        # A per-printer duplex registration nudge: the back sheet can be moved by
+        # a configurable number of mm so it lands on its front despite the
+        # printer's mechanical offset. It is a print-only transform on the back
+        # sheet; the default raises the back by 3mm (negative Y).
         from dataclasses import replace
         html = render_html(_cards(1), replace(PAGE, back_offset_mm=3.0))
         print_block = html.split("@media print")[1].split("@media screen")[0]
-        self.assertIn("translateY(-3", print_block)
-        # Zero offset draws no transform (nothing to compensate).
-        zero = render_html(_cards(1), replace(PAGE, back_offset_mm=0.0))
+        self.assertIn("translate(0mm, -3mm)", print_block)
+        # Zero offset on both axes draws no transform (nothing to compensate).
+        zero = render_html(
+            _cards(1), replace(PAGE, back_offset_mm=0.0, back_offset_x_mm=0.0)
+        )
         zero_print = zero.split("@media print")[1].split("@media screen")[0]
-        self.assertNotIn("translateY", zero_print)
+        self.assertNotIn("translate", zero_print)
+
+    def test_back_offset_horizontal_shifts_the_back_sheet_right(self):
+        # The horizontal nudge moves the back right (positive X) for printers that
+        # also drift sideways.
+        from dataclasses import replace
+        html = render_html(
+            _cards(1), replace(PAGE, back_offset_mm=0.0, back_offset_x_mm=2.0)
+        )
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        self.assertIn("translate(2mm, 0mm)", print_block)
 
     def test_default_page_has_a_3mm_back_offset(self):
         # The shipped default compensates the known printer drift.

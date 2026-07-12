@@ -68,23 +68,36 @@ class PrintView(QWidget):
         # Duplex registration nudge: raises the printed back side by this many mm
         # so it lands on its front despite the printer's mechanical two-sided
         # offset. Only affects the printed output, not the on-screen preview.
-        back_offset_label = QLabel("Back offset (mm)")
+        back_offset_label = QLabel("Back offset up (mm)")
         self.back_offset_spin = QDoubleSpinBox()
         self.back_offset_spin.setRange(-15.0, 15.0)
         self.back_offset_spin.setSingleStep(0.5)
         self.back_offset_spin.setValue(PAGE.back_offset_mm)
         self.back_offset_spin.setToolTip(
             "Raise the printed back side by this many mm so it lines up with its "
-            "front (compensates the printer's two-sided registration). Only "
-            "affects the printed output, not the preview."
+            "front (compensates the printer's vertical two-sided registration). "
+            "Only affects the printed output, not the preview."
         )
         self.back_offset_spin.valueChanged.connect(self._on_back_offset_changed)
+        back_offset_x_label = QLabel("right (mm)")
+        self.back_offset_x_spin = QDoubleSpinBox()
+        self.back_offset_x_spin.setRange(-15.0, 15.0)
+        self.back_offset_x_spin.setSingleStep(0.5)
+        self.back_offset_x_spin.setValue(PAGE.back_offset_x_mm)
+        self.back_offset_x_spin.setToolTip(
+            "Shift the printed back side right by this many mm (compensates the "
+            "printer's horizontal two-sided registration). Only affects the "
+            "printed output, not the preview."
+        )
+        self.back_offset_x_spin.valueChanged.connect(self._on_back_offset_changed)
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_cards)
         controls.addWidget(self.borders_checkbox)
         controls.addWidget(self.cut_lines_checkbox)
         controls.addWidget(back_offset_label)
         controls.addWidget(self.back_offset_spin)
+        controls.addWidget(back_offset_x_label)
+        controls.addWidget(self.back_offset_x_spin)
         controls.addStretch()
         controls.addWidget(self.print_button)
         outer.addLayout(controls)
@@ -102,9 +115,16 @@ class PrintView(QWidget):
     def back_offset(self) -> float:
         return self.back_offset_spin.value()
 
+    def back_offset_x(self) -> float:
+        return self.back_offset_x_spin.value()
+
     def _render(self) -> str:
-        """Build the print HTML for the current cards and back offset."""
-        page = replace(PAGE, back_offset_mm=self.back_offset())
+        """Build the print HTML for the current cards and back offsets."""
+        page = replace(
+            PAGE,
+            back_offset_mm=self.back_offset(),
+            back_offset_x_mm=self.back_offset_x(),
+        )
         return render_html(self._cards, page)
 
     def set_cards(self, cards: list[Card]) -> None:

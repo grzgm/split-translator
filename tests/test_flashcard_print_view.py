@@ -48,13 +48,19 @@ class PrintViewTests(unittest.TestCase):
         self.assertIsNotNone(view.back_offset_spin)
         self.assertEqual(view.back_offset(), 3.0)
 
-    def test_set_cards_uses_the_back_offset(self):
-        # The rendered HTML must reflect the chosen back offset, so changing the
+    def test_horizontal_back_offset_spinbox_defaults_to_zero(self):
+        view = PrintView()
+        self.assertIsNotNone(view.back_offset_x_spin)
+        self.assertEqual(view.back_offset_x(), 0.0)
+
+    def test_set_cards_uses_both_back_offsets(self):
+        # The rendered HTML must reflect the chosen back offsets, so changing a
         # spinbox actually moves the back sheet.
         view = PrintView()
         view.back_offset_spin.setValue(5.0)
+        view.back_offset_x_spin.setValue(2.0)
         html = view._render()
-        self.assertIn("translateY(-5mm)", html)
+        self.assertIn("translate(2mm, -5mm)", html)
 
 
 if __name__ == "__main__":

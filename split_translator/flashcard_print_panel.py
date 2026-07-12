@@ -3,7 +3,12 @@ checkboxes choose which cards to print. No dictionary/search wiring (the Print
 window never connects those signals) and no card linking."""
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtWidgets import QListWidgetItem
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QListWidgetItem,
+    QPushButton,
+    QWidget,
+)
 
 from .flashcard_editor_base import FlashcardEditorBase
 from .flashcards import Card
@@ -89,6 +94,36 @@ class FlashcardPrintPanel(FlashcardEditorBase):
 
     def _loaded_row_is_checkable(self) -> bool:
         return True
+
+    def _saved_controls_widget(self) -> QWidget:
+        # An "Unselect all" button under the saved list, to empty the print
+        # selection in one click.
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.unselect_all_button = QPushButton("Unselect all")
+        self.unselect_all_button.setToolTip("Untick every card (clear the print selection)")
+        self.unselect_all_button.clicked.connect(self.clear_selection)
+        row.addWidget(self.unselect_all_button)
+        row.addStretch()
+        return widget
+
+    def clear_selection(self) -> None:
+        """Untick every card and empty the print selection. Emits
+        selection_changed once when something was actually selected."""
+        if not self._selected_ids:
+            return
+        self._selected_ids.clear()
+        self._range_anchor_row = None
+        self._suppress_item_changed = True
+        try:
+            for i in range(self.saved_list.count()):
+                item = self.saved_list.item(i)
+                if item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+        finally:
+            self._suppress_item_changed = False
+        self.selection_changed.emit()
 
     # --- selection state ------------------------------------------------
 

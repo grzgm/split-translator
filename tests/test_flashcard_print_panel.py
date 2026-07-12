@@ -183,6 +183,38 @@ class FlashcardPrintPanelTests(unittest.TestCase):
         self._shift_click_checkbox(panel, 1, shift=True)
         self.assertEqual(panel.selected_ids(), ["b"])
 
+    def test_unselect_all_clears_the_selection(self):
+        panel, _ = self._panel()
+        self._item(panel, "a").setCheckState(Qt.CheckState.Checked)
+        self._item(panel, "c").setCheckState(Qt.CheckState.Checked)
+        panel.clear_selection()
+        self.assertEqual(panel.selected_ids(), [])
+        self.assertEqual(
+            self._item(panel, "a").checkState(), Qt.CheckState.Unchecked
+        )
+        self.assertEqual(
+            self._item(panel, "c").checkState(), Qt.CheckState.Unchecked
+        )
+
+    def test_unselect_all_emits_selection_changed(self):
+        panel, _ = self._panel()
+        self._item(panel, "a").setCheckState(Qt.CheckState.Checked)
+        seen = []
+        panel.selection_changed.connect(lambda: seen.append(True))
+        panel.clear_selection()
+        self.assertTrue(seen)
+
+    def test_unselect_all_is_a_noop_when_nothing_selected(self):
+        panel, _ = self._panel()
+        seen = []
+        panel.selection_changed.connect(lambda: seen.append(True))
+        panel.clear_selection()
+        self.assertEqual(seen, [])
+
+    def test_has_an_unselect_all_button(self):
+        panel, _ = self._panel()
+        self.assertIsNotNone(panel.unselect_all_button)
+
     def test_no_link_controls(self):
         panel, _ = self._panel()
         self.assertFalse(hasattr(panel, "link_category_combo"))
