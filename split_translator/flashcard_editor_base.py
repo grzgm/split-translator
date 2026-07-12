@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -123,6 +124,60 @@ class SavedCardsList(QListWidget):
         self.key_handled.emit()
 
 
+class PosPopupView(QListView):
+    """The drop-down list of the POS combo, where a letter picks rather than seeks.
+
+    Qt's own popup treats letters as an incremental *search*: it accumulates them
+    into a prefix, only moves the highlight, and never commits, so choosing "v"
+    means typing it and then pressing Enter or clicking. Worse for these codes,
+    the prefix is sticky. Typing "v" then "a" searches for "va", matches nothing,
+    and the highlight stops responding until the prefix times out, which makes the
+    list feel dead depending on how fast you type.
+
+    Here a plain letter is a choice instead. It jumps to the next code starting
+    with that letter, emits ``row_chosen`` so the owner can commit it, and leaves
+    the popup open, so the value is set the moment the key is pressed and you can
+    keep pressing to change your mind. Because several codes share a first letter,
+    repeats cycle: "a" walks adj then adv, "p" walks pre, pro, phr. Any other key
+    (arrows, Enter, Escape) falls through to the default handler untouched."""
+
+    #: Emitted with the row a letter key just picked, for the owner to commit.
+    row_chosen = Signal(int)
+
+    def keyPressEvent(self, event) -> None:
+        text = event.text().strip().lower()
+        # Bare letters only. Modified keys stay with Qt so shortcuts still work.
+        if len(text) == 1 and text.isalpha() and not event.modifiers():
+            if self._jump_to_letter(text):
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _jump_to_letter(self, letter: str) -> bool:
+        """Highlight the next code starting with ``letter``, cycling on repeats.
+
+        Returns False when no code starts with it, leaving the key to Qt so the
+        current value is not disturbed."""
+        model = self.model()
+        if model is None:
+            return False
+        rows = [
+            row
+            for row in range(model.rowCount())
+            if str(model.index(row, 0).data() or "").lower().startswith(letter)
+        ]
+        if not rows:
+            return False
+        # Step past the current row so pressing the same letter again advances to
+        # the next code sharing it, and wrap back to the first once past the end.
+        current = self.currentIndex().row()
+        later = [row for row in rows if row > current]
+        row = later[0] if later else rows[0]
+        self.setCurrentIndex(model.index(row, 0))
+        self.row_chosen.emit(row)
+        return True
+
+
 class SenseRow(QFrame):
     """One editable sense: POS combo, Polish field, English field, a remove button
     and a small list of usage examples beneath them."""
@@ -148,6 +203,12 @@ class SenseRow(QFrame):
 
         self.pos_combo = QComboBox()
         self.pos_combo.setEditable(True)
+        # A letter typed in the open drop-down picks that code straight away and
+        # keeps the list up (see PosPopupView). The view only highlights; setting
+        # the value is the combo's job, so the row commits what the view picked.
+        self.pos_popup = PosPopupView()
+        self.pos_combo.setView(self.pos_popup)
+        self.pos_popup.row_chosen.connect(self.pos_combo.setCurrentIndex)
         self.pos_combo.addItems(self.POS_OPTIONS)
         self.pos_combo.setCurrentText("")
         self.pos_combo.setMaximumWidth(70)
