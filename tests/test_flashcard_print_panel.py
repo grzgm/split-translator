@@ -215,6 +215,35 @@ class FlashcardPrintPanelTests(unittest.TestCase):
         panel, _ = self._panel()
         self.assertIsNotNone(panel.unselect_all_button)
 
+    def test_saved_list_has_autoscroll_disabled(self):
+        # Selecting a row must not scroll it into view, or clicking a card to
+        # load it would move the list out from under the click.
+        panel, _ = self._panel()
+        self.assertFalse(panel.saved_list.hasAutoScroll())
+
+    def test_loading_a_card_keeps_the_saved_list_scroll_position(self):
+        # Loading a card rebuilds the list; the scroll must not jump to the top.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [Card(headword=f"c{i:03d}", id=str(i)) for i in range(200)]
+        panel = FlashcardPrintPanel(store)
+        panel._refresh_saved_list()
+        panel.resize(400, 500)
+        panel.show()
+        app.processEvents()
+        scrollbar = panel.saved_list.verticalScrollBar()
+        self.assertGreater(scrollbar.maximum(), 0, "list must be scrollable")
+        scrollbar.setValue(120)
+        app.processEvents()
+
+        # Drive the real click path: selecting the row then loading the card.
+        panel.saved_list.setCurrentRow(100)
+        panel.load_card(store.cards[100])
+        app.processEvents()
+        self.assertEqual(scrollbar.value(), 120)
+
     def test_no_link_controls(self):
         panel, _ = self._panel()
         self.assertFalse(hasattr(panel, "link_category_combo"))

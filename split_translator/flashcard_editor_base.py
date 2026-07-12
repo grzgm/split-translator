@@ -479,6 +479,11 @@ class FlashcardEditorBase(QWidget):
         self.saved_filter.textChanged.connect(self._apply_saved_filter)
         saved_layout.addWidget(self.saved_filter)
         self.saved_list = QListWidget()
+        # Clicking a row selects it, and a selected item is normally scrolled into
+        # view. When a card partway down the list is clicked to load it, that
+        # auto-scroll would move the list out from under the click, so turn it off
+        # (the scroll position is preserved across the load instead).
+        self.saved_list.setAutoScroll(False)
         self.saved_list.setToolTip(
             "Click a card's text to load it; tick its box to link it in the chosen category"
         )
@@ -906,6 +911,14 @@ class FlashcardEditorBase(QWidget):
         return self._loaded_icon
 
     def _refresh_saved_list(self):
+        # clear() discards the list's scroll offset, so a rebuild would jump the
+        # view back to the top. Loading a card rebuilds the list only to move the
+        # loaded-row markers (dot/bold/tint), so clicking a card partway down
+        # would otherwise scroll the list out from under the click. Save and
+        # restore the scroll position around the rebuild, clamped to the new
+        # range.
+        scrollbar = self.saved_list.verticalScrollBar()
+        scroll_value = scrollbar.value()
         self._suppress_item_changed = True
         try:
             self.saved_list.clear()
@@ -931,6 +944,14 @@ class FlashcardEditorBase(QWidget):
             self._apply_saved_filter()
         finally:
             self._suppress_item_changed = False
+        # Restore the pre-rebuild scroll position. The scrollbar range is not
+        # recomputed until the view lays its items out, so right after re-adding
+        # the rows maximum() can still report a stale (smaller) value; clamping
+        # against that would land the view short of where it was. Force the item
+        # layout first so maximum() is accurate, then restore (clamped in case the
+        # list genuinely shrank, e.g. a card was deleted).
+        self.saved_list.doItemsLayout()
+        scrollbar.setValue(min(scroll_value, scrollbar.maximum()))
         self._on_saved_list_refreshed()
 
     def _apply_saved_filter(self, text: str = "") -> None:

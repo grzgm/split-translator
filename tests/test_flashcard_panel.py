@@ -68,6 +68,67 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "address2")
         self.assertFalse(panel.state.altered)
 
+    def test_saved_list_has_autoscroll_disabled(self):
+        # A selected item is normally scrolled into view. Clicking a card to load
+        # it selects it, so with auto-scroll on the list would jump the clicked
+        # row into view and move out from under the click. It must be off.
+        panel, _ = self._panel()
+        self.assertFalse(panel.saved_list.hasAutoScroll())
+
+    def test_loading_a_card_keeps_the_saved_list_scroll_position(self):
+        # Clicking a card partway down the saved list loads it, which rebuilds
+        # the list to move the loaded-row markers. That rebuild must not scroll
+        # the list back to the top under the click.
+        panel, store = self._panel()
+        store.cards = [Card(headword=f"card{i:03d}", id=str(i)) for i in range(200)]
+        panel._refresh_saved_list()
+        panel.resize(400, 500)
+        panel.show()
+        app.processEvents()
+        scrollbar = panel.saved_list.verticalScrollBar()
+        self.assertGreater(scrollbar.maximum(), 0, "list must be scrollable")
+        scrollbar.setValue(120)
+        app.processEvents()
+
+        # Drive the real click path: selecting the row then the itemClicked slot.
+        panel.saved_list.setCurrentRow(100)
+        panel._on_saved_clicked(panel.saved_list.item(100))
+        app.processEvents()
+        self.assertEqual(scrollbar.value(), 120)
+
+    def test_plain_refresh_keeps_the_saved_list_scroll_position(self):
+        panel, store = self._panel()
+        store.cards = [Card(headword=f"card{i:03d}", id=str(i)) for i in range(200)]
+        panel._refresh_saved_list()
+        panel.resize(400, 500)
+        panel.show()
+        app.processEvents()
+        scrollbar = panel.saved_list.verticalScrollBar()
+        scrollbar.setValue(90)
+        app.processEvents()
+
+        panel._refresh_saved_list()
+        app.processEvents()
+        self.assertEqual(scrollbar.value(), 90)
+
+    def test_refresh_clamps_scroll_when_the_list_shrinks(self):
+        # A card deleted while scrolled to the bottom leaves a shorter list; the
+        # restored scroll is clamped to the new maximum rather than exceeding it.
+        panel, store = self._panel()
+        store.cards = [Card(headword=f"card{i:03d}", id=str(i)) for i in range(200)]
+        panel._refresh_saved_list()
+        panel.resize(400, 500)
+        panel.show()
+        app.processEvents()
+        scrollbar = panel.saved_list.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        app.processEvents()
+
+        store.cards = store.cards[:5]
+        panel._refresh_saved_list()
+        app.processEvents()
+        self.assertLessEqual(scrollbar.value(), scrollbar.maximum())
+
     def test_saving_new_card_enters_editing_mode_of_that_card(self):
         panel, store = self._panel()
         panel.headword_input.setText("newword")
