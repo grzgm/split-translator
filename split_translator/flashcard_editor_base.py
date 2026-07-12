@@ -131,7 +131,10 @@ class SenseRow(QFrame):
     remove_requested = Signal(object)
     edited = Signal()
 
-    POS_OPTIONS = ["n", "v", "adj", "adv", "prep", "conj", "pron", "phrase"]
+    # Every code is at most three letters, so the combo (and the printed card)
+    # stays narrow. Keep these in sync with ``DictionaryPanel._POS_MAP``, which
+    # is what the capture buttons feed into this combo.
+    POS_OPTIONS = ["n", "v", "adj", "adv", "pre", "con", "pro", "phr"]
 
     def __init__(self, parent=None):
         super().__init__(parent)

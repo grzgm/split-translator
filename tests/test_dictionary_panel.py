@@ -8,8 +8,26 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineCore import QWebEngineProfile
 
 from split_translator.dictionary_panel import DictionaryPanel
+from split_translator.flashcard_editor_base import SenseRow
 
 app = QApplication.instance() or QApplication([])
+
+
+class PosCodeTests(unittest.TestCase):
+    def test_codes_are_at_most_three_letters(self):
+        for code in SenseRow.POS_OPTIONS:
+            self.assertLessEqual(len(code), 3, code)
+
+    def test_codes_are_distinct(self):
+        self.assertEqual(
+            len(SenseRow.POS_OPTIONS), len(set(SenseRow.POS_OPTIONS))
+        )
+
+    def test_captured_codes_are_offered_by_the_editor(self):
+        # The capture buttons write these codes straight into the sense combo,
+        # so every mapped code has to be one the combo offers.
+        for label, code in DictionaryPanel._POS_MAP.items():
+            self.assertIn(code, SenseRow.POS_OPTIONS, label)
 
 
 class CorrectionTests(unittest.TestCase):

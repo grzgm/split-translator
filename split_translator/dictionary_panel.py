@@ -372,16 +372,18 @@ class DictionaryPanel(QWidget):
     # --- inject capture buttons into the Cambridge views ----------------
 
     # POS labels Cambridge uses, mapped to the editor's short dropdown codes.
+    # The codes are at most three letters and must match
+    # ``SenseRow.POS_OPTIONS``, which is the list they are chosen from.
     _POS_MAP = {
         "noun": "n",
         "verb": "v",
         "adjective": "adj",
         "adverb": "adv",
-        "preposition": "prep",
-        "conjunction": "conj",
-        "pronoun": "pron",
-        "phrase": "phrase",
-        "idiom": "phrase",
+        "preposition": "pre",
+        "conjunction": "con",
+        "pronoun": "pro",
+        "phrase": "phr",
+        "idiom": "phr",
     }
 
     # Injected on the Cambridge views: builds two small buttons next to each
