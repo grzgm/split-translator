@@ -369,11 +369,18 @@ class DictionaryPanel(QWidget):
             data = {}
         self.grammar_grabbed.emit(data)
 
-    # --- inject capture buttons into the Cambridge views ----------------
+    # --- inject capture buttons into the dictionary views ----------------
 
-    # POS labels Cambridge uses, mapped to the editor's short dropdown codes.
-    # The codes are at most three letters and must match
-    # ``SenseRow.POS_OPTIONS``, which is the list they are chosen from.
+    # Each site labels a sense's part of speech in its own words and its own
+    # markup, so each gets a label-to-code map and a rule saying where the label
+    # sits relative to the element the capture button is attached to. Every code
+    # is at most three letters and must be one of ``SenseRow.POS_OPTIONS``, the
+    # list the editor's dropdown offers, because a capture writes it straight
+    # into that dropdown. A label that is not in the map yields no code at all;
+    # see _POS_RULE_JS for why that matters.
+
+    # Cambridge labels senses in English, in a .pos.dpos element inside the
+    # entry block that contains the definition.
     _POS_MAP = {
         "noun": "n",
         "verb": "v",
@@ -386,31 +393,179 @@ class DictionaryPanel(QWidget):
         "idiom": "phr",
     }
 
-    # Injected on the Cambridge views: builds two small buttons next to each
-    # definition and translation and routes clicks through the QWebChannel
-    # bridge. __PAIRS__ is a JSON array of {selector, field} objects, so one
-    # view can carry both English-definition and Polish-translation buttons
-    # (the English-Polish page shows both). Placeholders __CHANNEL_JS__ (Qt's
-    # qwebchannel.js client), __PAIRS__ and __POS_MAP__ are substituted with
-    # str.replace, not str.format, because the embedded qwebchannel.js is full
-    # of braces that would break formatting.
+    # bab.la labels each quick-result group in its heading, as a braced suffix:
+    # "shed {vb}", "quickly {adv.}". It abbreviates inconsistently (some labels
+    # are spelled out, some are truncated with a trailing dot), so both spellings
+    # of each are listed. The braces are stripped before the lookup.
+    #
+    # The same span.suffix class also carries gender ({f}, {m}), verb aspect
+    # ({ipf. v.}, {pf. v.}), plural ({pl}), conjugation hints and "also:" synonym
+    # lists. None of those are parts of speech and none are listed here, so they
+    # resolve to no code rather than a wrong one.
+    _BABLA_POS_MAP = {
+        "noun": "n",
+        "vb": "v",
+        "verb": "v",
+        "adj.": "adj",
+        "adjective": "adj",
+        "adv.": "adv",
+        "adverb": "adv",
+        "prep.": "pre",
+        "preposition": "pre",
+        "conj.": "con",
+        "conjunction": "con",
+        "pron.": "pro",
+        "pronoun": "pro",
+        "phrase": "phr",
+        "idiom": "phr",
+    }
+
+    # diki labels each meaning group in Polish, in a span.partOfSpeech inside the
+    # header above the group. "przyslowek" without the diacritic is not a spelling
+    # diki uses; only the real one is listed.
+    _DIKI_POS_MAP = {
+        "rzeczownik": "n",
+        "czasownik": "v",
+        "przymiotnik": "adj",
+        "przysłówek": "adv",
+        "przyimek": "pre",
+        "spójnik": "con",
+        "zaimek": "pro",
+        "idiom": "phr",
+    }
+
+    # How to find the label element, given the element a capture button is on.
+    # Two shapes cover every site:
+    #
+    # "ancestor": the label lives inside a block that contains the sense. Walk up
+    #     to the first matching container and look inside it. This is Cambridge.
+    #
+    # "sibling": the label lives in a heading that sits *before* the list of
+    #     senses, as its sibling rather than its ancestor. Walk up to the list,
+    #     then walk backwards through preceding siblings until a label turns up.
+    #     This is bab.la and diki, whose headings ("shed {vb}", "rzeczownik") name
+    #     the part of speech for the whole list that follows.
+    #
+    # A site with no rule (the Google pane) sends no part of speech.
+    _CAMBRIDGE_POS_RULE = {
+        "mode": "ancestor",
+        # Nearest first: a definition block is more specific than the entry body
+        # it sits in, so it wins when both are present.
+        "containers": [".def-block", ".pr.entry-body__el", ".entry-body__el", ".di-body"],
+        "label": ".pos.dpos",
+    }
+    _BABLA_POS_RULE = {
+        "mode": "sibling",
+        # Climb to the *wrapper* around the translations, not to the list itself:
+        # bab.la nests ul.sense-group-results inside a div.quick-result-overview,
+        # and it is that wrapper, not the list, which is the heading's sibling.
+        # (The list's own previous sibling is only a language flag.)
+        "list": "div.quick-result-overview",
+        # Matched against each preceding sibling itself and against its contents,
+        # so this is relative to the heading block (div.quick-result-option), not
+        # an absolute path from the document.
+        "label": "h3 span.suffix",
+        # "{vb}" is the label; the braces are markup, not part of the word.
+        "strip": "{}",
+    }
+    _DIKI_POS_RULE = {
+        "mode": "sibling",
+        "list": "ol.foreignToNativeMeanings",
+        "label": "span.partOfSpeech",
+    }
+
+    # Injected on every capturing view: builds the small buttons next to each
+    # definition, translation and example, and routes clicks through the
+    # QWebChannel bridge. One script serves every site; what differs per view is
+    # substituted in.
+    #
+    # __PAIRS__ is a JSON array of {selector, field} objects, so one view can
+    # carry buttons for several fields (the English-Polish page shows both
+    # definitions and translations). __POS_RULE__ and __POS_MAP__ say where that
+    # site puts a sense's part of speech and what its labels are called.
+    #
+    # The placeholders are substituted with str.replace, not str.format, because
+    # the embedded qwebchannel.js is full of braces that would break formatting.
     _CAPTURE_JS_TEMPLATE = r"""
     (function() {
         __CHANNEL_JS__
         __BLOCK_PRON_JS__
 
         var pairs = __PAIRS__;
+        var posMap = __POS_MAP__;
+        var posRule = __POS_RULE__;
+
+        // Turn a label element's text into one of the editor's codes. An
+        // unmapped label (a gender or aspect marker, a wording the site has
+        // changed) gives "", which leaves the dropdown alone rather than
+        // filling it with something wrong.
+        function posCodeFrom(el) {
+            if (!el) { return ""; }
+            var word = el.textContent.trim().toLowerCase();
+            var strip = posRule.strip;
+            if (strip) {
+                for (var i = 0; i < strip.length; i++) {
+                    word = word.split(strip.charAt(i)).join('');
+                }
+                word = word.trim();
+            }
+            return posMap[word] || "";
+        }
+
+        // Read a code out of a block that may hold several label candidates.
+        // bab.la's heading, for one, holds a conjugation hint ("[shed|shed]")
+        // and the part of speech ("{verb}") in the same span.suffix class, in
+        // that order, so taking the first match would give up before reaching
+        // the real label. Take the first candidate that maps to a code.
+        function posCodeIn(block) {
+            if (!block) { return ""; }
+            if (block.matches && block.matches(posRule.label)) {
+                var own = posCodeFrom(block);
+                if (own) { return own; }
+            }
+            var labels = block.querySelectorAll
+                ? block.querySelectorAll(posRule.label) : [];
+            for (var i = 0; i < labels.length; i++) {
+                var code = posCodeFrom(labels[i]);
+                if (code) { return code; }
+            }
+            return "";
+        }
+
+        // The label sits inside a block that contains the sense: climb to the
+        // nearest such block and look inside it.
+        function posByAncestor(el) {
+            var containers = posRule.containers || [];
+            for (var i = 0; i < containers.length; i++) {
+                var block = el.closest(containers[i]);
+                if (!block) { continue; }
+                var code = posCodeIn(block);
+                if (code) { return code; }
+            }
+            return "";
+        }
+
+        // The label sits in a heading *before* the list of senses, not around
+        // it. Climb to the list, then walk backwards through earlier siblings
+        // until one yields a code. Stop at the first one that does: it is the
+        // heading for this list, and anything earlier belongs to a previous
+        // group with a different part of speech.
+        function posBySibling(el) {
+            var list = el.closest(posRule.list);
+            if (!list) { return ""; }
+            var node = list.previousElementSibling;
+            while (node) {
+                var code = posCodeIn(node);
+                if (code) { return code; }
+                node = node.previousElementSibling;
+            }
+            return "";
+        }
 
         function posCodeFor(el) {
-            var posMap = __POS_MAP__;
-            var block = el.closest('.pr.entry-body__el')
-                || el.closest('.entry-body__el') || el.closest('.di-body')
-                || document;
-            var posEl = (el.closest('.def-block') || block).querySelector('.pos.dpos')
-                || block.querySelector('.pos.dpos');
-            if (!posEl) { return ""; }
-            var word = posEl.textContent.trim().toLowerCase();
-            return posMap[word] || "";
+            if (posRule.mode === 'ancestor') { return posByAncestor(el); }
+            if (posRule.mode === 'sibling') { return posBySibling(el); }
+            return "";
         }
 
         function makeButton(label, title, onClick) {
@@ -557,48 +712,44 @@ class DictionaryPanel(QWidget):
         {"selector": "div.tw-bilingual-entry span.SvKTZc", "field": "polish"},
     ]
 
+    def _capture_config(self):
+        """Each capturing view, with the selectors its buttons attach to and the
+        part-of-speech lookup for the site it shows.
+
+        The Google "po polsku" pane has no part-of-speech markup at all, so it
+        gets an empty rule and captures with no code, as it always has."""
+        return [
+            (self.cambridge_en_view, self._EN_CAPTURE_PAIRS,
+             self._CAMBRIDGE_POS_RULE, self._POS_MAP),
+            (self.cambridge_pl_view, self._PL_CAPTURE_PAIRS,
+             self._CAMBRIDGE_POS_RULE, self._POS_MAP),
+            (self.babla_view, self._BABLA_CAPTURE_PAIRS,
+             self._BABLA_POS_RULE, self._BABLA_POS_MAP),
+            (self.diki_view, self._DIKI_CAPTURE_PAIRS,
+             self._DIKI_POS_RULE, self._DIKI_POS_MAP),
+            (self.google_translate_search, self._GOOGLE_PL_CAPTURE_PAIRS,
+             {}, {}),
+        ]
+
     def _setup_capture_buttons(self):
         channel = QWebChannel(self)
         channel.registerObject("captureBridge", self.capture_bridge)
-        # The Cambridge views, the bab.la view, the diki view and the Google
-        # "po polsku" view share the one bridge object.
-        self.cambridge_en_view.page().setWebChannel(channel)
-        self.cambridge_pl_view.page().setWebChannel(channel)
-        self.babla_view.page().setWebChannel(channel)
-        self.diki_view.page().setWebChannel(channel)
-        self.google_translate_search.page().setWebChannel(channel)
         self._capture_channel = channel
 
-        self.cambridge_en_view.loadFinished.connect(
-            lambda ok: self._inject_capture(
-                self.cambridge_en_view, self._EN_CAPTURE_PAIRS, ok
+        # Every capturing view shares the one bridge object, and each is injected
+        # with its own selectors and its own site's part-of-speech lookup.
+        for view, pairs, rule, pos_map in self._capture_config():
+            view.page().setWebChannel(channel)
+            view.loadFinished.connect(
+                lambda ok, v=view, p=pairs, r=rule, m=pos_map:
+                    self._inject_capture(v, p, ok, r, m)
             )
-        )
+
         # Once the English page loads from an app search, read the headword's
         # grammar (plural-only marker) and its pronunciation. _on_english_loaded
         # grabs only for the app's own search load, not a manual in-page one; the
         # flashcard editor then decides whether to use the result.
         self.cambridge_en_view.loadFinished.connect(self._on_english_loaded)
-        self.cambridge_pl_view.loadFinished.connect(
-            lambda ok: self._inject_capture(
-                self.cambridge_pl_view, self._PL_CAPTURE_PAIRS, ok
-            )
-        )
-        self.babla_view.loadFinished.connect(
-            lambda ok: self._inject_capture(
-                self.babla_view, self._BABLA_CAPTURE_PAIRS, ok
-            )
-        )
-        self.diki_view.loadFinished.connect(
-            lambda ok: self._inject_capture(
-                self.diki_view, self._DIKI_CAPTURE_PAIRS, ok
-            )
-        )
-        self.google_translate_search.loadFinished.connect(
-            lambda ok: self._inject_capture(
-                self.google_translate_search, self._GOOGLE_PL_CAPTURE_PAIRS, ok
-            )
-        )
 
     def _on_english_loaded(self, ok: bool):
         # Consume the armed flag on every English load, so a load that is not an
@@ -611,17 +762,27 @@ class DictionaryPanel(QWidget):
         self.grab_grammar()
         self.grab_pronunciation()
 
-    def _inject_capture(self, view, pairs, ok):
+    def _inject_capture(self, view, pairs, ok, pos_rule=None, pos_map=None):
         if not ok:
             return
-        js = (
+        js = self._capture_js(pairs, pos_rule, pos_map)
+        view.page().runJavaScript(js)
+
+    def _capture_js(self, pairs, pos_rule=None, pos_map=None) -> str:
+        """Fill the capture script for one view: its selectors, and the rule and
+        label map for reading a part of speech off the site it shows."""
+        if pos_rule is None:
+            pos_rule = self._CAMBRIDGE_POS_RULE
+        if pos_map is None:
+            pos_map = self._POS_MAP
+        return (
             self._CAPTURE_JS_TEMPLATE
             .replace("__CHANNEL_JS__", _qwebchannel_js())
             .replace("__BLOCK_PRON_JS__", _BLOCK_PRON_JS)
-            .replace("__POS_MAP__", json.dumps(self._POS_MAP))
+            .replace("__POS_MAP__", json.dumps(pos_map))
+            .replace("__POS_RULE__", json.dumps(pos_rule))
             .replace("__PAIRS__", json.dumps(pairs))
         )
-        view.page().runJavaScript(js)
 
     def set_focus(self):
         self.search_input.setFocus()
