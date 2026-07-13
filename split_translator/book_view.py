@@ -169,21 +169,41 @@ _MARK_BLOCK_JS = """
 })(%(id)s);
 """
 
+# The blocks a search match can be counted in: the *leaf* blocks, i.e. those
+# holding no other tagged block. Book markup nests block elements (a chapter
+# <div> around the paragraphs, a <blockquote> or <li> around a <p>), and the
+# loader tags every block element, nested or not (see book_loader.BLOCK_TAGS).
+# A wrapper's textContent already contains its children's, so walking every
+# [data-stid] counts a nested match once per ancestor as well as in its own
+# paragraph. The running count then overtakes Chromium's activeMatch, reaches
+# the target index early, and returns the wrapper, whose highlight starts higher
+# up the page than the paragraph that actually matched. Counting leaves only
+# keeps one match to one block, so the count tracks Chromium's again.
+#
+# Anchors are unaffected: block ids are still assigned to every block element, so
+# saved anchors (which may name a wrapper) keep resolving. This narrows what is
+# *counted for search*, not what exists.
+_LEAF_BLOCKS_JS = """
+    var blocks = Array.prototype.slice.call(
+        document.querySelectorAll('[data-stid]')).filter(function(b) {
+            return b.querySelector('[data-stid]') === null;
+        });
+"""
+
 # Finds the block holding the Nth find match (1-based, the find result's
 # activeMatch). findText does not update window.getSelection (Chromium highlights
 # via the find controller, not the DOM selection), so the match block is located
-# by counting term occurrences across blocks in document order and returning the
-# block whose running count first reaches the target index. This is independent
-# of the live scroll position: on a wrap-around the findText callback fires while
-# the scroll is still at the old place, so a scrollY-based guess would pick the
-# wrong block (and miss the first occurrence entirely). %(term)s is a JSON-quoted
-# search string; %(index)s is the 1-based match index.
+# by counting term occurrences across leaf blocks in document order and returning
+# the block whose running count first reaches the target index. This is
+# independent of the live scroll position: on a wrap-around the findText callback
+# fires while the scroll is still at the old place, so a scrollY-based guess would
+# pick the wrong block (and miss the first occurrence entirely). %(term)s is a
+# JSON-quoted search string; %(index)s is the 1-based match index.
 _MATCH_BLOCK_JS = """
 (function(term, index) {
     if (!term || index < 1) return "";
     term = term.toLowerCase();
-    var blocks = Array.prototype.slice.call(
-        document.querySelectorAll('[data-stid]'));
+    __LEAF_BLOCKS__
     var seen = 0;
     for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
@@ -200,23 +220,24 @@ _MATCH_BLOCK_JS = """
     }
     return "";
 })(%(term)s, %(index)s);
-"""
+""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS)
 
 # Extracts the sentence containing the Nth find match (1-based activeMatch).
 # Locates the match the same way as _MATCH_BLOCK_JS (findText leaves no DOM
-# selection to read, so occurrences are counted in document order until the
-# running count reaches the target index), then within that block expands from
-# the match offset to the surrounding sentence boundaries. A boundary is a '.',
-# '!' or '?' followed by whitespace; if none is found on a side the block edge
-# is used. Returns a JSON string (a bare object arrives empty from
-# runJavaScript). %(term)s is a JSON-quoted search string; %(index)s is the
-# 1-based match index.
+# selection to read, so occurrences are counted across leaf blocks in document
+# order until the running count reaches the target index), then within that block
+# expands from the match offset to the surrounding sentence boundaries. A boundary
+# is a '.', '!' or '?' followed by whitespace; if none is found on a side the
+# block edge is used. Counting leaves matters twice over here: a wrapper's
+# textContent runs its paragraphs together, so expanding to a sentence inside one
+# would splice text across a paragraph break. Returns a JSON string (a bare object
+# arrives empty from runJavaScript). %(term)s is a JSON-quoted search string;
+# %(index)s is the 1-based match index.
 _MATCH_SENTENCE_JS = """
 (function(term, index) {
     if (!term || index < 1) return JSON.stringify({sentence: ""});
     var needle = term.toLowerCase();
-    var blocks = Array.prototype.slice.call(
-        document.querySelectorAll('[data-stid]'));
+    __LEAF_BLOCKS__
     var seen = 0;
     for (var i = 0; i < blocks.length; i++) {
         var raw = blocks[i].textContent || "";
@@ -256,7 +277,7 @@ _MATCH_SENTENCE_JS = """
     }
     return JSON.stringify({sentence: ""});
 })(%(term)s, %(index)s);
-"""
+""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS)
 
 
 class BookView(QWebEngineView):
