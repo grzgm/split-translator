@@ -756,25 +756,38 @@ class FlashcardEditorBase(QWidget):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
         self.play_us_button.setEnabled(bool(self._audio_us_url))
 
-    def set_audio(self, region: str, url: str, ipa: str | None = None) -> None:
-        """Replace one region's pronunciation audio (and its IPA) with a clip
-        captured from the Cambridge page. A deliberate single-field edit, so it
-        marks the card altered; that is what makes a later passive grab leave
-        the edited card alone."""
+    def set_audio(self, region: str, url: str) -> None:
+        """Replace one region's pronunciation clip with one captured from the
+        Cambridge page, leaving that region's IPA alone (see set_ipa: the two are
+        captured separately, because the block with the notation you want is
+        often not the block with the clip you want).
+
+        A deliberate single-field edit, so it marks the card altered; that is
+        what makes a later passive grab leave the edited card alone."""
         if region == "uk":
             with self._programmatic():
                 self._audio_uk_url = url or None
-                if ipa:
-                    self.ipa_uk_input.setText(ipa)
         elif region == "us":
             with self._programmatic():
                 self._audio_us_url = url or None
-                if ipa:
-                    self.ipa_us_input.setText(ipa)
         else:
             return
         self.state.mark_altered()
         self._update_play_buttons()
+
+    def set_ipa(self, region: str, ipa: str) -> None:
+        """Replace one region's IPA notation with one captured from the Cambridge
+        page, leaving that region's audio clip alone. The notation half of
+        set_audio; see it for why the card is marked altered."""
+        if region == "uk":
+            target = self.ipa_uk_input
+        elif region == "us":
+            target = self.ipa_us_input
+        else:
+            return
+        with self._programmatic():
+            target.setText(ipa or "")
+        self.state.mark_altered()
 
     # --- star -----------------------------------------------------------
 

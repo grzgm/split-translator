@@ -628,33 +628,30 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.active_row.add_example("an example", focus=False)
         self.assertTrue(panel.state.altered)
 
-    # --- replace audio from the page (set_audio) ------------------------
+    # --- replace the clip from the page (set_audio) ----------------------
+    #
+    # The page's pronunciation buttons replace the clip and the notation
+    # independently, so each method must touch only its own half: a page shows
+    # several blocks per region, and the block with the notation you want is
+    # often not the block with the clip you want. set_ipa is the mirror below.
 
     def test_set_audio_sets_only_that_region(self):
         panel, _ = self._panel()
         panel.headword_input.setText("run")
-        panel.ipa_uk_input.setText("/old/")
-        panel.set_audio("uk", "https://example/new-uk.mp3", "/new/")
+        panel.set_audio("uk", "https://example/new-uk.mp3")
         self.assertEqual(panel._audio_uk_url, "https://example/new-uk.mp3")
         self.assertIsNone(panel._audio_us_url)
         self.assertEqual(panel.headword_input.text(), "run")
-        self.assertEqual(panel.ipa_uk_input.text(), "/new/")
 
     def test_set_audio_us_is_the_mirror(self):
         panel, _ = self._panel()
-        panel.set_audio("us", "https://example/new-us.mp3", "/yu/")
+        panel.set_audio("us", "https://example/new-us.mp3")
         self.assertEqual(panel._audio_us_url, "https://example/new-us.mp3")
-        self.assertEqual(panel.ipa_us_input.text(), "/yu/")
         self.assertIsNone(panel._audio_uk_url)
-        self.assertEqual(panel.ipa_uk_input.text(), "")
 
-    def test_set_audio_keeps_existing_ipa_when_none_captured(self):
-        panel, _ = self._panel()
-        panel.ipa_uk_input.setText("/keep/")
-        panel.set_audio("uk", "https://example/new-uk.mp3", None)
-        self.assertEqual(panel.ipa_uk_input.text(), "/keep/")
-
-    def test_set_audio_ipa_defaults_to_none(self):
+    def test_set_audio_leaves_the_ipa_alone(self):
+        # The whole point of the split: taking a clip must not drag that block's
+        # notation along with it.
         panel, _ = self._panel()
         panel.ipa_uk_input.setText("/keep/")
         panel.set_audio("uk", "https://example/new-uk.mp3")
@@ -676,10 +673,9 @@ class FlashcardPanelTests(unittest.TestCase):
     def test_set_audio_blocks_a_later_passive_grab(self):
         panel, _ = self._panel()
         panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
-        panel.set_audio("uk", "https://example/replaced.mp3", "/zz/")
+        panel.set_audio("uk", "https://example/replaced.mp3")
         panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
         self.assertEqual(panel.headword_input.text(), "run")
-        self.assertEqual(panel.ipa_uk_input.text(), "/zz/")
         self.assertEqual(panel._audio_uk_url, "https://example/replaced.mp3")
 
     def test_set_audio_unknown_region_is_a_noop(self):
@@ -695,6 +691,64 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.set_audio("uk", "")
         self.assertIsNone(panel._audio_uk_url)
         self.assertFalse(panel.play_uk_button.isEnabled())
+
+    # --- replace the notation from the page (set_ipa) --------------------
+
+    def test_set_ipa_sets_only_that_region(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("run")
+        panel.set_ipa("uk", "/new/")
+        self.assertEqual(panel.ipa_uk_input.text(), "/new/")
+        self.assertEqual(panel.ipa_us_input.text(), "")
+        self.assertEqual(panel.headword_input.text(), "run")
+
+    def test_set_ipa_us_is_the_mirror(self):
+        panel, _ = self._panel()
+        panel.set_ipa("us", "/yu/")
+        self.assertEqual(panel.ipa_us_input.text(), "/yu/")
+        self.assertEqual(panel.ipa_uk_input.text(), "")
+
+    def test_set_ipa_leaves_the_audio_alone(self):
+        # The other half of the split: taking a notation must not drag that
+        # block's clip along with it.
+        panel, _ = self._panel()
+        panel.set_audio("uk", "https://example/keep.mp3")
+        panel.set_ipa("uk", "/new/")
+        self.assertEqual(panel._audio_uk_url, "https://example/keep.mp3")
+        self.assertTrue(panel.play_uk_button.isEnabled())
+
+    def test_set_ipa_replaces_an_existing_notation(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/old/")
+        panel.set_ipa("uk", "/new/")
+        self.assertEqual(panel.ipa_uk_input.text(), "/new/")
+
+    def test_set_ipa_marks_the_card_altered(self):
+        panel, _ = self._panel()
+        self.assertFalse(panel.state.altered)
+        panel.set_ipa("uk", "/new/")
+        self.assertTrue(panel.state.altered)
+
+    def test_set_ipa_blocks_a_later_passive_grab(self):
+        panel, _ = self._panel()
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.set_ipa("uk", "/zz/")
+        panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
+        self.assertEqual(panel.headword_input.text(), "run")
+        self.assertEqual(panel.ipa_uk_input.text(), "/zz/")
+
+    def test_set_ipa_unknown_region_is_a_noop(self):
+        panel, _ = self._panel()
+        panel.set_ipa("xx", "/x/")
+        self.assertEqual(panel.ipa_uk_input.text(), "")
+        self.assertEqual(panel.ipa_us_input.text(), "")
+        self.assertFalse(panel.state.altered)
+
+    def test_set_ipa_empty_clears_that_region(self):
+        panel, _ = self._panel()
+        panel.ipa_uk_input.setText("/old/")
+        panel.set_ipa("uk", "")
+        self.assertEqual(panel.ipa_uk_input.text(), "")
 
     # --- empty-field marking --------------------------------------------
 

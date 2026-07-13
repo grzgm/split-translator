@@ -179,10 +179,13 @@ class TranslationTool(QMainWindow):
         self.dictionary_panel.sense_capture_requested.connect(
             self.on_sense_capture_requested
         )
-        # A "replace" button on a Cambridge pronunciation captures that clip's
-        # region and URL into the current card's audio.
+        # The buttons on a Cambridge pronunciation block replace that region's
+        # clip and its notation independently, so they route to a method each.
         self.dictionary_panel.audio_capture_requested.connect(
             self.flashcard_panel.set_audio
+        )
+        self.dictionary_panel.ipa_capture_requested.connect(
+            self.flashcard_panel.set_ipa
         )
         self.flashcard_panel.card_saved.connect(
             lambda headword: self.status_bar.show_message(

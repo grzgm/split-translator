@@ -137,9 +137,11 @@ class DictionaryPanel(QWidget):
     selection_capture_requested = Signal(str, str)  # field ("polish"/"english"), text
     # text, field ("polish"/"english"), target ("current"/"new"), pos ("" if unknown)
     sense_capture_requested = Signal(str, str, str, str)
-    # A pronunciation clip captured from the page: region ("uk"/"us"), mp3 URL
-    # and the clip's IPA notation ("" when the block has none).
-    audio_capture_requested = Signal(str, str, str)
+    # Captured from a pronunciation block on the page, for region "uk" or "us".
+    # The clip and the notation are separate captures: see the buttons injectAudio
+    # builds.
+    audio_capture_requested = Signal(str, str)  # region, mp3 URL
+    ipa_capture_requested = Signal(str, str)  # region, IPA notation
 
     def __init__(self, profile: QWebEngineProfile, parent=None):
         super().__init__(parent)
@@ -150,6 +152,9 @@ class DictionaryPanel(QWidget):
         )
         self.capture_bridge.audio_capture_requested.connect(
             self.audio_capture_requested
+        )
+        self.capture_bridge.ipa_capture_requested.connect(
+            self.ipa_capture_requested
         )
         # Pronunciation playback goes through Qt's own media player fed the mp3
         # URL, not by calling the Cambridge page's audioN.play() globals (which
@@ -658,12 +663,17 @@ class DictionaryPanel(QWidget):
             });
         }
 
-        // A "replace" button next to each pronunciation that overwrites the
-        // current card's audio and IPA for that clip's region (uk/us) with the
-        // clip's URL and notation. A card has one UK and one US slot, so the
-        // action is replace (no +new). The region is read from the block's
-        // class; the mp3 URL and IPA come from stReadBlockPron, the same reader
-        // the "New from word" seed uses.
+        // Buttons next to each pronunciation that overwrite the current card's
+        // notation and clip for that block's region (uk/us). A card has one UK
+        // and one US slot for each, so the action is replace (no +new). The
+        // region is read from the block's class; the mp3 URL and IPA come from
+        // stReadBlockPron, the same reader the "New from word" seed uses.
+        //
+        // The notation and the clip get a button each rather than sharing one:
+        // a page shows several blocks per region (a plain one, a variant, a
+        // phrase), and the block holding the notation you want is often not the
+        // one holding the clip you want. A block with only one of the two shows
+        // only that button.
         function injectAudio() {
             var blocks = document.querySelectorAll('span.dpron-i');
             blocks.forEach(function(block) {
@@ -672,18 +682,29 @@ class DictionaryPanel(QWidget):
                     : block.classList.contains('us') ? 'us' : '';
                 if (!region) { return; }
                 var pron = stReadBlockPron(block);
-                if (!pron.audio) { return; }  // nothing to capture
+                if (!pron.audio && !pron.ipa) { return; }  // nothing to capture
                 var url = pron.audio;
                 var ipa = pron.ipa;
+                var tag = region.toUpperCase();
                 block.dataset.stAudioCapture = '1';
-                block.appendChild(makeButton(
-                    'replace',
-                    'Replace this card\'s ' + region.toUpperCase()
-                        + ' audio and IPA',
-                    function() {
-                        window.captureBridge.captureAudio(region, url, ipa);
-                    }
-                ));
+                if (ipa) {
+                    block.appendChild(makeButton(
+                        'ipa',
+                        "Replace this card's " + tag + ' IPA',
+                        function() {
+                            window.captureBridge.captureIpa(region, ipa);
+                        }
+                    ));
+                }
+                if (url) {
+                    block.appendChild(makeButton(
+                        'audio',
+                        "Replace this card's " + tag + ' audio',
+                        function() {
+                            window.captureBridge.captureAudio(region, url);
+                        }
+                    ));
+                }
             });
         }
 

@@ -286,27 +286,59 @@ class AppSearchGrabGateTests(unittest.TestCase):
         self.assertEqual(len(gram), 1)
 
 
-class AudioCaptureBridgeTests(unittest.TestCase):
-    def test_bridge_captureAudio_emits_region_url_and_ipa(self):
+class PronunciationCaptureBridgeTests(unittest.TestCase):
+    """A pronunciation block's clip and its notation are captured by separate
+    buttons, so they travel as separate signals all the way to the editor."""
+
+    def test_bridge_captureAudio_emits_region_and_url(self):
         from split_translator.capture_bridge import CaptureBridge
 
         bridge = CaptureBridge()
         got = []
         bridge.audio_capture_requested.connect(
-            lambda region, url, ipa: got.append((region, url, ipa))
+            lambda region, url: got.append((region, url))
         )
-        bridge.captureAudio("uk", "https://example/uk.mp3", "/uk/")
-        self.assertEqual(got, [("uk", "https://example/uk.mp3", "/uk/")])
+        bridge.captureAudio("uk", "https://example/uk.mp3")
+        self.assertEqual(got, [("uk", "https://example/uk.mp3")])
+
+    def test_bridge_captureIpa_emits_region_and_ipa(self):
+        from split_translator.capture_bridge import CaptureBridge
+
+        bridge = CaptureBridge()
+        got = []
+        bridge.ipa_capture_requested.connect(
+            lambda region, ipa: got.append((region, ipa))
+        )
+        bridge.captureIpa("uk", "/uk/")
+        self.assertEqual(got, [("uk", "/uk/")])
+
+    def test_capturing_a_clip_does_not_announce_a_notation(self):
+        from split_translator.capture_bridge import CaptureBridge
+
+        bridge = CaptureBridge()
+        ipa_seen = []
+        bridge.ipa_capture_requested.connect(lambda *a: ipa_seen.append(a))
+        bridge.captureAudio("uk", "https://example/uk.mp3")
+        self.assertEqual(ipa_seen, [])
 
     def test_panel_relays_audio_capture(self):
         panel = DictionaryPanel(QWebEngineProfile.defaultProfile())
         got = []
         panel.audio_capture_requested.connect(
-            lambda region, url, ipa: got.append((region, url, ipa))
+            lambda region, url: got.append((region, url))
         )
         # The page button would call captureAudio on the bridge; simulate it.
-        panel.capture_bridge.captureAudio("us", "https://example/us.mp3", "/us/")
-        self.assertEqual(got, [("us", "https://example/us.mp3", "/us/")])
+        panel.capture_bridge.captureAudio("us", "https://example/us.mp3")
+        self.assertEqual(got, [("us", "https://example/us.mp3")])
+
+    def test_panel_relays_ipa_capture(self):
+        panel = DictionaryPanel(QWebEngineProfile.defaultProfile())
+        got = []
+        panel.ipa_capture_requested.connect(
+            lambda region, ipa: got.append((region, ipa))
+        )
+        panel.capture_bridge.captureIpa("us", "/us/")
+        self.assertEqual(got, [("us", "/us/")])
 
 
 if __name__ == "__main__":

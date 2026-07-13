@@ -16,14 +16,20 @@ class CaptureBridge(QObject):
     # "current" (replace the active sense), "append" (append into the active
     # sense) or "new" (fresh sense, replace).
     capture_requested = Signal(str, str, str, str)  # text, field, target, pos
-    # A pronunciation clip captured from the page: region "uk"/"us", mp3 URL and
-    # the clip's IPA notation ("" when the page block has none).
-    audio_capture_requested = Signal(str, str, str)  # region, url, ipa
+    # A pronunciation block on the page carries both a clip and a notation, but
+    # they are captured separately: the block whose notation you want is often
+    # not the block whose clip you want. region is "uk" or "us".
+    audio_capture_requested = Signal(str, str)  # region, mp3 URL
+    ipa_capture_requested = Signal(str, str)  # region, IPA notation
 
     @Slot(str, str, str, str)
     def capture(self, text: str, field: str, target: str, pos: str) -> None:
         self.capture_requested.emit(text, field, target, pos)
 
-    @Slot(str, str, str)
-    def captureAudio(self, region: str, url: str, ipa: str) -> None:
-        self.audio_capture_requested.emit(region, url, ipa)
+    @Slot(str, str)
+    def captureAudio(self, region: str, url: str) -> None:
+        self.audio_capture_requested.emit(region, url)
+
+    @Slot(str, str)
+    def captureIpa(self, region: str, ipa: str) -> None:
+        self.ipa_capture_requested.emit(region, ipa)
