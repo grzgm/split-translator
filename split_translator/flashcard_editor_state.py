@@ -6,7 +6,8 @@ altered the current card since it was last loaded, cleared or saved. No Qt
 import, so it unit-tests headless like page_mapper and graph_layout. The panel
 holds exactly one instance and every mode/altered decision reads it."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Callable
 
 
 @dataclass
@@ -17,12 +18,35 @@ class EditorState:
     is loaded. loaded_card_id and loaded_created_at carry the saved card's id
     and original creation time so Save updates it in place and keeps its
     timestamp. altered is True once the user changes anything since the last
-    load, clear or save; programmatic fills never set it."""
+    load, clear or save; programmatic fills never set it.
+
+    altered is a property rather than a plain field so every change to it runs
+    through one place. Setting it fires on_altered_changed, but only when the
+    flag actually flips, so a listener hears one notification per transition and
+    not one per keystroke. That is what lets the panel announce "this card has
+    unsaved edits" without every writer here having to remember to."""
 
     mode: str = "new"
     loaded_card_id: str | None = None
     loaded_created_at: str | None = None
-    altered: bool = False
+    #: Called with the new value whenever altered flips. Stays a plain callable
+    #: rather than a Qt signal so this module keeps its no-Qt, headless-testable
+    #: character; the panel adapts it to a signal.
+    on_altered_changed: Callable[[bool], None] | None = None
+    _altered: bool = field(default=False, repr=False)
+
+    @property
+    def altered(self) -> bool:
+        return self._altered
+
+    @altered.setter
+    def altered(self, value: bool) -> None:
+        value = bool(value)
+        if value == self._altered:
+            return
+        self._altered = value
+        if self.on_altered_changed is not None:
+            self.on_altered_changed(value)
 
     @property
     def is_new(self) -> bool:

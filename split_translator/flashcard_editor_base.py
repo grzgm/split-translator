@@ -387,6 +387,11 @@ class FlashcardEditorBase(QWidget):
     card_saved = Signal(str)
     save_rejected = Signal(str)
     card_loaded = Signal(str)  # headword of a card just loaded into the editor
+    # True once the card has unsaved edits, False again once it is saved,
+    # cleared or replaced by a freshly loaded one. Fires only on the flip, not
+    # per keystroke. The main window shows it as a "*" on the dock title, the
+    # way a text editor marks a modified file.
+    altered_changed = Signal(bool)
 
     _STAR_EMPTY = "Star"
     _STAR_SET = "Starred"
@@ -395,6 +400,9 @@ class FlashcardEditorBase(QWidget):
         super().__init__(parent)
         self.store = store
         self.state = EditorState()
+        # The state is pure logic and holds no Qt; it announces an altered flip
+        # through a plain callback, which becomes this widget's signal here.
+        self.state.on_altered_changed = self.altered_changed.emit
         self.active_row = None
         self._audio_uk_url = None
         self._audio_us_url = None

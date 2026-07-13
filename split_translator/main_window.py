@@ -32,6 +32,11 @@ from .status_bar import StatusBar
 
 
 class TranslationTool(QMainWindow):
+    # The flashcard dock's title, and the marker appended to it while the card
+    # in the editor has unsaved edits (a text editor's modified-file "*").
+    _FLASHCARD_TITLE = "Flashcard"
+    _ALTERED_MARKER = " *"
+
     def __init__(self, config: Config, profile: QWebEngineProfile):
         super().__init__()
         self.config = config
@@ -86,7 +91,7 @@ class TranslationTool(QMainWindow):
         self.status_bar = StatusBar(self)
         self.setStatusBar(self.status_bar)
 
-        self.flashcard_dock = QDockWidget("Flashcard", self)
+        self.flashcard_dock = QDockWidget(self._FLASHCARD_TITLE, self)
         self.flashcard_dock.setWidget(self.flashcard_panel)
         self.addDockWidget(
             Qt.DockWidgetArea.RightDockWidgetArea, self.flashcard_dock
@@ -191,6 +196,11 @@ class TranslationTool(QMainWindow):
         # headword up in the dictionary and the book, but records no history and
         # leaves the loaded card untouched.
         self.flashcard_panel.card_loaded.connect(self.on_flashcard_loaded)
+        # Unsaved edits put a "*" on the dock title, the way a text editor marks
+        # a modified file.
+        self.flashcard_panel.altered_changed.connect(
+            self.on_flashcard_altered_changed
+        )
         # A book match on the Original edition auto-fills the flashcard's first
         # example with the sentence around the match (only while the dock is
         # open and the card is unaltered).
@@ -207,6 +217,21 @@ class TranslationTool(QMainWindow):
         self.flashcard_panel.prepare_for_new_search()
         self.history_panel.add_to_history(word)
         self.book_panel.search(word)
+
+    def on_flashcard_altered_changed(self, altered: bool):
+        # The card in the editor gained or lost unsaved edits. Mark the dock
+        # title with a "*" while it has them, so the state is visible even when
+        # the dock is floating as its own window and its title is the only
+        # chrome on show.
+        #
+        # The two titles are read off the class, not off self: they are
+        # constants rather than per-instance state, and reading them this way
+        # lets the method be driven against a stand-in carrier in the tests (as
+        # toggle_flashcard_dock is) without building the WebEngine-heavy window.
+        title = TranslationTool._FLASHCARD_TITLE
+        if altered:
+            title += TranslationTool._ALTERED_MARKER
+        self.flashcard_dock.setWindowTitle(title)
 
     def on_flashcard_loaded(self, headword: str):
         # A flashcard was selected and loaded into the editor. Look its headword
