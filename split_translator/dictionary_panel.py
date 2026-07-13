@@ -162,6 +162,10 @@ class DictionaryPanel(QWidget):
         # grabbed. Consumed (cleared) by the first English loadFinished after a
         # search, whether that load succeeded or not.
         self._app_search_pending = False
+        # The URL a hidden tab still owes: it is loaded when the tab is first
+        # shown, not when the search runs, so a pane nobody is looking at costs no
+        # page load and no memory. See _load_or_defer.
+        self._pending_urls: dict[QWebEngineView, str] = {}
         self.init_ui()
         self._setup_capture_buttons()
 
@@ -233,6 +237,9 @@ class DictionaryPanel(QWidget):
         self.google_tabs.addTab(self.google_meaning_view, "Meaning")
         self.google_tabs.addTab(self.babla_view, "bab.la")
         self.google_tabs.addTab(self.diki_view, "diki")
+        # Only one of these three is ever on screen, so the other two are loaded
+        # when they are first shown rather than on every search.
+        self.google_tabs.currentChanged.connect(self._on_tab_changed)
 
         self.google_translate_search = self._make_view()
 
@@ -254,6 +261,42 @@ class DictionaryPanel(QWidget):
             self.diki_view,
             self.google_translate_search,
         ]
+
+    # --- deferred loading of the tabbed views ---------------------------
+
+    def _is_tab_visible(self, view: QWebEngineView) -> bool:
+        """Is this view the tab currently on show?
+
+        Only the three tabbed views can be hidden. Everything else lives in the
+        splitter and is always on screen, so it is always "visible" here."""
+        if self.google_tabs.indexOf(view) == -1:
+            return True
+        return self.google_tabs.currentWidget() is view
+
+    def _load_or_defer(self, view: QWebEngineView, url: str) -> None:
+        """Load the URL now if the view is on screen, otherwise remember it.
+
+        A hidden tab is a page nobody is looking at, so loading it on every
+        search costs a fetch and a rendered page for nothing. The URL is held
+        instead and loaded when the tab is first shown.
+
+        The pending URL is overwritten, not queued: if three searches run while
+        the tab is hidden, only the last one is worth loading."""
+        if self._is_tab_visible(view):
+            self._pending_urls.pop(view, None)
+            view.setUrl(QUrl(url))
+        else:
+            self._pending_urls[view] = url
+
+    def _on_tab_changed(self, index: int) -> None:
+        """A tab was revealed: load the URL it owes, if any.
+
+        The page is kept once loaded, so switching away and back is instant; only
+        the first reveal after a search pays for a load."""
+        view = self.google_tabs.widget(index)
+        url = self._pending_urls.pop(view, None)
+        if url is not None:
+            view.setUrl(QUrl(url))
 
     def focused_selection(self) -> str:
         for view in self._all_views():
@@ -833,15 +876,16 @@ class DictionaryPanel(QWidget):
         )
         self.cambridge_pl_view.setUrl(QUrl(cambridge_pl_url))
 
-        # Two Google searches.
+        # The three tabbed views share one slot on screen, so only the current tab
+        # is loaded now; the other two are loaded when they are next shown.
         google_meaning_url = f"https://www.google.pl/search?q={encoded_word}+meaning"
-        self.google_meaning_view.setUrl(QUrl(google_meaning_url))
+        self._load_or_defer(self.google_meaning_view, google_meaning_url)
 
         babla_url = f"https://en.bab.la/dictionary/english-polish/{encoded_word}"
-        self.babla_view.setUrl(QUrl(babla_url))
+        self._load_or_defer(self.babla_view, babla_url)
 
         diki_url = f"https://www.diki.pl/{encoded_word}"
-        self.diki_view.setUrl(QUrl(diki_url))
+        self._load_or_defer(self.diki_view, diki_url)
 
         google_translate_url = (
             f"https://www.google.pl/search?q={encoded_word}+po+polsku"
