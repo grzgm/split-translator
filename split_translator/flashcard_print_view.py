@@ -8,6 +8,8 @@ walkthrough. Only construction and the JS-builder strings are covered by tests."
 
 from dataclasses import replace
 
+from PySide6.QtCore import QMarginsF
+from PySide6.QtGui import QPageLayout
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -214,7 +216,45 @@ class PrintView(QWidget):
         dialog = QPrintDialog(printer, self)
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:
             return
+        self._send_to(printer)
+
+    def _send_to(self, printer) -> None:
+        """Route the sheets to whatever the dialog settled on.
+
+        "Print to File (PDF)" goes to Chromium's own PDF exporter rather than
+        through the printer. QWebEngineView.print paints the page into the
+        QPrinter, which flattens it to a bitmap: that PDF is a picture of the
+        sheet, with no selectable or searchable text, and is hundreds of times
+        larger. printToPdf keeps the text as text. Both lay the page out from the
+        same CSS, so the cards come out the same physical size either way.
+
+        A real printer still goes through QPrinter. Rasterising costs nothing
+        there (it is ink either way), and the QPrinter is what carries the chosen
+        printer, tray and copy count."""
+        from PySide6.QtPrintSupport import QPrinter
+
+        if printer.outputFormat() == QPrinter.OutputFormat.PdfFormat:
+            self._export_pdf(printer)
+            return
+
         # QWebEngineView.print is asynchronous; keep a reference so the printer is
         # not collected before the job finishes.
         self._active_printer = printer
         self.view.print(printer)
+
+    def _export_pdf(self, printer) -> None:
+        """Write the sheets to the chosen PDF file with real, selectable text."""
+        path = printer.outputFileName()
+        if not path:
+            return
+        # Take the paper size and orientation the dialog settled on, but no
+        # margins: the sheet's own CSS already positions everything on the page,
+        # so a margin here would inset it a second time and shift every card.
+        # FullPageMode is what allows a zero margin at all; the default mode
+        # silently clamps it up to the device's minimum and the cards would land
+        # off their cut lines.
+        layout = printer.pageLayout()
+        layout.setUnits(QPageLayout.Unit.Millimeter)
+        layout.setMode(QPageLayout.Mode.FullPageMode)
+        layout.setMargins(QMarginsF(0, 0, 0, 0))
+        self.view.page().printToPdf(path, layout)

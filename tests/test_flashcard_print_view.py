@@ -3,12 +3,96 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QPageSize
+from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QApplication
 
 from split_translator.flashcard_print_view import PrintView
 from split_translator.flashcards import Card
 
 app = QApplication.instance() or QApplication([])
+
+
+class PdfExportRoutingTests(unittest.TestCase):
+    """"Print to File (PDF)" must not go through QPrinter.
+
+    QWebEngineView.print paints the page into the QPrinter, which flattens it to
+    a bitmap: the PDF then holds a picture of the sheet with no selectable or
+    searchable text. Chromium's own printToPdf keeps the text as text, so a file
+    destination is routed there instead. A real printer still goes through
+    QPrinter, which is what carries the printer, tray and copy count.
+
+    The export itself needs a live web engine and is verified by a runtime
+    walkthrough; what is pinned here is that the two destinations are told
+    apart."""
+
+    def _view(self):
+        view = PrintView()
+        view.set_cards([Card(headword="alpha", id="a")])
+        self.addCleanup(view.deleteLater)
+        exported, printed = [], []
+        view._export_pdf = lambda printer: exported.append(printer)
+        view.view.print = lambda printer: printed.append(printer)
+        return view, exported, printed
+
+    def test_a_file_destination_goes_to_the_pdf_exporter(self):
+        view, exported, printed = self._view()
+        printer = QPrinter()
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName("/tmp/cards.pdf")
+        view._send_to(printer)
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(printed, [])
+
+    def test_a_real_printer_still_goes_through_qprinter(self):
+        view, exported, printed = self._view()
+        printer = QPrinter()
+        printer.setOutputFormat(QPrinter.OutputFormat.NativeFormat)
+        view._send_to(printer)
+        self.assertEqual(len(printed), 1)
+        self.assertEqual(exported, [])
+
+    def test_the_printer_is_kept_alive_for_the_async_print(self):
+        # QWebEngineView.print is asynchronous; dropping the QPrinter before the
+        # job finishes would collect it mid-print.
+        view, _exported, _printed = self._view()
+        printer = QPrinter()
+        printer.setOutputFormat(QPrinter.OutputFormat.NativeFormat)
+        view._send_to(printer)
+        self.assertIs(view._active_printer, printer)
+
+    def test_export_without_a_filename_does_nothing(self):
+        # Nothing to write to, so there is no file to produce.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        wrote = []
+        view.view.page().printToPdf = lambda *a, **kw: wrote.append(a)
+        printer = QPrinter()
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        view._export_pdf(printer)
+        self.assertEqual(wrote, [])
+
+    def test_export_drops_the_page_margins(self):
+        # The sheet's CSS already places everything on the page. A margin here
+        # would inset it a second time and every card would miss its cut lines.
+        # The default QPageLayout mode silently clamps a zero margin up to the
+        # device minimum, so the mode has to be changed for it to take.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        seen = []
+        view.view.page().printToPdf = lambda path, layout: seen.append(layout)
+        printer = QPrinter()
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName("/tmp/cards.pdf")
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        view._export_pdf(printer)
+
+        self.assertEqual(len(seen), 1)
+        margins = seen[0].margins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (0, 0, 0, 0),
+        )
 
 
 class PrintViewTests(unittest.TestCase):
