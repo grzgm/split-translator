@@ -27,6 +27,52 @@ class PrintView(QWidget):
     """Preview + Print button + Show cut borders (screen) and Print cut lines
     (print) toggles."""
 
+    # Fits each front tile's examples to the tile, then puts the survivors back
+    # into sense order. Runs after each load, before _OVERFLOW_JS.
+    #
+    # Only the browser knows how tall a sentence renders once it has wrapped, so
+    # this cannot be decided when the HTML is built. The layout emits every
+    # example interleaved across the senses (the first of each sense, then the
+    # second of each; see example_fill_order) and tags each with the sense it came
+    # from. Filling the tile in that document order therefore gives every sense an
+    # example before any sense gets a second one.
+    #
+    # The example that first overflows is kept, not dropped: it fills the tile to
+    # its edge and its clipped last line reads as "there is more here", which is
+    # how the rest of an overlong tile already behaves. That does leave the tile
+    # genuinely overflowing, so _OVERFLOW_JS then flags it on screen, which is a
+    # true statement: the card holds more examples than it can show.
+    #
+    # Reordering cannot change the total height (same boxes, same widths), so the
+    # set that fitted still fits after it is regrouped.
+    _FIT_EXAMPLES_JS = """
+(function () {
+  var lists = document.querySelectorAll('.tile--front .example-list');
+  for (var i = 0; i < lists.length; i++) {
+    var list = lists[i];
+    var tile = list.closest('.tile');
+    if (!tile) { continue; }
+    var items = [];
+    while (list.firstChild) {
+      items.push(list.removeChild(list.firstChild));
+    }
+    var kept = [];
+    for (var k = 0; k < items.length; k++) {
+      list.appendChild(items[k]);
+      kept.push(items[k]);
+      if (tile.scrollHeight > tile.clientHeight) { break; }
+    }
+    // Stable, so the examples of one sense keep their own order.
+    kept.sort(function (a, b) {
+      return Number(a.dataset.sense) - Number(b.dataset.sense);
+    });
+    for (var k = 0; k < kept.length; k++) {
+      list.appendChild(kept[k]);
+    }
+  }
+})();
+"""
+
     # Marks every tile whose content overflows its fixed box. Runs after each
     # load; toggles a class in-page, so no value returns to Python.
     _OVERFLOW_JS = """
@@ -142,6 +188,9 @@ class PrintView(QWidget):
         page = self.view.page()
         page.runJavaScript(self._borders_js(self.show_borders()))
         page.runJavaScript(self._cut_lines_js(self.print_cut_lines()))
+        # Fit the examples first: it decides what each tile ends up holding, and
+        # the overflow flag has to describe the tile as it will actually print.
+        page.runJavaScript(self._FIT_EXAMPLES_JS)
         page.runJavaScript(self._OVERFLOW_JS)
 
     def _borders_js(self, on: bool) -> str:

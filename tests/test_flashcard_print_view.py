@@ -32,6 +32,17 @@ class PrintViewTests(unittest.TestCase):
         self.assertIn("is-overflow", view._OVERFLOW_JS)
         self.assertIn("scrollHeight", view._OVERFLOW_JS)
 
+    def test_fit_examples_js_measures_and_regroups(self):
+        # Only the browser knows how tall a wrapped sentence renders, so the fit
+        # is measured in-page: fill until the tile overflows, then sort the
+        # survivors back into sense order.
+        view = PrintView()
+        js = view._FIT_EXAMPLES_JS
+        self.assertIn("scrollHeight", js)
+        self.assertIn("example-list", js)
+        self.assertIn("dataset.sense", js)
+        self.assertIn("sort", js)
+
     def test_cut_lines_checkbox_defaults_on(self):
         view = PrintView()
         self.assertIsNotNone(view.cut_lines_checkbox)

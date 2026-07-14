@@ -76,6 +76,31 @@ def _esc(text: str) -> str:
     return _html.escape(text or "")
 
 
+def example_fill_order(card: Card) -> list[tuple[int, str]]:
+    """Every example on the card, interleaved across its senses: the first
+    example of each sense, then the second of each, and so on. Each item is
+    (sense index, example text).
+
+    A tile is a fixed physical size and clips whatever does not fit, so the order
+    the examples are added in is what decides which ones survive. Interleaving
+    means every sense gets an example on the card before any sense gets a second
+    one, instead of a wordy first sense crowding the later senses off it
+    entirely.
+
+    This is only the fill order. The print view fills a tile in this order, and
+    then regroups whatever fitted back into sense order for display, so the card
+    still reads as all of sense one, then all of sense two."""
+    senses = card.senses or []
+    deepest = max((len(s.examples or []) for s in senses), default=0)
+    order = []
+    for rank in range(deepest):
+        for index, sense in enumerate(senses):
+            examples = sense.examples or []
+            if rank < len(examples):
+                order.append((index, examples[rank]))
+    return order
+
+
 def render_card_tile(card: Card, side: str) -> str:
     """Inner HTML of one tile. side is 'front' or 'back'."""
     if card is None:
@@ -86,11 +111,15 @@ def render_card_tile(card: Card, side: str) -> str:
             f'<div class="own-notation">{_esc(card.own_notation)}</div>'
             if card.own_notation else ""
         )
+        # Emitted in fill order, not reading order, and tagged with the sense they
+        # came from: the view drops what does not fit and then puts the survivors
+        # back into sense order. See example_fill_order.
         examples = ""
-        first = card.senses[0] if card.senses else None
-        if first and first.examples:
+        fill = example_fill_order(card)
+        if fill:
             items = "".join(
-                f'<div class="example">{_esc(ex)}</div>' for ex in first.examples
+                f'<div class="example" data-sense="{index}">{_esc(text)}</div>'
+                for index, text in fill
             )
             examples = f'<div class="example-list">{items}</div>'
         return (

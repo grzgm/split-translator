@@ -3,8 +3,10 @@ import unittest
 from split_translator.flashcard_print_layout import (
     PAGE,
     PageSpec,
+    example_fill_order,
     grid_dims,
     paginate,
+    render_card_tile,
     render_html,
 )
 from split_translator.flashcards import Card, Sense
@@ -12,6 +14,98 @@ from split_translator.flashcards import Card, Sense
 
 def _cards(n):
     return [Card(headword=f"w{i}", id=str(i)) for i in range(n)]
+
+
+class ExampleFillOrderTests(unittest.TestCase):
+    """A tile clips what does not fit, so the fill order decides which examples
+    survive. Interleaving the senses means every sense is represented before any
+    sense gets a second example; the view regroups the survivors by sense for
+    display."""
+
+    def _card(self, *example_lists):
+        return Card(
+            headword="w", id="w",
+            senses=[Sense(pos="p", examples=list(e)) for e in example_lists],
+        )
+
+    def test_takes_the_first_of_each_sense_before_any_second(self):
+        card = self._card(["a1", "a2", "a3"], ["b1", "b2"])
+        self.assertEqual(
+            example_fill_order(card),
+            [(0, "a1"), (1, "b1"), (0, "a2"), (1, "b2"), (0, "a3")],
+        )
+
+    def test_a_sense_that_runs_out_is_skipped_not_padded(self):
+        # Sense b has one example; later rounds must simply pass it by.
+        card = self._card(["a1", "a2", "a3"], ["b1"])
+        self.assertEqual(
+            example_fill_order(card),
+            [(0, "a1"), (1, "b1"), (0, "a2"), (0, "a3")],
+        )
+
+    def test_three_senses_round_robin_in_sense_order(self):
+        card = self._card(["a1", "a2"], ["b1"], ["c1", "c2"])
+        self.assertEqual(
+            example_fill_order(card),
+            [(0, "a1"), (1, "b1"), (2, "c1"), (0, "a2"), (2, "c2")],
+        )
+
+    def test_a_single_sense_keeps_its_own_order(self):
+        card = self._card(["a1", "a2", "a3"])
+        self.assertEqual(
+            example_fill_order(card),
+            [(0, "a1"), (0, "a2"), (0, "a3")],
+        )
+
+    def test_an_empty_first_sense_does_not_starve_the_others(self):
+        # The shape that printed nothing before: the examples all sit on a later
+        # sense. The first sense contributes nothing and is simply skipped.
+        card = self._card([], ["b1", "b2"])
+        self.assertEqual(example_fill_order(card), [(1, "b1"), (1, "b2")])
+
+    def test_no_senses_and_no_examples_are_empty(self):
+        self.assertEqual(example_fill_order(Card(headword="w", id="w")), [])
+        self.assertEqual(example_fill_order(self._card([], [])), [])
+
+    def test_every_example_on_the_card_appears_exactly_once(self):
+        card = self._card(["a1", "a2", "a3"], ["b1"], ["c1", "c2"])
+        got = [text for _index, text in example_fill_order(card)]
+        self.assertCountEqual(got, ["a1", "a2", "a3", "b1", "c1", "c2"])
+
+
+class ExampleTileMarkupTests(unittest.TestCase):
+    """The tile carries the examples in fill order, each tagged with the sense it
+    came from, because the view has to regroup them by sense once it knows how
+    many fitted."""
+
+    def test_examples_are_emitted_in_fill_order_and_tagged(self):
+        card = Card(
+            headword="w", id="w",
+            senses=[
+                Sense(pos="v", examples=["a1", "a2"]),
+                Sense(pos="n", examples=["b1"]),
+            ],
+        )
+        html = render_card_tile(card, "front")
+        self.assertIn('<div class="example" data-sense="0">a1</div>', html)
+        self.assertIn('<div class="example" data-sense="1">b1</div>', html)
+        self.assertIn('<div class="example" data-sense="0">a2</div>', html)
+        # Interleaved: b1 comes before a2, so the second sense is on the card
+        # even if there is only room for two examples.
+        self.assertLess(html.index(">b1<"), html.index(">a2<"))
+
+    def test_example_text_is_escaped(self):
+        card = Card(
+            headword="w", id="w",
+            senses=[Sense(pos="v", examples=["a <b> & c"])],
+        )
+        html = render_card_tile(card, "front")
+        self.assertIn("a &lt;b&gt; &amp; c", html)
+        self.assertNotIn("<b>", html)
+
+    def test_a_card_with_no_examples_has_no_example_list(self):
+        card = Card(headword="w", id="w", senses=[Sense(pos="v")])
+        self.assertNotIn("example-list", render_card_tile(card, "front"))
 
 
 class GridDimsTests(unittest.TestCase):
@@ -91,6 +185,32 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertIn("nieudany", html)
         self.assertIn("fails early", html)
         self.assertIn("v", html)
+
+    def test_every_sense_contributes_its_examples(self):
+        # The bug this replaced: only card.senses[0].examples were rendered, so
+        # an example captured onto any later sense never reached the page.
+        card = Card(
+            headword="shed", id="s",
+            senses=[
+                Sense(pos="v", examples=["He shed his coat."]),
+                Sense(pos="n", examples=["A shed in the garden."]),
+            ],
+        )
+        html = render_html([card])
+        self.assertIn("He shed his coat.", html)
+        self.assertIn("A shed in the garden.", html)
+
+    def test_examples_on_a_later_sense_alone_still_render(self):
+        # The worst case of that bug: nothing printed at all, because the first
+        # sense happened to carry no examples.
+        card = Card(
+            headword="shed", id="s",
+            senses=[
+                Sense(pos="v"),
+                Sense(pos="n", examples=["A shed in the garden."]),
+            ],
+        )
+        self.assertIn("A shed in the garden.", render_html([card]))
 
     def test_empty_selection_renders_a_document_without_tiles(self):
         html = render_html([])
