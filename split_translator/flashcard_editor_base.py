@@ -1185,6 +1185,17 @@ class FlashcardEditorBase(QWidget):
             finally:
                 self._suppress_item_changed = False
         self._on_saved_list_refreshed()
+        # Keep the loaded card's printed toggle in step with the store when the
+        # store changed under us (bulk toggle, auto-flag) and the editor has no
+        # unsaved edits. Programmatic, so it does not itself mark the card altered.
+        if self.state.loaded_card_id and not self.state.altered:
+            stored = next(
+                (c for c in self.store.cards if c.id == self.state.loaded_card_id),
+                None,
+            )
+            if stored is not None and stored.printed != self.is_printed():
+                with self._programmatic():
+                    self.set_printed(stored.printed)
 
     def _apply_saved_filter(self, text: str = "") -> None:
         needle = self.saved_filter.text().strip().lower()

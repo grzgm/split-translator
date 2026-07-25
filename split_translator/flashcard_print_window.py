@@ -39,6 +39,19 @@ class FlashcardPrintWindow(QWidget):
         # A card edited and saved here (or elsewhere) refreshes the preview and
         # keeps a deleted/renamed card out of it.
         self.store.cards_changed.connect(self.refresh_preview)
+        self.print_view.toggle_printed_requested.connect(self._on_toggle_printed)
+        # An external flag change (bulk toggle or auto-flag) must refresh the
+        # panel's list icons and resync the loaded card's toggle, so a later Save
+        # cannot revert the flag.
+        self.store.cards_changed.connect(self.panel._refresh_saved_list)
 
     def refresh_preview(self) -> None:
         self.print_view.set_cards(self.panel.selected_cards())
+
+    def _on_toggle_printed(self) -> None:
+        ids = self.panel.selected_ids()
+        if not ids:
+            return
+        by_id = {c.id: c for c in self.store.cards}
+        all_printed = all(by_id[i].printed for i in ids if i in by_id)
+        self.store.set_printed(ids, not all_printed)

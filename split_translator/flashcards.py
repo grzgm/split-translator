@@ -233,6 +233,20 @@ class FlashcardStore:
                 return True
         return False
 
+    def set_printed(self, card_ids, value: bool) -> bool:
+        """Set the printed flag to value on every card whose id is in card_ids.
+        Does one disk write and emits cards_changed once. Returns True when at
+        least one card actually changed, so a no-op does not churn disk or UI."""
+        wanted = set(card_ids)
+        changed = False
+        for card in self.cards:
+            if card.id in wanted and card.printed != value:
+                card.printed = value
+                changed = True
+        if changed:
+            self.save()
+        return changed
+
     def links_for(self, card_id: str) -> list[Link]:
         return [l for l in self.links if card_id in (l.a_id, l.b_id)]
 

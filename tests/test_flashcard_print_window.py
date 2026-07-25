@@ -47,5 +47,50 @@ class FlashcardPrintWindowTests(unittest.TestCase):
         self.assertEqual([c.id for c in win.print_view._cards], ["a"])
 
 
+class TogglePrintedResolutionTests(unittest.TestCase):
+    def _window(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "cards.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [
+            Card(headword="a", id="a"),
+            Card(headword="b", id="b", printed=True),
+        ]
+        window = FlashcardPrintWindow(store)
+        self.addCleanup(window.deleteLater)
+        return window, store
+
+    def test_mixed_selection_sets_all(self):
+        window, store = self._window()
+        window.panel._selected_ids = {"a", "b"}
+        window._on_toggle_printed()
+        self.assertTrue(store.cards[0].printed)
+        self.assertTrue(store.cards[1].printed)
+
+    def test_all_printed_selection_clears_all(self):
+        window, store = self._window()
+        store.cards[0].printed = True
+        window.panel._selected_ids = {"a", "b"}
+        window._on_toggle_printed()
+        self.assertFalse(store.cards[0].printed)
+        self.assertFalse(store.cards[1].printed)
+
+    def test_empty_selection_does_nothing(self):
+        window, store = self._window()
+        window.panel._selected_ids = set()
+        window._on_toggle_printed()
+        self.assertTrue(store.cards[1].printed)  # unchanged
+
+    def test_loaded_card_toggle_resyncs_on_external_flag(self):
+        window, store = self._window()
+        window.panel.load_card(store.cards[0])  # id "a", not printed, unaltered
+        self.assertFalse(window.panel.is_printed())
+        window.panel._selected_ids = {"a"}
+        window._on_toggle_printed()  # flags "a" printed
+        self.assertTrue(window.panel.is_printed())
+        self.assertFalse(window.panel.state.altered)
+
+
 if __name__ == "__main__":
     unittest.main()

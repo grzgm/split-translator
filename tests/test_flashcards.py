@@ -139,6 +139,29 @@ class StoreUpdateTests(unittest.TestCase):
         self.assertFalse(store.update_card(Card(headword="x", id="zzz")))
         self.assertEqual(len(store.cards), 1)
 
+    def test_set_printed_flags_matching_cards(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+        self.assertTrue(store.set_printed(["a"], True))
+        self.assertTrue(store.cards[0].printed)
+        self.assertFalse(store.cards[1].printed)
+
+    def test_set_printed_ignores_unknown_ids(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a")]
+        self.assertFalse(store.set_printed(["zzz"], True))
+
+    def test_set_printed_noop_returns_false(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a", printed=True)]
+        self.assertFalse(store.set_printed(["a"], True))
+
+    def test_set_printed_can_clear(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a", printed=True)]
+        self.assertTrue(store.set_printed(["a"], False))
+        self.assertFalse(store.cards[0].printed)
+
 
 if __name__ == "__main__":
     unittest.main()
