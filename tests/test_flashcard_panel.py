@@ -500,6 +500,23 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertFalse(panel.printed_button.isChecked())
         self.assertFalse(panel.is_printed())
 
+    def test_saved_row_carries_printed_role(self):
+        from PySide6.QtCore import Qt
+        panel, store = self._panel()
+        store.cards = [
+            Card(headword="alpha", id="a", printed=True),
+            Card(headword="beta", id="b", printed=False),
+        ]
+        panel._refresh_saved_list()
+        role = panel._PRINTED_ROLE
+        rows = {
+            panel.saved_list.item(i).data(Qt.ItemDataRole.UserRole):
+            panel.saved_list.item(i).data(role)
+            for i in range(panel.saved_list.count())
+        }
+        self.assertEqual(rows["a"], True)
+        self.assertEqual(rows["b"], False)
+
     def test_prepare_on_freshly_saved_card_clears_it(self):
         # A just-saved (unaltered, editing) card is cleared to a fresh new card;
         # the saved card itself still exists in the store.

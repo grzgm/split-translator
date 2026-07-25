@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QStyle,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -363,6 +364,51 @@ class SenseRow(QFrame):
         )
 
 
+def _printer_pixmap(size: int, colour: str) -> QPixmap:
+    """A small flat printer glyph: a body with a paper sheet above and an
+    output sheet below. Drawn rather than shipped as an asset, matching the
+    loaded-marker pixmap."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(QColor(colour)))
+    unit = size / 16.0
+    # Body.
+    painter.drawRoundedRect(
+        int(2 * unit), int(6 * unit), int(12 * unit), int(6 * unit),
+        unit, unit,
+    )
+    # Paper feeding in at the top.
+    painter.drawRect(int(4 * unit), int(2 * unit), int(8 * unit), int(4 * unit))
+    # Printed sheet coming out at the bottom, in white so it reads on the body.
+    painter.setBrush(QBrush(QColor("#ffffff")))
+    painter.drawRect(int(4 * unit), int(10 * unit), int(8 * unit), int(4 * unit))
+    painter.end()
+    return pixmap
+
+
+class SavedCardRowDelegate(QStyledItemDelegate):
+    """Draws the normal row, then overlays a right-edge printer glyph when the
+    row's printed role is set. Only adds to the default painting; the checkbox,
+    the loaded-card marker and the row tint are untouched."""
+
+    def __init__(self, printed_role: int, parent=None):
+        super().__init__(parent)
+        self._printed_role = printed_role
+        self._icon = _printer_pixmap(14, "#4a90d9")
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if not bool(index.data(self._printed_role)):
+            return
+        rect = option.rect
+        x = rect.right() - self._icon.width() - 4
+        y = rect.top() + (rect.height() - self._icon.height()) // 2
+        painter.drawPixmap(x, y, self._icon)
+
+
 class FlashcardEditorBase(QWidget):
     """Editor that builds one card at a time and saves it to the store.
 
@@ -397,6 +443,7 @@ class FlashcardEditorBase(QWidget):
     _STAR_SET = "Starred"
     _PRINTED_EMPTY = "Print"
     _PRINTED_SET = "Printed"
+    _PRINTED_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
@@ -592,6 +639,9 @@ class FlashcardEditorBase(QWidget):
         self.saved_filter.textChanged.connect(self._apply_saved_filter)
         saved_layout.addWidget(self.saved_filter)
         self.saved_list = SavedCardsList()
+        self.saved_list.setItemDelegate(
+            SavedCardRowDelegate(self._PRINTED_ROLE, self.saved_list)
+        )
         # Clicking a row selects it, and a selected item is normally scrolled into
         # view. When a card partway down the list is clicked to load it, that
         # auto-scroll would move the list out from under the click, so turn it off
@@ -1094,6 +1144,7 @@ class FlashcardEditorBase(QWidget):
                     label = f"{self._STAR_SET}: {label}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
+                item.setData(self._PRINTED_ROLE, bool(card.printed))
                 if card.id == self.state.loaded_card_id:
                     loaded_row = index
                     item.setIcon(self._loaded_marker_icon())
