@@ -388,6 +388,21 @@ class FlashcardPanelTests(unittest.TestCase):
         store.shutdown()
         self.assertTrue(panel.is_printed())
 
+    def test_external_printed_change_resyncs_loaded_card(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("address")
+        panel.save_card()
+        card_id = panel.state.loaded_card_id
+        self.assertFalse(panel.is_printed())
+        # An external flag change (as the print window would do), then the
+        # refresh the main window now drives on cards_changed.
+        store.set_printed([card_id], True)
+        panel._refresh_saved_list()
+        self.assertTrue(panel.is_printed())
+        self.assertFalse(panel.state.altered)
+        self.assertTrue(panel.build_card().printed)
+        store.shutdown()
+
     # --- auto-grab (autofill_pronunciation) -----------------------------
 
     def test_grab_fills_everything_when_editor_empty(self):

@@ -210,6 +210,13 @@ class TranslationTool(QMainWindow):
         self.book_panel.book_sentence_matched.connect(
             self.on_book_sentence_matched
         )
+        # Keep the dock's saved list and the loaded card's printed button in
+        # step with external flag changes (bulk toggle / auto-flag from the
+        # print window), the same way the print window's own panel already
+        # does.
+        self.flashcard_store.cards_changed.connect(
+            self.flashcard_panel._refresh_saved_list
+        )
 
     def on_word_searched(self, word: str):
         # A new search starts a fresh card: clear the editor first (only when the
