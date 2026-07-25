@@ -517,6 +517,20 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(rows["a"], True)
         self.assertEqual(rows["b"], False)
 
+    def test_saved_row_carries_starred_role(self):
+        from PySide6.QtCore import Qt
+        panel, store = self._panel()
+        store.cards = [Card(headword="alpha", id="a", starred=True)]
+        panel._refresh_saved_list()
+        item = panel.saved_list.item(0)
+        self.assertTrue(item.data(panel._STARRED_ROLE))
+
+    def test_saved_row_text_has_no_star_prefix(self):
+        panel, store = self._panel()
+        store.cards = [Card(headword="alpha", id="a", starred=True)]
+        panel._refresh_saved_list()
+        self.assertEqual(panel.saved_list.item(0).text(), "alpha")
+
     def test_prepare_on_freshly_saved_card_clears_it(self):
         # A just-saved (unaltered, editing) card is cleared to a fresh new card;
         # the saved card itself still exists in the store.
@@ -904,7 +918,9 @@ class FlashcardPanelTests(unittest.TestCase):
     def test_saved_list_lists_cards_with_star_marker(self):
         panel, store = self._panel()
         self._seed(panel, store)
-        self.assertEqual(self._labels(panel), ["address", "Starred: receive"])
+        self.assertEqual(self._labels(panel), ["address", "receive"])
+        self.assertFalse(panel.saved_list.item(0).data(panel._STARRED_ROLE))
+        self.assertTrue(panel.saved_list.item(1).data(panel._STARRED_ROLE))
 
     def test_saved_list_starts_from_stored_cards(self):
         tmp = tempfile.TemporaryDirectory()

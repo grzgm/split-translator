@@ -13,7 +13,7 @@ touching this file."""
 from contextlib import contextmanager
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QPointF, Qt, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -22,6 +22,7 @@ from PySide6.QtGui import (
     QIcon,
     QPainter,
     QPixmap,
+    QPolygonF,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -389,24 +390,53 @@ def _printer_pixmap(size: int, colour: str) -> QPixmap:
     return pixmap
 
 
-class SavedCardRowDelegate(QStyledItemDelegate):
-    """Draws the normal row, then overlays a right-edge printer glyph when the
-    row's printed role is set. Only adds to the default painting; the checkbox,
-    the loaded-card marker and the row tint are untouched."""
+def _star_pixmap(size: int, colour: str) -> QPixmap:
+    """A small filled five-point star, matching the printer glyph's weight."""
+    import math
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(QColor(colour)))
+    cx = cy = size / 2.0
+    outer = size / 2.0
+    inner = outer * 0.5
+    points = []
+    for i in range(10):
+        r = outer if i % 2 == 0 else inner
+        angle = math.pi / 2 + i * math.pi / 5
+        points.append(
+            QPointF(cx + r * math.cos(angle), cy - r * math.sin(angle))
+        )
+    painter.drawPolygon(QPolygonF(points))
+    painter.end()
+    return pixmap
 
-    def __init__(self, printed_role: int, parent=None):
+
+class SavedCardRowDelegate(QStyledItemDelegate):
+    """Draws the normal row, then overlays right-edge glyphs for the printed
+    and starred roles: the printer icon at the far right, and the star glyph
+    to its left when both are set. Only adds to the default painting; the
+    checkbox, the loaded-card marker and the row tint are untouched."""
+
+    def __init__(self, printed_role: int, starred_role: int, parent=None):
         super().__init__(parent)
         self._printed_role = printed_role
+        self._starred_role = starred_role
         self._icon = _printer_pixmap(14, "#4a90d9")
+        self._star = _star_pixmap(14, "#f0b400")
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
-        if not bool(index.data(self._printed_role)):
-            return
         rect = option.rect
         x = rect.right() - self._icon.width() - 4
         y = rect.top() + (rect.height() - self._icon.height()) // 2
-        painter.drawPixmap(x, y, self._icon)
+        if bool(index.data(self._printed_role)):
+            painter.drawPixmap(x, y, self._icon)
+            x -= self._icon.width() + 2
+        if bool(index.data(self._starred_role)):
+            painter.drawPixmap(x, y, self._star)
 
 
 class FlashcardEditorBase(QWidget):
@@ -444,6 +474,7 @@ class FlashcardEditorBase(QWidget):
     _PRINTED_EMPTY = "Print"
     _PRINTED_SET = "Printed"
     _PRINTED_ROLE = Qt.ItemDataRole.UserRole + 1
+    _STARRED_ROLE = Qt.ItemDataRole.UserRole + 2
 
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
@@ -640,7 +671,9 @@ class FlashcardEditorBase(QWidget):
         saved_layout.addWidget(self.saved_filter)
         self.saved_list = SavedCardsList()
         self.saved_list.setItemDelegate(
-            SavedCardRowDelegate(self._PRINTED_ROLE, self.saved_list)
+            SavedCardRowDelegate(
+                self._PRINTED_ROLE, self._STARRED_ROLE, self.saved_list
+            )
         )
         # Clicking a row selects it, and a selected item is normally scrolled into
         # view. When a card partway down the list is clicked to load it, that
@@ -1140,11 +1173,10 @@ class FlashcardEditorBase(QWidget):
             self.saved_list.clear()
             for index, card in enumerate(self.store.cards):
                 label = card.headword
-                if card.starred:
-                    label = f"{self._STAR_SET}: {label}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
                 item.setData(self._PRINTED_ROLE, bool(card.printed))
+                item.setData(self._STARRED_ROLE, bool(card.starred))
                 if card.id == self.state.loaded_card_id:
                     loaded_row = index
                     item.setIcon(self._loaded_marker_icon())
