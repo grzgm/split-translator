@@ -94,6 +94,33 @@ class PdfExportRoutingTests(unittest.TestCase):
             (0, 0, 0, 0),
         )
 
+    def test_captured_ids_emit_on_successful_completion(self):
+        view = PrintView()
+        view.set_cards([Card(headword="a", id="a"), Card(headword="b", id="b")])
+        emitted = []
+        view.cards_printed.connect(lambda ids: emitted.append(list(ids)))
+        view._capture_printing_ids()
+        view._on_print_finished(True)
+        self.assertEqual(emitted, [["a", "b"]])
+
+    def test_no_emit_on_failed_completion(self):
+        view = PrintView()
+        view.set_cards([Card(headword="a", id="a")])
+        emitted = []
+        view.cards_printed.connect(lambda ids: emitted.append(list(ids)))
+        view._capture_printing_ids()
+        view._on_print_finished(False)
+        self.assertEqual(emitted, [])
+
+    def test_pdf_completion_emits_on_success(self):
+        view = PrintView()
+        view.set_cards([Card(headword="a", id="a")])
+        emitted = []
+        view.cards_printed.connect(lambda ids: emitted.append(list(ids)))
+        view._capture_printing_ids()
+        view._on_pdf_finished("/tmp/x.pdf", True)
+        self.assertEqual(emitted, [["a"]])
+
 
 class PrintViewTests(unittest.TestCase):
     def test_constructs_with_controls(self):

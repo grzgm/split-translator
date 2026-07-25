@@ -30,6 +30,7 @@ class PrintView(QWidget):
     (print) toggles."""
 
     toggle_printed_requested = Signal()
+    cards_printed = Signal(list)
 
     # Fits each front tile's examples to the tile, then puts the survivors back
     # into sense order. Runs after each load, before _OVERFLOW_JS.
@@ -94,6 +95,7 @@ class PrintView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cards: list[Card] = []
+        self._printing_ids: list[str] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -161,6 +163,8 @@ class PrintView(QWidget):
 
         self.view = QWebEngineView()
         self.view.loadFinished.connect(self._on_load_finished)
+        self.view.printFinished.connect(self._on_print_finished)
+        self.view.pdfPrintingFinished.connect(self._on_pdf_finished)
         outer.addWidget(self.view, stretch=1)
 
     def show_borders(self) -> bool:
@@ -242,6 +246,8 @@ class PrintView(QWidget):
         printer, tray and copy count."""
         from PySide6.QtPrintSupport import QPrinter
 
+        self._capture_printing_ids()
+
         if printer.outputFormat() == QPrinter.OutputFormat.PdfFormat:
             self._export_pdf(printer)
             return
@@ -250,6 +256,23 @@ class PrintView(QWidget):
         # not collected before the job finishes.
         self._active_printer = printer
         self.view.print(printer)
+
+    def _capture_printing_ids(self) -> None:
+        """Remember which cards this print job covers. The preview shows exactly
+        the selected cards, so their ids are the cards to flag on success."""
+        self._printing_ids = [c.id for c in self._cards]
+
+    def _on_print_finished(self, success: bool) -> None:
+        self._emit_printed_if(success)
+
+    def _on_pdf_finished(self, _path: str, success: bool) -> None:
+        self._emit_printed_if(success)
+
+    def _emit_printed_if(self, success: bool) -> None:
+        ids = self._printing_ids
+        self._printing_ids = []
+        if success and ids:
+            self.cards_printed.emit(ids)
 
     def _export_pdf(self, printer) -> None:
         """Write the sheets to the chosen PDF file with real, selectable text."""

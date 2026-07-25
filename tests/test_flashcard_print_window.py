@@ -91,6 +91,11 @@ class TogglePrintedResolutionTests(unittest.TestCase):
         self.assertTrue(window.panel.is_printed())
         self.assertFalse(window.panel.state.altered)
 
+    def test_cards_printed_flags_those_cards(self):
+        window, store = self._window()  # "a" unprinted, "b" printed
+        window.print_view.cards_printed.emit(["a"])
+        self.assertTrue(store.cards[0].printed)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@ class FlashcardPrintWindow(QWidget):
         # keeps a deleted/renamed card out of it.
         self.store.cards_changed.connect(self.refresh_preview)
         self.print_view.toggle_printed_requested.connect(self._on_toggle_printed)
+        self.print_view.cards_printed.connect(self._on_cards_printed)
         # An external flag change (bulk toggle or auto-flag) must refresh the
         # panel's list icons and resync the loaded card's toggle, so a later Save
         # cannot revert the flag.
@@ -55,3 +56,6 @@ class FlashcardPrintWindow(QWidget):
         by_id = {c.id: c for c in self.store.cards}
         all_printed = all(by_id[i].printed for i in ids if i in by_id)
         self.store.set_printed(ids, not all_printed)
+
+    def _on_cards_printed(self, card_ids) -> None:
+        self.store.set_printed(card_ids, True)
