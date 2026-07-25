@@ -377,7 +377,6 @@ class FlashcardPanelTests(unittest.TestCase):
 
     def test_toggling_printed_marks_altered(self):
         panel, _ = self._panel()
-        panel.headword_input.setText("address")
         panel.printed_button.setChecked(True)
         self.assertTrue(panel.state.altered)
 
@@ -492,6 +491,14 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.own_notation_input.text(), "")
         self.assertIsNone(panel._audio_uk_url)
         self.assertFalse(panel.play_uk_button.isEnabled())
+
+    def test_prepare_clears_printed(self):
+        panel, _ = self._panel()
+        card = Card(headword="w", printed=True, senses=[])
+        panel.load_card(card)
+        panel.prepare_for_new_search()
+        self.assertFalse(panel.printed_button.isChecked())
+        self.assertFalse(panel.is_printed())
 
     def test_prepare_on_freshly_saved_card_clears_it(self):
         # A just-saved (unaltered, editing) card is cleared to a fresh new card;

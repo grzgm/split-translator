@@ -1025,6 +1025,7 @@ class FlashcardEditorBase(QWidget):
             self._audio_us_url = None
             self._update_play_buttons()
             self.star_button.setChecked(False)
+            self.printed_button.setChecked(False)
             for row in self._rows():
                 self.senses_container.removeWidget(row)
                 row.deleteLater()
