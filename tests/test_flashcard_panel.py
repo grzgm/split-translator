@@ -368,6 +368,27 @@ class FlashcardPanelTests(unittest.TestCase):
         # The card stays loaded, so the star stays set in the editor too.
         self.assertTrue(panel.is_starred())
 
+    def test_build_card_carries_printed(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("address")
+        self.assertFalse(panel.build_card().printed)
+        panel.set_printed(True)
+        self.assertTrue(panel.build_card().printed)
+
+    def test_toggling_printed_marks_altered(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("address")
+        panel.printed_button.setChecked(True)
+        self.assertTrue(panel.state.altered)
+
+    def test_load_restores_printed(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("address")
+        panel.set_printed(True)
+        panel.save_card()
+        store.shutdown()
+        self.assertTrue(panel.is_printed())
+
     # --- auto-grab (autofill_pronunciation) -----------------------------
 
     def test_grab_fills_everything_when_editor_empty(self):

@@ -395,6 +395,8 @@ class FlashcardEditorBase(QWidget):
 
     _STAR_EMPTY = "Star"
     _STAR_SET = "Starred"
+    _PRINTED_EMPTY = "Print"
+    _PRINTED_SET = "Printed"
 
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
@@ -473,6 +475,12 @@ class FlashcardEditorBase(QWidget):
         self.star_button.toggled.connect(self._on_star_toggled)
         headword_row.addWidget(self.headword_input)
         headword_row.addWidget(self.star_button)
+        self.printed_button = QPushButton(self._PRINTED_EMPTY)
+        self.printed_button.setCheckable(True)
+        self.printed_button.setMaximumWidth(70)
+        self.printed_button.setToolTip("Mark this card as printed")
+        self.printed_button.toggled.connect(self._on_printed_toggled)
+        headword_row.addWidget(self.printed_button)
         form.addRow("Headword", headword_row)
 
         spelling_row = QHBoxLayout()
@@ -806,6 +814,25 @@ class FlashcardEditorBase(QWidget):
     def is_starred(self) -> bool:
         return self.star_button.isChecked()
 
+    # --- printed --------------------------------------------------------
+
+    def _on_printed_toggled(self, checked: bool):
+        self._on_user_edit()
+        self.printed_button.setText(
+            self._PRINTED_SET if checked else self._PRINTED_EMPTY
+        )
+        self.printed_button.setStyleSheet(
+            "background-color: #4a90d9; color: #fff; font-weight: bold;"
+            if checked
+            else ""
+        )
+
+    def set_printed(self, printed: bool):
+        self.printed_button.setChecked(bool(printed))
+
+    def is_printed(self) -> bool:
+        return self.printed_button.isChecked()
+
     def play_audio(self, which: str):
         url = self._audio_uk_url if which == "uk" else self._audio_us_url
         if not url:
@@ -854,6 +881,7 @@ class FlashcardEditorBase(QWidget):
             audio_us_url=self._audio_us_url,
             senses=senses,
             starred=self.is_starred(),
+            printed=self.is_printed(),
             created_at=self.state.loaded_created_at or now,
             updated_at=now,
         )
@@ -1152,6 +1180,7 @@ class FlashcardEditorBase(QWidget):
             self._audio_us_url = card.audio_us_url
             self._update_play_buttons()
             self.set_starred(card.starred)
+            self.set_printed(card.printed)
 
             for row in self._rows():
                 self.senses_container.removeWidget(row)

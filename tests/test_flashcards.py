@@ -67,6 +67,15 @@ class CardTests(unittest.TestCase):
         card = Card.from_dict({"headword": "dog"})
         self.assertFalse(card.starred)
 
+    def test_printed_defaults_false_and_round_trips(self):
+        self.assertFalse(Card(headword="dog").printed)
+        card = Card(headword="dog", printed=True)
+        self.assertTrue(Card.from_dict(card.to_dict()).printed)
+
+    def test_printed_defaults_false_for_old_cards(self):
+        card = Card.from_dict({"headword": "dog"})
+        self.assertFalse(card.printed)
+
 
 class StorageTests(unittest.TestCase):
     def test_load_missing_returns_empty(self):

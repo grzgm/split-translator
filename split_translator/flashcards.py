@@ -77,6 +77,7 @@ class Card:
     audio_us_url: str | None = None
     senses: list[Sense] = field(default_factory=list)
     starred: bool = False
+    printed: bool = False
     created_at: str = ""
     updated_at: str = ""
 
@@ -93,6 +94,7 @@ class Card:
             "audio_us_url": self.audio_us_url,
             "senses": [s.to_dict() for s in self.senses],
             "starred": self.starred,
+            "printed": self.printed,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -111,6 +113,7 @@ class Card:
             audio_us_url=data.get("audio_us_url"),
             senses=[Sense.from_dict(s) for s in data.get("senses", [])],
             starred=bool(data.get("starred", False)),
+            printed=bool(data.get("printed", False)),
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
         )
