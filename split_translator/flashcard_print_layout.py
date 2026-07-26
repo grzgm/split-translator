@@ -80,16 +80,20 @@ def _esc(text: str) -> str:
     return _html.escape(text or "")
 
 
-def example_fill_order(card: Card) -> list[tuple[int, str]]:
+def example_fill_order(card: Card) -> list[tuple[int, int, str]]:
     """Every example on the card, interleaved across its senses: the first
     example of each sense, then the second of each, and so on. Each item is
-    (sense index, example text).
+    (sense index, example index within that sense, example text).
 
     A tile is a fixed physical size and clips whatever does not fit, so the order
     the examples are added in is what decides which ones survive. Interleaving
     means every sense gets an example on the card before any sense gets a second
     one, instead of a wordy first sense crowding the later senses off it
     entirely.
+
+    The example index is carried because the rendered tile tags each example with
+    it, which is how the page reports a kept example back to Python as a
+    (sense, example) pair.
 
     This is only the fill order. The print view fills a tile in this order, and
     then regroups whatever fitted back into sense order for display, so the card
@@ -101,7 +105,19 @@ def example_fill_order(card: Card) -> list[tuple[int, str]]:
         for index, sense in enumerate(senses):
             examples = sense.examples or []
             if rank < len(examples):
-                order.append((index, examples[rank]))
+                order.append((index, rank, examples[rank]))
+    return order
+
+
+def example_sense_order(card: Card) -> list[tuple[int, int, str]]:
+    """Every example on the card in reading order: all of sense one, then all of
+    sense two. Same triples as example_fill_order, in the order a hand-picked
+    set prints in. No interleaving is needed there, because a hand-picked set is
+    rendered whole and nothing will be dropped."""
+    order = []
+    for sense_index, sense in enumerate(card.senses or []):
+        for example_index, text in enumerate(sense.examples or []):
+            order.append((sense_index, example_index, text))
     return order
 
 
@@ -116,15 +132,17 @@ def render_card_tile(card: Card, side: str, blank_headwords: bool = True) -> str
             f'<div class="own-notation">{_esc(card.own_notation)}</div>'
             if card.own_notation else ""
         )
-        # Emitted in fill order, not reading order, and tagged with the sense they
-        # came from: the view drops what does not fit and then puts the survivors
-        # back into sense order. See example_fill_order.
+        # Emitted in fill order, not reading order, and tagged with the sense and
+        # the position it came from: the view drops what does not fit and then
+        # puts the survivors back into sense order, and reports the survivors
+        # back to Python by those two indices. See example_fill_order.
         examples = ""
         fill = example_fill_order(card)
         if fill:
             items = "".join(
-                f'<div class="example" data-sense="{index}">{_esc(text)}</div>'
-                for index, text in fill
+                f'<div class="example" data-sense="{sense_index}"'
+                f' data-example="{example_index}">{_esc(text)}</div>'
+                for sense_index, example_index, text in fill
             )
             examples = f'<div class="example-list">{items}</div>'
         return (

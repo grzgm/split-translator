@@ -4,6 +4,7 @@ from split_translator.flashcard_print_layout import (
     PAGE,
     PageSpec,
     example_fill_order,
+    example_sense_order,
     grid_dims,
     paginate,
     render_card_tile,
@@ -32,7 +33,7 @@ class ExampleFillOrderTests(unittest.TestCase):
         card = self._card(["a1", "a2", "a3"], ["b1", "b2"])
         self.assertEqual(
             example_fill_order(card),
-            [(0, "a1"), (1, "b1"), (0, "a2"), (1, "b2"), (0, "a3")],
+            [(0, 0, "a1"), (1, 0, "b1"), (0, 1, "a2"), (1, 1, "b2"), (0, 2, "a3")],
         )
 
     def test_a_sense_that_runs_out_is_skipped_not_padded(self):
@@ -40,28 +41,30 @@ class ExampleFillOrderTests(unittest.TestCase):
         card = self._card(["a1", "a2", "a3"], ["b1"])
         self.assertEqual(
             example_fill_order(card),
-            [(0, "a1"), (1, "b1"), (0, "a2"), (0, "a3")],
+            [(0, 0, "a1"), (1, 0, "b1"), (0, 1, "a2"), (0, 2, "a3")],
         )
 
     def test_three_senses_round_robin_in_sense_order(self):
         card = self._card(["a1", "a2"], ["b1"], ["c1", "c2"])
         self.assertEqual(
             example_fill_order(card),
-            [(0, "a1"), (1, "b1"), (2, "c1"), (0, "a2"), (2, "c2")],
+            [(0, 0, "a1"), (1, 0, "b1"), (2, 0, "c1"), (0, 1, "a2"), (2, 1, "c2")],
         )
 
     def test_a_single_sense_keeps_its_own_order(self):
         card = self._card(["a1", "a2", "a3"])
         self.assertEqual(
             example_fill_order(card),
-            [(0, "a1"), (0, "a2"), (0, "a3")],
+            [(0, 0, "a1"), (0, 1, "a2"), (0, 2, "a3")],
         )
 
     def test_an_empty_first_sense_does_not_starve_the_others(self):
         # The shape that printed nothing before: the examples all sit on a later
         # sense. The first sense contributes nothing and is simply skipped.
         card = self._card([], ["b1", "b2"])
-        self.assertEqual(example_fill_order(card), [(1, "b1"), (1, "b2")])
+        self.assertEqual(
+            example_fill_order(card), [(1, 0, "b1"), (1, 1, "b2")]
+        )
 
     def test_no_senses_and_no_examples_are_empty(self):
         self.assertEqual(example_fill_order(Card(headword="w", id="w")), [])
@@ -69,8 +72,46 @@ class ExampleFillOrderTests(unittest.TestCase):
 
     def test_every_example_on_the_card_appears_exactly_once(self):
         card = self._card(["a1", "a2", "a3"], ["b1"], ["c1", "c2"])
-        got = [text for _index, text in example_fill_order(card)]
+        got = [text for _sense, _index, text in example_fill_order(card)]
         self.assertCountEqual(got, ["a1", "a2", "a3", "b1", "c1", "c2"])
+
+    def test_the_example_index_is_its_position_within_its_own_sense(self):
+        # The index is what lets the page report a kept example back to Python
+        # as a (sense, example) pair, so it must count within the sense, not
+        # across the card.
+        card = self._card(["a1", "a2"], ["b1", "b2"])
+        self.assertEqual(
+            [(s, i) for s, i, _text in example_fill_order(card)],
+            [(0, 0), (1, 0), (0, 1), (1, 1)],
+        )
+
+
+class ExampleSenseOrderTests(unittest.TestCase):
+    """Reading order: all of sense one, then all of sense two. A hand-picked
+    example set prints in this order, because nothing will be dropped and so
+    there is no need to interleave the senses."""
+
+    def _card(self, *example_lists):
+        return Card(
+            headword="w", id="w",
+            senses=[Sense(pos="p", examples=list(e)) for e in example_lists],
+        )
+
+    def test_groups_each_sense_together(self):
+        card = self._card(["a1", "a2"], ["b1"])
+        self.assertEqual(
+            example_sense_order(card),
+            [(0, 0, "a1"), (0, 1, "a2"), (1, 0, "b1")],
+        )
+
+    def test_a_card_with_no_senses_is_empty(self):
+        self.assertEqual(example_sense_order(Card(headword="w", id="w")), [])
+
+    def test_it_holds_the_same_examples_as_the_fill_order(self):
+        card = self._card(["a1", "a2", "a3"], ["b1"])
+        self.assertCountEqual(
+            example_sense_order(card), example_fill_order(card)
+        )
 
 
 class ExampleTileMarkupTests(unittest.TestCase):
@@ -87,9 +128,15 @@ class ExampleTileMarkupTests(unittest.TestCase):
             ],
         )
         html = render_card_tile(card, "front")
-        self.assertIn('<div class="example" data-sense="0">a1</div>', html)
-        self.assertIn('<div class="example" data-sense="1">b1</div>', html)
-        self.assertIn('<div class="example" data-sense="0">a2</div>', html)
+        self.assertIn(
+            '<div class="example" data-sense="0" data-example="0">a1</div>', html
+        )
+        self.assertIn(
+            '<div class="example" data-sense="1" data-example="0">b1</div>', html
+        )
+        self.assertIn(
+            '<div class="example" data-sense="0" data-example="1">a2</div>', html
+        )
         # Interleaved: b1 comes before a2, so the second sense is on the card
         # even if there is only room for two examples.
         self.assertLess(html.index(">b1<"), html.index(">a2<"))
