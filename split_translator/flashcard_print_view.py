@@ -17,7 +17,7 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
-from .flashcard_print_layout import PAGE, render_html, _fmt_mm
+from .flashcard_print_layout import PAGE, render_body, render_html, _fmt_mm
 from .flashcards import Card
 from .print_tile_bridge import PrintTileBridge
 
@@ -180,6 +180,13 @@ class PrintView(QWidget):
         # the top, which is where a fresh page loads anyway.
         self._pending_scroll = (0.0, 0.0)
 
+        # False until a document exists to update in place. The first refresh
+        # loads a whole page; every one after it swaps the body alone, which is
+        # what keeps the preview from blinking. A failed load leaves this False,
+        # so the next refresh loads a full page again rather than running a body
+        # swap against a document that is not there.
+        self._document_loaded = False
+
         # Coalesce rapid preview rebuilds (a burst of selection ticks, a content
         # change) into a single reload. Without this each tick reloads the whole
         # web view, which is the bulk of the perceived lag. A short window is
@@ -230,16 +237,29 @@ class PrintView(QWidget):
         self._back_offset_x_mm = float(right_mm)
         self.view.page().runJavaScript(self._back_offset_js())
 
-    def _render(self) -> str:
-        """Build the print HTML for the current cards, offsets and toggles."""
-        page = replace(
+    def _page_spec(self):
+        return replace(
             PAGE,
             back_offset_mm=self.back_offset(),
             back_offset_x_mm=self.back_offset_x(),
         )
+
+    def _render(self) -> str:
+        """Build the whole print document for the current cards, offsets and
+        toggles. Used for the first load; later updates go through
+        _render_body."""
         return render_html(
             self._cards,
-            page,
+            self._page_spec(),
+            blank_headwords=self._blank_headwords,
+            choices=self._choices,
+        )
+
+    def _render_body(self) -> str:
+        """Build just the sheets, for swapping into the live document."""
+        return render_body(
+            self._cards,
+            self._page_spec(),
             blank_headwords=self._blank_headwords,
             choices=self._choices,
         )
@@ -263,13 +283,20 @@ class PrintView(QWidget):
         self._render_timer.start()
 
     def _reload_preview(self) -> None:
-        # setHtml replaces the document, which drops the scroll position back to
-        # the first sheet. Remember where the view was so the load can put it
-        # back: ticking an example on a card halfway down a long print run
-        # should leave that card where it was, not throw the preview to the top.
-        # Restoring is unconditional, so it also covers a content change or a
-        # toggle that reloads. A position past the end of a now-shorter document
-        # is clamped by the browser, which is the sane landing spot anyway.
+        """Bring the preview up to date with the current cards and choices.
+
+        Once a document exists, only its body is replaced. A setHtml would tear
+        the document down and rebuild it, and Chromium paints a blank frame in
+        that gap, which is the blink that made every tick of an example
+        unpleasant. Nothing in the head depends on the cards (see _styles), so
+        rebuilding it bought nothing."""
+        if self._document_loaded:
+            self.view.page().runJavaScript(
+                self._body_swap_script(), self._on_fit_measured
+            )
+            return
+        # First load only. setHtml drops the scroll position, so carry it across
+        # in Python; the page it lands in cannot know where the old one was.
         point = self.view.page().scrollPosition()
         self._pending_scroll = (point.x(), point.y())
         self.view.setHtml(self._render())
@@ -296,17 +323,51 @@ class PrintView(QWidget):
         x, y = self._pending_scroll
         return f"window.scrollTo({x:.0f}, {y:.0f});"
 
-    def _load_script(self) -> str:
-        """The one script run after each load. Sets the on-screen toggles, fits
-        the examples to each tile, flags any that still overflow, restores the
-        scroll position, and returns the fit measurement.
+    def _measure_js(self) -> str:
+        """Fit the examples to each tile, then flag any that still overflow.
 
-        Order matters twice. The fit must run before the overflow flagging, so
-        the flag describes the tile as it will actually print. The scroll is
-        restored last, once the DOM has settled, so it cannot be undone by a
-        later layout change. The blocks stay separate IIFEs and hand the
-        measurement over on window.__stFit, which is why the outer wrapper can
-        return it without any of them sharing scope.
+        Order matters: the fit runs first so the overflow flag describes the tile
+        as it will actually print. Shared by both update paths, since new tiles
+        need measuring however they arrived."""
+        return self._FIT_EXAMPLES_JS + self._OVERFLOW_JS
+
+    def _body_swap_script(self) -> str:
+        """Replace the sheets in place and re-measure them, with no page reload.
+
+        The head is left alone: it carries no card-dependent styling, so there is
+        nothing in it to refresh. Everything else the page holds survives too.
+        The cut-border and cut-line toggles are classes on <body> itself rather
+        than on its contents, the click listener is delegated on <document>, and
+        the WebChannel bridge lives on <window>, so none of them need rebuilding.
+
+        The body HTML is passed as a JSON string literal, which is the safe way
+        to carry arbitrary markup (quotes, backslashes, angle brackets) into a
+        script.
+
+        Scroll is saved and restored inside this one synchronous script: an
+        innerHTML assignment empties the body for an instant, and a browser that
+        recomputes layout in that instant would clamp the scroll to the top and
+        leave it there once the new content arrived."""
+        body = json.dumps(self._render_body())
+        return (
+            "(function () {"
+            "var x = window.scrollX, y = window.scrollY;"
+            f"document.body.innerHTML = {body};"
+            + self._measure_js()
+            + "window.scrollTo(x, y);"
+            + "return JSON.stringify(window.__stFit || {});"
+            "})();"
+        )
+
+    def _load_script(self) -> str:
+        """The one script run after the first load. Sets the on-screen toggles,
+        measures the tiles, restores the scroll position, and returns the fit
+        measurement.
+
+        The scroll is restored last, once the DOM has settled, so it cannot be
+        undone by a later layout change. The blocks stay separate IIFEs and hand
+        the measurement over on window.__stFit, which is why the outer wrapper
+        can return it without any of them sharing scope.
 
         The return value must be a string: a bare JS object arrives in the
         Python callback as an empty string (see dictionary_panel._GRAB_JS)."""
@@ -314,8 +375,7 @@ class PrintView(QWidget):
             "(function () {"
             + self._borders_js(self.show_borders())
             + self._cut_lines_js(self.print_cut_lines())
-            + self._FIT_EXAMPLES_JS
-            + self._OVERFLOW_JS
+            + self._measure_js()
             + self._restore_scroll_js()
             + "return JSON.stringify(window.__stFit || {});"
             + "})();"
@@ -327,10 +387,17 @@ class PrintView(QWidget):
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:
             return
+        # A document exists now, so later refreshes can swap its body instead of
+        # loading a fresh page.
+        self._document_loaded = True
         # Two calls, deliberately. The click wiring returns nothing, while the
         # toggles-and-fit script returns the measurement through its callback;
         # folding them together would put the channel setup last and lose that
         # return value.
+        #
+        # The click wiring is injected once per loaded document, not once per
+        # refresh: its listener is delegated on <document>, so a body swap leaves
+        # it attached and still matching the new tiles.
         self.view.page().runJavaScript(self._tile_click_script())
         self.view.page().runJavaScript(self._load_script(), self._on_fit_measured)
 

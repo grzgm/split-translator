@@ -205,8 +205,16 @@ def _fmt_mm(value: float) -> str:
     return f"{value:g}"
 
 
-def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
-    star_css = ".star { position: absolute; top: 3mm; right: 3mm; }" if has_starred else ""
+def _styles(page: PageSpec, cols: int) -> str:
+    # The star rule is emitted whether or not any card is starred, which is what
+    # makes this whole stylesheet independent of the cards. That matters because
+    # the preview updates by replacing the body alone and never rebuilds the head
+    # (see PrintView._body_swap_script): a stylesheet that varied with the cards
+    # would go stale the moment a starred card entered or left the selection.
+    # Paper and card sizes come from PAGE and never change at runtime, and the
+    # back offsets ride CSS variables the preview sets live, so nothing else here
+    # varies either. The cost when nothing is starred is one unused rule.
+    star_css = ".star { position: absolute; top: 3mm; right: 3mm; }"
     # The back sheet's duplex registration nudge is carried by two CSS variables
     # so the print preview can update it live (see PrintView._back_offset_js)
     # without rebuilding the whole document. --back-dx shifts the back right
@@ -374,14 +382,20 @@ def _sheet_block(
     )
 
 
-def render_html(
+def render_body(
     cards: list[Card],
     page: PageSpec = PAGE,
     blank_headwords: bool = True,
     choices: dict | None = None,
 ) -> str:
+    """The sheets markup alone, with no document around it.
+
+    Split out from render_html because everything that changes while the Print
+    window is open (the cards, the hand-picked example sets, headword blanking)
+    changes only this. The preview swaps this into the live document rather than
+    reloading the whole page, which is what stops it blinking; see
+    PrintView._body_swap_script."""
     choices = choices or {}
-    cols, _rows = grid_dims(page)
     sheets = paginate(cards, page)
     # paginate emits sheets as consecutive front, back, front, back, ... pairs.
     # On screen each pair is shown side by side; on paper each sheet is its own
@@ -402,9 +416,22 @@ def render_html(
                 choices,
             )
         body += f'<div class="sheet-pair">{blocks}</div>'
-    has_starred = any(card is not None and card.starred for card in cards)
+    return body
+
+
+def render_html(
+    cards: list[Card],
+    page: PageSpec = PAGE,
+    blank_headwords: bool = True,
+    choices: dict | None = None,
+) -> str:
+    """The whole document: a content-independent head plus the sheets body.
+
+    Used for the preview's first load and for any print or PDF export. Later
+    preview updates go through render_body instead."""
+    cols, _rows = grid_dims(page)
     return (
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
-        f"<style>{_styles(page, cols, has_starred)}</style></head>"
-        f"<body>{body}</body></html>"
+        f"<style>{_styles(page, cols)}</style></head>"
+        f"<body>{render_body(cards, page, blank_headwords, choices)}</body></html>"
     )

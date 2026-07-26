@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 
@@ -319,6 +320,127 @@ class TileClickTests(unittest.TestCase):
         js = view._tile_click_script()
         self.assertIn("QWebChannel", js)
         self.assertNotIn("__CHANNEL_JS__", js)
+
+
+class BodySwapTests(unittest.TestCase):
+    """A refresh replaces the sheets inside the live document instead of loading
+    a fresh page. setHtml tears the document down and Chromium paints a blank
+    frame in the gap, which is the blink that made ticking an example
+    unpleasant.
+
+    The swap itself needs a live page, so what is pinned here is which path a
+    refresh takes and what the swap script contains."""
+
+    def _view(self):
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view._cards = [Card(headword="alpha", id="a")]
+        loaded, scripts = [], []
+        view.view.setHtml = lambda html: loaded.append(html)
+        view.view.page().runJavaScript = (
+            lambda js, *cb: scripts.append(js)
+        )
+        return view, loaded, scripts
+
+    def test_the_first_refresh_loads_a_whole_document(self):
+        view, loaded, scripts = self._view()
+        view._reload_preview()
+        self.assertEqual(len(loaded), 1)
+        self.assertIn("<!DOCTYPE html>", loaded[0])
+        self.assertEqual(scripts, [])
+
+    def test_a_later_refresh_swaps_the_body_instead(self):
+        view, loaded, scripts = self._view()
+        view._document_loaded = True
+        view._reload_preview()
+        self.assertEqual(loaded, [])
+        self.assertEqual(len(scripts), 1)
+        self.assertIn("document.body.innerHTML", scripts[0])
+
+    def test_a_failed_load_leaves_the_next_refresh_on_the_full_path(self):
+        # Swapping a body into a document that never loaded would do nothing at
+        # all, and the preview would sit empty.
+        view, loaded, _scripts = self._view()
+        view._on_load_finished(False)
+        view._reload_preview()
+        self.assertEqual(len(loaded), 1)
+
+    def test_a_successful_load_arms_the_swap_path(self):
+        view, _loaded, _scripts = self._view()
+        self.assertFalse(view._document_loaded)
+        view._on_load_finished(True)
+        self.assertTrue(view._document_loaded)
+
+    def test_the_swap_carries_the_body_as_a_json_string_literal(self):
+        # Arbitrary markup has to survive being embedded in a script, so it is
+        # passed as JSON rather than pasted in raw. Assert it round-trips: the
+        # literal in the script must decode back to exactly the rendered body,
+        # quotes, backslashes and angle brackets intact.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view.set_cards([
+            Card(headword='q"uote \\ <b>', id="a",
+                 senses=[Sense(pos="v", examples=['He said "no" & left.'])]),
+        ])
+        script = view._body_swap_script()
+        marker = "document.body.innerHTML = "
+        start = script.index(marker) + len(marker)
+        # raw_decode reads exactly one JSON value from that offset, so it stops
+        # at the end of the literal without any hand-rolled quote matching.
+        decoded, _end = json.JSONDecoder().raw_decode(script, start)
+        self.assertEqual(decoded, view._render_body())
+
+    def test_the_swap_measures_the_new_tiles(self):
+        # New tiles arrive unmeasured, so the fit and the overflow flagging have
+        # to run again, and the measurement still has to reach Python.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        script = view._body_swap_script()
+        self.assertIn("__stFit", script)
+        self.assertIn("is-overflow", script)
+        self.assertIn("JSON.stringify", script)
+        self.assertLess(
+            script.index("document.body.innerHTML"), script.index("__stFit")
+        )
+
+    def test_the_swap_preserves_the_scroll_position_itself(self):
+        # An innerHTML assignment empties the body for an instant; a browser that
+        # relayouts in that instant would clamp the scroll to the top. Saving and
+        # restoring inside the same synchronous script closes that window.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        script = view._body_swap_script()
+        self.assertIn("window.scrollY", script)
+        self.assertIn("window.scrollTo(x, y)", script)
+        self.assertLess(
+            script.index("window.scrollY"), script.index("document.body.innerHTML")
+        )
+        self.assertLess(
+            script.index("document.body.innerHTML"),
+            script.index("window.scrollTo(x, y)"),
+        )
+
+    def test_the_swap_reflects_the_current_cards_and_choices(self):
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view.set_cards([
+            Card(headword="cat", id="c",
+                 senses=[Sense(pos="v", examples=["keep me", "drop me"])]),
+        ])
+        view.set_choices({"c": {(0, 0)}})
+        script = view._body_swap_script()
+        self.assertIn("keep me", script)
+        self.assertNotIn("drop me", script)
+
+    def test_the_swap_carries_no_document_wrapper(self):
+        # The head is deliberately left alone, so the payload must be the sheets
+        # alone. A whole document nested inside body would be invalid markup.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view.set_cards([Card(headword="alpha", id="a")])
+        script = view._body_swap_script()
+        self.assertNotIn("<!DOCTYPE html>", script)
+        self.assertNotIn("<style>", script)
 
 
 class ScrollPreservationTests(unittest.TestCase):
