@@ -96,6 +96,44 @@ class PdfExportRoutingTests(unittest.TestCase):
             (0, 0, 0, 0),
         )
 
+    def test_the_job_starts_on_long_edge_duplex(self):
+        # The sheets are laid out for a long-edge flip and no other: the backs
+        # are mirrored to land on their own fronts once the paper turns about
+        # its long edge. Short-edge binding would print every back upside down.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        self.assertEqual(
+            view._new_printer().duplex(), QPrinter.DuplexMode.DuplexLongSide
+        )
+
+    def test_the_print_dialog_opens_on_the_preset_printer(self):
+        # The preset is worth nothing if print_cards builds a plain QPrinter of
+        # its own, so pin that the dialog is handed the pre-set one.
+        import PySide6.QtPrintSupport as print_support
+
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        shown = []
+
+        class _RejectingDialog:
+            DialogCode = print_support.QPrintDialog.DialogCode
+
+            def __init__(self, printer, _parent):
+                shown.append(printer)
+
+            def exec(self):
+                return self.DialogCode.Rejected
+
+        original = print_support.QPrintDialog
+        print_support.QPrintDialog = _RejectingDialog
+        try:
+            view.print_cards()
+        finally:
+            print_support.QPrintDialog = original
+
+        self.assertEqual(len(shown), 1)
+        self.assertEqual(shown[0].duplex(), QPrinter.DuplexMode.DuplexLongSide)
+
     def test_captured_ids_emit_on_successful_completion(self):
         view = PrintView()
         view.set_cards([Card(headword="a", id="a"), Card(headword="b", id="b")])

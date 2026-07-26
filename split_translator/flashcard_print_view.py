@@ -469,13 +469,29 @@ class PrintView(QWidget):
     def _cut_lines_js(self, on: bool) -> str:
         return self._body_class_js("print-cut-lines", on)
 
+    def _new_printer(self):
+        """A printer for one job, pre-set to long-edge duplex.
+
+        The sheets are built for a long-edge flip and nothing else: they are
+        emitted front, back, front, back, and each back grid is mirrored (right
+        aligned, columns reversed) so it lands on its own front once the paper
+        turns about its long edge. Short-edge binding turns the paper about the
+        short edge instead, which puts every back upside down, so leaving the
+        default at "Off" only invited the wrong setting. The dialog opens with
+        long-edge selected and the choice stays the user's."""
+        from PySide6.QtPrintSupport import QPrinter
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setDuplex(QPrinter.DuplexMode.DuplexLongSide)
+        return printer
+
     def print_cards(self) -> None:
-        from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+        from PySide6.QtPrintSupport import QPrintDialog
 
         # The print job renders the currently loaded page, so make sure any
         # debounced reload has run before we hand it to the printer.
         self._flush_pending_reload()
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer = self._new_printer()
         dialog = QPrintDialog(printer, self)
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:
             return
