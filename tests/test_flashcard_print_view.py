@@ -244,5 +244,58 @@ class BlankHeadwordsToggleTests(unittest.TestCase):
         self.assertNotIn('class="blank"', html)
 
 
+class AutoFitReportTests(unittest.TestCase):
+    """The automatic default is only knowable in the page, so the fit script
+    reports which examples it kept. The value must come back as a JSON string:
+    a bare JS object arrives in the Python callback as an empty string."""
+
+    def test_the_fit_js_records_the_card_id_and_both_indices(self):
+        view = PrintView()
+        js = view._FIT_EXAMPLES_JS
+        self.assertIn("data-card-id", js)
+        self.assertIn("dataset.example", js)
+        self.assertIn("__stFit", js)
+
+    def test_the_load_script_returns_a_json_string(self):
+        view = PrintView()
+        script = view._load_script()
+        self.assertIn("JSON.stringify", script)
+        # The fit must run before the overflow flagging, so the flag describes
+        # the tile as it will actually print.
+        self.assertLess(script.index("__stFit"), script.index("is-overflow"))
+
+    def test_a_measurement_is_parsed_and_emitted(self):
+        view = PrintView()
+        seen = []
+        view.auto_fit_measured.connect(seen.append)
+        view._on_fit_measured('{"c": [[0, 0], [1, 2]]}')
+        self.assertEqual(seen, [{"c": [(0, 0), (1, 2)]}])
+
+    def test_an_empty_measurement_still_emits(self):
+        # A document with no front examples at all measures nothing, and the
+        # sidebar has to hear that rather than keep stale ticks.
+        view = PrintView()
+        seen = []
+        view.auto_fit_measured.connect(seen.append)
+        view._on_fit_measured("{}")
+        self.assertEqual(seen, [{}])
+
+    def test_a_failed_script_emits_nothing(self):
+        # runJavaScript hands back None when the page went away mid-flight.
+        view = PrintView()
+        seen = []
+        view.auto_fit_measured.connect(seen.append)
+        view._on_fit_measured(None)
+        view._on_fit_measured("")
+        self.assertEqual(seen, [])
+
+    def test_malformed_json_emits_nothing(self):
+        view = PrintView()
+        seen = []
+        view.auto_fit_measured.connect(seen.append)
+        view._on_fit_measured("not json")
+        self.assertEqual(seen, [])
+
+
 if __name__ == "__main__":
     unittest.main()

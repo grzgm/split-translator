@@ -6,6 +6,7 @@ The live rendering, the overflow marking and the actual print cannot be unit
 tested (they need a live QWebEngineView); they are verified with a runtime
 walkthrough. Only construction and the JS-builder strings are covered by tests."""
 
+import json
 from dataclasses import replace
 
 from PySide6.QtCore import QMarginsF, QTimer, Signal
@@ -30,6 +31,10 @@ class PrintView(QWidget):
     (print) toggles."""
 
     cards_printed = Signal(list)
+    # The examples the automatic fit kept, as {card id: [(sense, example), ...]},
+    # emitted after each load. Only the browser can measure a wrapped sentence,
+    # so this is the only way the sidebar can show the real default.
+    auto_fit_measured = Signal(dict)
 
     # Fits each front tile's examples to the tile, then puts the survivors back
     # into sense order. Runs after each load, before _OVERFLOW_JS.
@@ -55,7 +60,10 @@ class PrintView(QWidget):
     # _OVERFLOW_JS still runs over it, so an overrun is flagged in red.
     _FIT_EXAMPLES_JS = """
 (function () {
-  var lists = document.querySelectorAll('.tile--front .example-list:not([data-fit="manual"])');
+  var fit = {};
+  var lists = document.querySelectorAll(
+    '.tile--front .example-list:not([data-fit="manual"])'
+  );
   for (var i = 0; i < lists.length; i++) {
     var list = lists[i];
     var tile = list.closest('.tile');
@@ -74,10 +82,15 @@ class PrintView(QWidget):
     kept.sort(function (a, b) {
       return Number(a.dataset.sense) - Number(b.dataset.sense);
     });
+    var pairs = [];
     for (var k = 0; k < kept.length; k++) {
       list.appendChild(kept[k]);
+      pairs.push([Number(kept[k].dataset.sense), Number(kept[k].dataset.example)]);
     }
+    var cardId = tile.getAttribute('data-card-id');
+    if (cardId) { fit[cardId] = pairs; }
   }
+  window.__stFit = fit;
 })();
 """
 
@@ -253,20 +266,54 @@ class PrintView(QWidget):
             f"document.documentElement.style.setProperty('--back-dy', '{dy}mm');"
         )
 
-    def _on_load_finished(self, ok: bool) -> None:
-        if not ok:
-            return
-        # One script, one IPC round-trip. Set the on-screen toggles, then fit the
-        # examples to each tile and flag any that still overflow. Fit must run
-        # before overflow so the flag describes the tile as it will actually
-        # print.
-        script = (
-            self._borders_js(self.show_borders())
+    def _load_script(self) -> str:
+        """The one script run after each load. Sets the on-screen toggles, fits
+        the examples to each tile, flags any that still overflow, and returns
+        the fit measurement.
+
+        Order matters: the fit must run before the overflow flagging, so the
+        flag describes the tile as it will actually print. The blocks stay
+        separate IIFEs and hand the measurement over on window.__stFit, which is
+        why the outer wrapper can return it without any of them sharing scope.
+
+        The return value must be a string: a bare JS object arrives in the
+        Python callback as an empty string (see dictionary_panel._GRAB_JS)."""
+        return (
+            "(function () {"
+            + self._borders_js(self.show_borders())
             + self._cut_lines_js(self.print_cut_lines())
             + self._FIT_EXAMPLES_JS
             + self._OVERFLOW_JS
+            + "return JSON.stringify(window.__stFit || {});"
+            + "})();"
         )
-        self.view.page().runJavaScript(script)
+
+    def _on_load_finished(self, ok: bool) -> None:
+        if not ok:
+            return
+        # One script, one IPC round-trip, and the fit measurement comes back on
+        # the same trip.
+        self.view.page().runJavaScript(self._load_script(), self._on_fit_measured)
+
+    def _on_fit_measured(self, raw) -> None:
+        """Parse the fit measurement the page reported and announce it. A page
+        that went away mid-flight hands back None or an empty string, and a
+        broken document could hand back something that is not JSON; neither is
+        worth disturbing the sidebar over, so both are ignored."""
+        if not raw:
+            return
+        try:
+            measured = json.loads(raw)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(measured, dict):
+            return
+        self.auto_fit_measured.emit(
+            {
+                card_id: [(int(sense), int(index)) for sense, index in pairs]
+                for card_id, pairs in measured.items()
+            }
+        )
 
     def _body_class_js(self, name: str, on: bool) -> str:
         action = "add" if on else "remove"
