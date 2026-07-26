@@ -322,6 +322,7 @@ class FlashcardStore:
         self.cards_changed = self._signals.cards_changed
 
     def add_card(self, card: Card) -> None:
+        redact_card_definitions(card)
         self.cards.insert(0, card)
         self.save()
 
@@ -329,6 +330,7 @@ class FlashcardStore:
         """Replace the stored card sharing this card's id (used when a saved card
         is loaded into the editor, edited and saved again). Returns True if a
         match was found and replaced, False otherwise."""
+        redact_card_definitions(card)
         for i, existing in enumerate(self.cards):
             if existing.id == card.id:
                 self.cards[i] = card
@@ -374,6 +376,7 @@ class FlashcardStore:
         the given list, deduped by canonical (a_id, b_id)), but performs exactly
         one disk write and emits cards_changed once. Used by the editor's Save so
         a single Save is a single disk write and a single graph refresh."""
+        redact_card_definitions(card)
         replaced = False
         for i, existing in enumerate(self.cards):
             if existing.id == card.id:

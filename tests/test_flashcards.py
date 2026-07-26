@@ -232,5 +232,42 @@ class RedactCardDefinitionsTests(unittest.TestCase):
         self.assertEqual(card.senses[0].english, "a {{word}}")
 
 
+class StoreRedactionTests(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.TemporaryDirectory()
+        store = FlashcardStore(Path(tmp.name) / "cards.json")
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(store.shutdown)
+        return store
+
+    def test_add_card_redacts_english_in_memory(self):
+        store = self._store()
+        store.add_card(Card(headword="cat", id="c",
+                            senses=[Sense(english="a cat sleeps")]))
+        self.assertEqual(store.cards[0].senses[0].english, "a {{word}} sleeps")
+
+    def test_update_card_redacts_english(self):
+        store = self._store()
+        store.cards = [Card(headword="cat", id="c", senses=[Sense(english="x")])]
+        store.update_card(Card(headword="cat", id="c",
+                              senses=[Sense(english="the cats ran")]))
+        self.assertEqual(store.cards[0].senses[0].english, "the {{word}}s ran")
+
+    def test_add_card_persists_token_to_disk(self):
+        store = self._store()
+        store.add_card(Card(headword="cat", id="c",
+                            senses=[Sense(english="a cat")]))
+        store.shutdown()  # flush the background write
+        raw = store.filepath.read_text(encoding="utf-8")
+        self.assertIn("{{word}}", raw)
+
+    def test_resaving_is_idempotent(self):
+        store = self._store()
+        store.add_card(Card(headword="cat", id="c",
+                            senses=[Sense(english="a cat")]))
+        store.update_card(store.cards[0])
+        self.assertEqual(store.cards[0].senses[0].english, "a {{word}}")
+
+
 if __name__ == "__main__":
     unittest.main()
