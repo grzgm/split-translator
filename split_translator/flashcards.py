@@ -7,7 +7,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-SCHEMA_VERSION = 2
+# Cards file schema. v3 dropped the embedded "links" array: links now live in
+# their own file (see LINKS_SCHEMA_VERSION). load_cards ignores the version
+# field, so an older v2 file (cards and links together) still loads its cards.
+SCHEMA_VERSION = 3
+LINKS_SCHEMA_VERSION = 1
+
+# The links file lives beside the cards file under this name when the store is
+# not given an explicit links path.
+DEFAULT_LINKS_FILENAME = "flashcard_links.json"
 
 # The four shipped link types: (key, display label, edge colour). Synonym,
 # Similar and Related form a green gradient (intensity = closeness in meaning,
@@ -145,59 +153,84 @@ class Link:
         )
 
 
-def serialise_cards(cards: list[Card], links: list["Link"] | None = None) -> dict:
-    """Build the on-disk JSON structure from cards and their links."""
+def serialise_cards(cards: list[Card]) -> dict:
+    """Build the on-disk JSON structure for the cards file. Links are stored in
+    their own file (see serialise_links) and never written here."""
     return {
         "version": SCHEMA_VERSION,
         "cards": [c.to_dict() for c in cards],
-        "links": [link.to_dict() for link in (links or [])],
     }
 
 
-def load_flashcards(filepath: Path) -> tuple[list[Card], list["Link"]]:
-    """Load cards and links, tolerating a missing or malformed file by returning
-    ([], []). A v1 file (no links key) loads with an empty link list. Links that
-    reference a card id not present are dropped (dangling-link pruning)."""
+def serialise_links(links: list["Link"]) -> dict:
+    """Build the on-disk JSON structure for the separate links file."""
+    return {
+        "version": LINKS_SCHEMA_VERSION,
+        "links": [link.to_dict() for link in links],
+    }
+
+
+def load_cards(filepath: Path) -> list[Card]:
+    """Load cards from the cards file, tolerating a missing or malformed file by
+    returning []. Any legacy 'links' key in this file is ignored: links live in
+    their own file now and are only read from there (no backfill)."""
     if not filepath.exists():
-        return [], []
+        return []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             raw = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return [], []
-    cards = [Card.from_dict(c) for c in raw.get("cards", [])]
-    ids = {c.id for c in cards}
+        return []
+    return [Card.from_dict(c) for c in raw.get("cards", [])]
+
+
+def load_links(filepath: Path, valid_ids: set[str]) -> list["Link"]:
+    """Load links from the separate links file, tolerating a missing or malformed
+    file by returning []. Links referencing a card id not in valid_ids are dropped
+    (dangling-link pruning)."""
+    if not filepath.exists():
+        return []
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
     links = []
     for entry in raw.get("links", []):
         link = Link.from_dict(entry)
-        if link.a_id in ids and link.b_id in ids:
+        if link.a_id in valid_ids and link.b_id in valid_ids:
             links.append(link)
-    return cards, links
-
-
-def load_cards(filepath: Path) -> list[Card]:
-    """Load only the cards (links ignored). Kept for callers that do not need
-    links."""
-    return load_flashcards(filepath)[0]
+    return links
 
 
 def write_cards(filepath: Path, data: dict) -> None:
-    """Write the serialised structure to disk (runs on the worker thread)."""
+    """Write a serialised store structure (cards or links) to disk (runs on the
+    worker thread)."""
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 class SaveWorker(QThread):
-    """Writes flashcards to disk off the UI thread."""
+    """Writes the cards file and the links file to disk off the UI thread. Both
+    are written on every save (unified write); the files are small."""
 
-    def __init__(self, filepath: Path, data: dict):
+    def __init__(
+        self,
+        cards_file: Path,
+        cards_data: dict,
+        links_file: Path,
+        links_data: dict,
+    ):
         super().__init__()
-        self.filepath = filepath
-        self.data = data
+        self.cards_file = cards_file
+        self.cards_data = cards_data
+        self.links_file = links_file
+        self.links_data = links_data
 
     def run(self):
-        write_cards(self.filepath, self.data)
+        write_cards(self.cards_file, self.cards_data)
+        write_cards(self.links_file, self.links_data)
 
 
 class _StoreSignals(QObject):
@@ -209,12 +242,17 @@ class _StoreSignals(QObject):
 
 
 class FlashcardStore:
-    """Owns the in-memory card list and links, and persists them to a JSON file."""
+    """Owns the in-memory card list and links, and persists them to two JSON
+    files: the cards in filepath and the links (which reference cards by id) in a
+    separate links_filepath. When links_filepath is not given it defaults to a
+    sibling of the cards file named DEFAULT_LINKS_FILENAME."""
 
-    def __init__(self, filepath: Path):
+    def __init__(self, filepath: Path, links_filepath: Path | None = None):
         self.filepath = filepath
+        self.links_filepath = links_filepath or filepath.parent / DEFAULT_LINKS_FILENAME
         self.save_worker = None
-        self.cards, self.links = load_flashcards(filepath)
+        self.cards = load_cards(self.filepath)
+        self.links = load_links(self.links_filepath, {c.id for c in self.cards})
         self._signals = _StoreSignals()
         self.cards_changed = self._signals.cards_changed
 
@@ -294,7 +332,10 @@ class FlashcardStore:
         if self.save_worker and self.save_worker.isRunning():
             self.save_worker.wait()
         self.save_worker = SaveWorker(
-            self.filepath, serialise_cards(self.cards, self.links)
+            self.filepath,
+            serialise_cards(self.cards),
+            self.links_filepath,
+            serialise_links(self.links),
         )
         self.save_worker.start()
         self.cards_changed.emit()

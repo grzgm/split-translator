@@ -7,9 +7,12 @@ from split_translator.flashcards import (
     FlashcardStore,
     Link,
     LINK_TYPES,
+    LINKS_SCHEMA_VERSION,
     SCHEMA_VERSION,
-    load_flashcards,
+    load_cards,
+    load_links,
     serialise_cards,
+    serialise_links,
     write_cards,
 )
 
@@ -48,61 +51,84 @@ class LinkTypesTests(unittest.TestCase):
 
 
 class LinkStorageTests(unittest.TestCase):
-    def test_serialise_includes_version_2_and_links(self):
+    def test_serialise_cards_omits_links(self):
         cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+        data = serialise_cards(cards)
+        self.assertEqual(data["version"], 3)
+        self.assertEqual(SCHEMA_VERSION, 3)
+        self.assertNotIn("links", data)
+
+    def test_serialise_links_has_own_version(self):
         links = [Link(a_id="a", b_id="b", type="synonym")]
-        data = serialise_cards(cards, links)
-        self.assertEqual(data["version"], 2)
-        self.assertEqual(SCHEMA_VERSION, 2)
+        data = serialise_links(links)
+        self.assertEqual(data["version"], LINKS_SCHEMA_VERSION)
         self.assertEqual(data["links"], [{"a_id": "a", "b_id": "b",
                                           "type": "synonym"}])
 
-    def test_round_trip_cards_and_links(self):
+    def test_round_trip_cards_and_links_across_two_files(self):
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "f.json"
+            cards_p = Path(d) / "cards.json"
+            links_p = Path(d) / "flashcard_links.json"
             cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
             links = [Link(a_id="a", b_id="b", type="related")]
-            write_cards(p, serialise_cards(cards, links))
-            loaded_cards, loaded_links = load_flashcards(p)
+            write_cards(cards_p, serialise_cards(cards))
+            write_cards(links_p, serialise_links(links))
+            loaded_cards = load_cards(cards_p)
+            loaded_links = load_links(links_p, {c.id for c in loaded_cards})
             self.assertEqual(len(loaded_cards), 2)
             self.assertEqual(loaded_links, links)
 
-    def test_v1_file_loads_with_empty_links(self):
+    def test_missing_links_file_loads_empty(self):
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "f.json"
-            p.write_text(
-                '{"version": 1, "cards": [{"id": "a", "headword": "a"}]}',
-                encoding="utf-8",
-            )
-            cards, links = load_flashcards(p)
+            cards_p = Path(d) / "cards.json"
+            write_cards(cards_p, serialise_cards([Card(headword="a", id="a")]))
+            cards = load_cards(cards_p)
+            links = load_links(Path(d) / "flashcard_links.json",
+                               {c.id for c in cards})
             self.assertEqual(len(cards), 1)
             self.assertEqual(links, [])
 
+    def test_no_backfill_ignores_links_embedded_in_cards_file(self):
+        # A legacy combined file still has a 'links' key. Those links must NOT be
+        # read back: links come only from the separate links file.
+        with tempfile.TemporaryDirectory() as d:
+            import json
+            cards_p = Path(d) / "cards.json"
+            cards_p.write_text(
+                json.dumps({
+                    "version": 2,
+                    "cards": [{"id": "a", "headword": "a"},
+                              {"id": "b", "headword": "b"}],
+                    "links": [{"a_id": "a", "b_id": "b", "type": "synonym"}],
+                }),
+                encoding="utf-8",
+            )
+            cards = load_cards(cards_p)
+            links = load_links(Path(d) / "flashcard_links.json",
+                               {c.id for c in cards})
+            self.assertEqual(len(cards), 2)
+            self.assertEqual(links, [])  # embedded links are not backfilled
+
     def test_dangling_links_pruned_on_load(self):
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "f.json"
-            # Link references "gone", which is not among the cards.
-            data = {
-                "version": 2,
-                "cards": [{"id": "a", "headword": "a"}],
-                "links": [{"a_id": "a", "b_id": "gone", "type": "synonym"}],
-            }
-            import json
-            p.write_text(json.dumps(data), encoding="utf-8")
-            cards, links = load_flashcards(p)
+            links_p = Path(d) / "flashcard_links.json"
+            # Link references "gone", which is not among the valid ids.
+            write_cards(links_p, serialise_links(
+                [Link(a_id="a", b_id="gone", type="synonym")]))
+            links = load_links(links_p, {"a"})
             self.assertEqual(links, [])
 
-    def test_missing_file_returns_empty_pair(self):
+    def test_missing_files_return_empty(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(load_flashcards(Path(d) / "none.json"), ([], []))
+            self.assertEqual(load_cards(Path(d) / "none.json"), [])
+            self.assertEqual(load_links(Path(d) / "none.json", set()), [])
 
     def test_unknown_type_survives_round_trip(self):
         with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "f.json"
-            cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
-            links = [Link(a_id="a", b_id="b", type="custom")]
-            write_cards(p, serialise_cards(cards, links))
-            _cards, loaded_links = load_flashcards(p)
+            links_p = Path(d) / "flashcard_links.json"
+            write_cards(links_p, serialise_links(
+                [Link(a_id="a", b_id="b", type="custom")]))
+            loaded_links = load_links(links_p, {"a", "b"})
             self.assertEqual(loaded_links[0].type, "custom")
 
 
@@ -152,12 +178,18 @@ class StoreLinkTests(unittest.TestCase):
                                   Link("b", "a", "synonym")])
         self.assertEqual(len(store.links), 1)
 
-    def test_set_links_for_persists(self):
+    def test_set_links_for_persists_to_separate_file(self):
         store = self._store()
         store.set_links_for("a", [Link("a", "b", "synonym")])
         store.shutdown()
-        _cards, links = load_flashcards(store.filepath)
+        # Links land in the separate links file, not the cards file.
+        self.assertNotEqual(store.links_filepath, store.filepath)
+        links = load_links(store.links_filepath, {c.id for c in store.cards})
         self.assertEqual(len(links), 1)
+        # The cards file must not carry a links key.
+        import json
+        raw = json.loads(store.filepath.read_text(encoding="utf-8"))
+        self.assertNotIn("links", raw)
 
     def test_cards_changed_emitted_on_set_links(self):
         store = self._store()

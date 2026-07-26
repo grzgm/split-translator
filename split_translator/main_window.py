@@ -46,7 +46,8 @@ class TranslationTool(QMainWindow):
         self.history_panel = HistoryPanel(history_file)
 
         flashcards_file = CONFIG_DIR / "flashcards.json"
-        self.flashcard_store = FlashcardStore(flashcards_file)
+        flashcard_links_file = CONFIG_DIR / "flashcard_links.json"
+        self.flashcard_store = FlashcardStore(flashcards_file, flashcard_links_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
         self.flashcard_graph_window = None
         self.flashcard_print_window = None

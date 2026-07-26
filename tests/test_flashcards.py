@@ -104,7 +104,7 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(loaded[0].senses[0].polish, "adres")
 
     def test_serialise_has_version(self):
-        self.assertEqual(serialise_cards([])["version"], 2)
+        self.assertEqual(serialise_cards([])["version"], 3)
 
 
 class StoreUpdateTests(unittest.TestCase):
