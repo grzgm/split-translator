@@ -268,6 +268,14 @@ class StoreRedactionTests(unittest.TestCase):
         store.update_card(store.cards[0])
         self.assertEqual(store.cards[0].senses[0].english, "a {{word}}")
 
+    def test_save_card_with_links_redacts_english(self):
+        store = self._store()
+        store.save_card_with_links(
+            Card(headword="cat", id="c", senses=[Sense(english="a cat naps")]),
+            [],
+        )
+        self.assertEqual(store.cards[0].senses[0].english, "a {{word}} naps")
+
 
 if __name__ == "__main__":
     unittest.main()
