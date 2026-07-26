@@ -345,5 +345,27 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertIn(".sheet-caption { display: none; }", html)
 
 
+class BlankHeadwordsTests(unittest.TestCase):
+    def _card(self):
+        return Card(headword="cat", id="c",
+                    senses=[Sense(english="a {{word}}s nap")])
+
+    def test_back_blanks_the_token_by_default(self):
+        html = render_card_tile(self._card(), "back")
+        self.assertIn('class="blank"', html)
+        self.assertNotIn("{{word}}", html)
+        self.assertIn("s nap", html)  # kept suffix stays visible
+
+    def test_back_shows_literal_token_when_disabled(self):
+        html = render_card_tile(self._card(), "back", blank_headwords=False)
+        self.assertIn("{{word}}", html)
+        self.assertNotIn('class="blank"', html)
+
+    def test_render_html_threads_the_flag(self):
+        cards = [self._card()]
+        self.assertNotIn("{{word}}", render_html(cards))
+        self.assertIn("{{word}}", render_html(cards, blank_headwords=False))
+
+
 if __name__ == "__main__":
     unittest.main()

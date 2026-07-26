@@ -9,7 +9,11 @@ content is clipped (the physical size is fixed) and flagged on screen only."""
 import html as _html
 from dataclasses import dataclass
 
-from .flashcards import Card
+from .flashcards import Card, REDACTION_TOKEN
+
+
+# The token rendered as a fixed-width fill-in blank on the printed back.
+_BLANK_HTML = '<span class="blank">_____</span>'
 
 
 @dataclass(frozen=True)
@@ -101,8 +105,9 @@ def example_fill_order(card: Card) -> list[tuple[int, str]]:
     return order
 
 
-def render_card_tile(card: Card, side: str) -> str:
-    """Inner HTML of one tile. side is 'front' or 'back'."""
+def render_card_tile(card: Card, side: str, blank_headwords: bool = True) -> str:
+    """Inner HTML of one tile. side is 'front' or 'back'. When blank_headwords is
+    true, each REDACTION_TOKEN in an English definition renders as a blank."""
     if card is None:
         return '<div class="tile tile--empty"></div>'
     if side == "front":
@@ -132,10 +137,13 @@ def render_card_tile(card: Card, side: str) -> str:
     senses = ""
     for sense in card.senses:
         pos = f'<div class="part-of-speech">{_esc(sense.pos)}</div>' if sense.pos else '<div class="part-of-speech"></div>'
+        english = _esc(sense.english)
+        if blank_headwords:
+            english = english.replace(REDACTION_TOKEN, _BLANK_HTML)
         meanings = (
             f'<div class="meanings">'
             f'<div class="meaning--polish">{_esc(sense.polish)}</div>'
-            f'<div class="meaning--english">{_esc(sense.english)}</div>'
+            f'<div class="meaning--english">{english}</div>'
             f'</div>'
         )
         senses += f'<div class="sense">{pos}{meanings}</div>'
@@ -203,6 +211,7 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 .meanings {{ display: flex; flex-direction: column; gap: 1mm; }}
 .meaning--polish {{ font-family: "Inter", sans-serif; font-size: 8pt; }}
 .meaning--english {{ font-family: "Lora", serif; font-size: 8pt; }}
+.blank {{ font-family: "Lora", serif; }}
 .sheet-caption {{ display: none; }}
 @media print {{
   /* Each sheet is exactly one physical page and carries the page margin as its
@@ -289,10 +298,13 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 _KIND_LABEL = {"front": "front", "back": "back"}
 
 
-def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool) -> str:
+def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool, blank_headwords: bool) -> str:
     """One sheet: a screen-only caption plus the tile grid. `first` marks the
     very first sheet in the document so print does not page-break before it."""
-    tiles = "".join(render_card_tile(cell, kind_of_sheet) for cell in sheet["cells"])
+    tiles = "".join(
+        render_card_tile(cell, kind_of_sheet, blank_headwords)
+        for cell in sheet["cells"]
+    )
     first_class = " sheet--first" if first else ""
     caption = (
         f'<div class="sheet-caption">Sheet {sheet_number} '
@@ -305,7 +317,7 @@ def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool
     )
 
 
-def render_html(cards: list[Card], page: PageSpec = PAGE) -> str:
+def render_html(cards: list[Card], page: PageSpec = PAGE, blank_headwords: bool = True) -> str:
     cols, _rows = grid_dims(page)
     sheets = paginate(cards, page)
     # paginate emits sheets as consecutive front, back, front, back, ... pairs.
@@ -319,7 +331,7 @@ def render_html(cards: list[Card], page: PageSpec = PAGE) -> str:
         for offset, sheet in enumerate(pair):
             is_first_sheet = pair_index == 0 and offset == 0
             blocks += _sheet_block(
-                sheet, sheet["kind"], sheet_number, is_first_sheet
+                sheet, sheet["kind"], sheet_number, is_first_sheet, blank_headwords
             )
         body += f'<div class="sheet-pair">{blocks}</div>'
     has_starred = any(card is not None and card.starred for card in cards)
