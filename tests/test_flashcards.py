@@ -6,7 +6,11 @@ from split_translator.flashcards import (
     Card,
     FlashcardStore,
     Sense,
+    REDACTION_TOKEN,
+    headword_forms,
     load_cards,
+    redact_card_definitions,
+    redact_headword,
     serialise_cards,
     write_cards,
 )
@@ -161,6 +165,71 @@ class StoreUpdateTests(unittest.TestCase):
         store.cards = [Card(headword="a", id="a", printed=True)]
         self.assertTrue(store.set_printed(["a"], False))
         self.assertFalse(store.cards[0].printed)
+
+
+class HeadwordFormsTests(unittest.TestCase):
+    def test_collects_headword_and_spellings_longest_first(self):
+        card = Card(headword="color", id="c", spelling_uk="colour")
+        self.assertEqual(headword_forms(card), ["colour", "color"])
+
+    def test_lowercases_and_dedups_and_drops_empty(self):
+        card = Card(headword="Cat", id="c", spelling_uk="cat", spelling_us=None)
+        self.assertEqual(headword_forms(card), ["cat"])
+
+
+class RedactHeadwordTests(unittest.TestCase):
+    def test_exact_word_becomes_token(self):
+        self.assertEqual(redact_headword("a cat sits", ["cat"]), "a {{word}} sits")
+
+    def test_case_insensitive(self):
+        self.assertEqual(redact_headword("Cat naps", ["cat"]), "{{word}} naps")
+
+    def test_keeps_short_inflection_suffix(self):
+        self.assertEqual(redact_headword("two cats", ["cat"]), "two {{word}}s")
+        self.assertEqual(redact_headword("abandoned it", ["abandon"]),
+                         "{{word}}ed it")
+
+    def test_does_not_match_inside_a_longer_word(self):
+        # "egory" is not an inflection suffix, so "category" is left intact.
+        self.assertEqual(redact_headword("a category", ["cat"]), "a category")
+
+    def test_spelling_variant_matches(self):
+        forms = ["colour", "color"]
+        self.assertEqual(redact_headword("the color red", forms),
+                         "the {{word}} red")
+
+    def test_multiple_occurrences(self):
+        self.assertEqual(redact_headword("cat and cat", ["cat"]),
+                         "{{word}} and {{word}}")
+
+    def test_idempotent_existing_token_preserved(self):
+        once = redact_headword("a cat sits", ["cat"])
+        self.assertEqual(redact_headword(once, ["cat"]), once)
+
+    def test_empty_text_or_no_forms(self):
+        self.assertEqual(redact_headword("", ["cat"]), "")
+        self.assertEqual(redact_headword("a cat", []), "a cat")
+
+
+class RedactCardDefinitionsTests(unittest.TestCase):
+    def test_rewrites_each_sense_english_in_place(self):
+        card = Card(headword="cat", id="c", senses=[
+            Sense(english="a cat sleeps"),
+            Sense(english="the cats ran"),
+        ])
+        redact_card_definitions(card)
+        self.assertEqual(card.senses[0].english, "a {{word}} sleeps")
+        self.assertEqual(card.senses[1].english, "the {{word}}s ran")
+
+    def test_leaves_polish_and_examples_untouched(self):
+        card = Card(headword="cat", id="c", senses=[
+            Sense(polish="kot to cat", english="a cat",
+                  examples=["the cat sat"]),
+        ])
+        redact_card_definitions(card)
+        self.assertEqual(card.senses[0].polish, "kot to cat")
+        self.assertEqual(card.senses[0].examples, ["the cat sat"])
+        self.assertEqual(card.senses[0].english, "a {{word}}")
 
 
 if __name__ == "__main__":

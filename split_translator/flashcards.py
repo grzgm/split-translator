@@ -1,6 +1,7 @@
 """Flashcard storage: dataclasses and a JSON-backed store with a background save worker."""
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,6 +152,70 @@ class Link:
             b_id=data.get("b_id", ""),
             type=data.get("type", ""),
         )
+
+
+# A headword occurrence in an English definition is stored as this literal
+# token. Printing decides whether to show it as a blank or as the token itself.
+REDACTION_TOKEN = "{{word}}"
+
+# Short inflections kept after the token, so "cats" stores as "{{word}}s". This
+# is a whole-remainder membership test, not a longest-prefix match.
+_INFLECTION_SUFFIXES = frozenset({"s", "es", "ed", "d", "ing"})
+
+# One whole word: letters, with internal hyphens or apostrophes (so "well-being"
+# and "don't" are single tokens and are matched or skipped as a unit).
+_WORD_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*")
+
+
+def headword_forms(card: Card) -> list[str]:
+    """The lowercase surface forms to redact: the headword and its UK/US
+    spellings, non-empty and de-duplicated, longest first so a longer spelling
+    is tried before a shorter one it contains."""
+    forms: list[str] = []
+    for value in (card.headword, card.spelling_uk, card.spelling_us):
+        if value:
+            low = value.strip().lower()
+            if low and low not in forms:
+                forms.append(low)
+    forms.sort(key=len, reverse=True)
+    return forms
+
+
+def redact_headword(text: str, forms: list[str]) -> str:
+    """Replace whole-word headword occurrences in text with REDACTION_TOKEN,
+    keeping a short inflection suffix (so "cats" becomes "{{word}}s"). Matching is
+    case-insensitive. Existing tokens are never re-processed, so calling this on
+    already-redacted text is a no-op."""
+    if not text or not forms:
+        return text
+
+    def replace_word(match: "re.Match[str]") -> str:
+        word = match.group(0)
+        low = word.lower()
+        for form in forms:
+            if low == form:
+                return REDACTION_TOKEN
+        for form in forms:
+            if low.startswith(form):
+                suffix = word[len(form):]
+                if suffix.lower() in _INFLECTION_SUFFIXES:
+                    return REDACTION_TOKEN + suffix
+        return word
+
+    segments = text.split(REDACTION_TOKEN)
+    redacted = [_WORD_RE.sub(replace_word, segment) for segment in segments]
+    return REDACTION_TOKEN.join(redacted)
+
+
+def redact_card_definitions(card: Card) -> None:
+    """Rewrite every sense's English definition in place, replacing headword
+    occurrences with REDACTION_TOKEN. Called on each save so stored cards carry
+    tokens; idempotent, so re-saving does not change already-redacted text."""
+    forms = headword_forms(card)
+    if not forms:
+        return
+    for sense in card.senses:
+        sense.english = redact_headword(sense.english, forms)
 
 
 def serialise_cards(cards: list[Card]) -> dict:
