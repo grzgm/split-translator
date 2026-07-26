@@ -2,7 +2,7 @@
 checkboxes choose which cards to print. No dictionary/search wiring (the Print
 window never connects those signals) and no card linking."""
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -109,6 +109,7 @@ class FlashcardPrintPanel(FlashcardEditorBase):
         self.unselect_all_button.clicked.connect(self.clear_selection)
         self.toggle_printed_button = QPushButton()
         self.toggle_printed_button.setIcon(QIcon(_printer_pixmap(18, "#4a90d9")))
+        self.toggle_printed_button.setIconSize(QSize(18, 18))
         self.toggle_printed_button.setMaximumWidth(32)
         self.toggle_printed_button.setToolTip(
             "Flip the printed flag on the currently selected cards. If they are "

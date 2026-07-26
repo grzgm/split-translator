@@ -13,7 +13,7 @@ touching this file."""
 from contextlib import contextmanager
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QPointF, Qt, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QPointF, QRectF, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -25,6 +25,7 @@ from PySide6.QtGui import (
     QPixmap,
     QPolygonF,
 )
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -366,34 +367,40 @@ class SenseRow(QFrame):
         )
 
 
+# Material Symbols "print" glyph, filled and outlined. The path data is centred
+# in the 0 -960 960 960 viewBox, so it rasterises centred in a square pixmap.
+# "{fill}" is replaced with the wanted colour before rendering.
+_PRINTER_FILL_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" '
+    'fill="{fill}"><path d="M720-680H240v-160h480v160Zm0 220q17 0 28.5-11.5'
+    'T760-500q0-17-11.5-28.5T720-540q-17 0-28.5 11.5T680-500q0 17 11.5 28.5'
+    'T720-460Zm-80 260v-160H320v160h320Zm80 80H240v-160H80v-240q0-51 35-85.5'
+    't85-34.5h560q51 0 85.5 34.5T880-520v240H720v160Z"/></svg>'
+)
+_PRINTER_OUTLINE_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" '
+    'fill="{fill}"><path d="M640-640v-120H320v120h-80v-200h480v200h-80Zm-480 '
+    '80h640-640Zm560 100q17 0 28.5-11.5T760-500q0-17-11.5-28.5T720-540q-17 0'
+    '-28.5 11.5T680-500q0 17 11.5 28.5T720-460Zm-80 260v-160H320v160h320Zm80 '
+    '80H240v-160H80v-240q0-51 35-85.5t85-34.5h560q51 0 85.5 34.5T880-520v240'
+    'H720v160Zm80-240v-160q0-17-11.5-28.5T760-560H200q-17 0-28.5 11.5T160-520'
+    'v160h80v-80h480v80h80Z"/></svg>'
+)
+
+
 def _printer_pixmap(size: int, colour: str, filled: bool = True) -> QPixmap:
-    """A small printer glyph: a body with a paper sheet above and an output
-    sheet below. Drawn rather than shipped as an asset, matching the
-    loaded-marker pixmap. With filled=False it is stroked as an outline, used
-    for the "off" state of the toggle button."""
+    """A printer glyph rendered from the Material Symbols "print" icon (filled
+    or outlined), coloured by substituting the SVG fill. Rasterised onto a
+    transparent square so it centres on a button or a saved-list row. With
+    filled=False the outlined variant is used for the "off" toggle state."""
+    template = _PRINTER_FILL_SVG if filled else _PRINTER_OUTLINE_SVG
+    svg = template.replace("{fill}", colour)
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    unit = size / 16.0
-    if filled:
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(colour)))
-    else:
-        painter.setPen(QPen(QColor(colour), max(1.0, unit)))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-    # Body.
-    painter.drawRoundedRect(
-        int(2 * unit), int(6 * unit), int(12 * unit), int(6 * unit),
-        unit, unit,
-    )
-    # Paper feeding in at the top.
-    painter.drawRect(int(4 * unit), int(2 * unit), int(8 * unit), int(4 * unit))
-    # Printed sheet coming out at the bottom. Filled: white so it reads on the
-    # body; outline: just the stroked rectangle.
-    if filled:
-        painter.setBrush(QBrush(QColor("#ffffff")))
-    painter.drawRect(int(4 * unit), int(10 * unit), int(8 * unit), int(4 * unit))
+    renderer.render(painter, QRectF(0, 0, size, size))
     painter.end()
     return pixmap
 
@@ -566,6 +573,7 @@ class FlashcardEditorBase(QWidget):
         self.star_button = QPushButton()
         self.star_button.setCheckable(True)
         self.star_button.setMaximumWidth(32)
+        self.star_button.setIconSize(QSize(18, 18))
         self.star_button.setIcon(self._star_icon_off)
         self.star_button.setToolTip("Star this card (mark as important)")
         self.star_button.toggled.connect(self._on_star_toggled)
@@ -574,6 +582,7 @@ class FlashcardEditorBase(QWidget):
         self.printed_button = QPushButton()
         self.printed_button.setCheckable(True)
         self.printed_button.setMaximumWidth(32)
+        self.printed_button.setIconSize(QSize(18, 18))
         self.printed_button.setIcon(self._printed_icon_off)
         self.printed_button.setToolTip("Mark this card as printed")
         self.printed_button.toggled.connect(self._on_printed_toggled)
