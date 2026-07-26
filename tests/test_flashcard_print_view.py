@@ -8,7 +8,7 @@ from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QApplication
 
 from split_translator.flashcard_print_view import PrintView
-from split_translator.flashcards import Card
+from split_translator.flashcards import Card, Sense
 
 app = QApplication.instance() or QApplication([])
 
@@ -183,6 +183,30 @@ class PrintViewTests(unittest.TestCase):
         view.back_offset_x_spin.setValue(2.0)
         html = view._render()
         self.assertIn("translate(2mm, -5mm)", html)
+
+
+class BlankHeadwordsToggleTests(unittest.TestCase):
+    def _view(self):
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view.set_cards([Card(headword="cat", id="c",
+                            senses=[Sense(english="a {{word}} naps")])])
+        return view
+
+    def test_checkbox_on_by_default(self):
+        self.assertTrue(self._view().blank_headwords_checkbox.isChecked())
+
+    def test_render_blanks_token_when_checked(self):
+        html = self._view()._render()
+        self.assertIn('class="blank"', html)
+        self.assertNotIn("{{word}}", html)
+
+    def test_render_shows_literal_token_when_unchecked(self):
+        view = self._view()
+        view.blank_headwords_checkbox.setChecked(False)
+        html = view._render()
+        self.assertIn("{{word}}", html)
+        self.assertNotIn('class="blank"', html)
 
 
 if __name__ == "__main__":

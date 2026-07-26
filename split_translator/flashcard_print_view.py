@@ -116,6 +116,16 @@ class PrintView(QWidget):
         )
         self.cut_lines_checkbox.setChecked(True)
         self.cut_lines_checkbox.toggled.connect(self._on_cut_lines_toggled)
+        self.blank_headwords_checkbox = QCheckBox("Blank out headwords")
+        self.blank_headwords_checkbox.setToolTip(
+            "Hide headword occurrences in the English definition, shown as a "
+            "blank, so the printed card is not a spoiler. Unticked prints the "
+            "stored {{word}} token."
+        )
+        self.blank_headwords_checkbox.setChecked(True)
+        self.blank_headwords_checkbox.toggled.connect(
+            self._on_blank_headwords_toggled
+        )
         # Duplex registration nudge: raises the printed back side by this many mm
         # so it lands on its front despite the printer's mechanical two-sided
         # offset. Only affects the printed output, not the on-screen preview.
@@ -145,6 +155,7 @@ class PrintView(QWidget):
         self.print_button.clicked.connect(self.print_cards)
         controls.addWidget(self.borders_checkbox)
         controls.addWidget(self.cut_lines_checkbox)
+        controls.addWidget(self.blank_headwords_checkbox)
         controls.addWidget(back_offset_label)
         controls.addWidget(self.back_offset_spin)
         controls.addWidget(back_offset_x_label)
@@ -172,13 +183,17 @@ class PrintView(QWidget):
         return self.back_offset_x_spin.value()
 
     def _render(self) -> str:
-        """Build the print HTML for the current cards and back offsets."""
+        """Build the print HTML for the current cards, offsets and toggles."""
         page = replace(
             PAGE,
             back_offset_mm=self.back_offset(),
             back_offset_x_mm=self.back_offset_x(),
         )
-        return render_html(self._cards, page)
+        return render_html(
+            self._cards,
+            page,
+            blank_headwords=self.blank_headwords_checkbox.isChecked(),
+        )
 
     def set_cards(self, cards: list[Card]) -> None:
         self._cards = list(cards)
@@ -213,6 +228,11 @@ class PrintView(QWidget):
 
     def _on_cut_lines_toggled(self, checked: bool) -> None:
         self.view.page().runJavaScript(self._cut_lines_js(checked))
+
+    def _on_blank_headwords_toggled(self, _checked: bool) -> None:
+        # This changes the rendered text (blank vs token), not just a CSS class,
+        # so re-render the preview. What is shown is what prints.
+        self.view.setHtml(self._render())
 
     def print_cards(self) -> None:
         from PySide6.QtPrintSupport import QPrintDialog, QPrinter
