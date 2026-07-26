@@ -416,7 +416,7 @@ def _star_pixmap(size: int, colour: str) -> QPixmap:
 
 class SavedCardRowDelegate(QStyledItemDelegate):
     """Draws the normal row, then overlays right-edge glyphs for the printed
-    and starred roles: the printer icon at the far right, and the star glyph
+    and starred roles: the star glyph at the far right, and the printer icon
     to its left when both are set. Only adds to the default painting; the
     checkbox, the loaded-card marker and the row tint are untouched."""
 
@@ -430,13 +430,13 @@ class SavedCardRowDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
         rect = option.rect
-        x = rect.right() - self._icon.width() - 4
-        y = rect.top() + (rect.height() - self._icon.height()) // 2
-        if bool(index.data(self._printed_role)):
-            painter.drawPixmap(x, y, self._icon)
-            x -= self._icon.width() + 2
+        x = rect.right() - self._star.width() - 4
+        y = rect.top() + (rect.height() - self._star.height()) // 2
         if bool(index.data(self._starred_role)):
             painter.drawPixmap(x, y, self._star)
+            x -= self._icon.width() + 2
+        if bool(index.data(self._printed_role)):
+            painter.drawPixmap(x, y, self._icon)
 
 
 class FlashcardEditorBase(QWidget):
