@@ -3,7 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from split_translator.flashcard_print_choices import AUTO, MANUAL, PrintChoices
 from split_translator.flashcard_print_layout import (
@@ -332,6 +332,26 @@ class SidebarOptionTests(unittest.TestCase):
         self.assertTrue(sidebar.blank_headwords())
         self.assertEqual(sidebar.back_offset(), 3.0)
         self.assertEqual(sidebar.back_offset_x(), 0.0)
+
+    def test_both_offsets_say_they_move_the_back(self):
+        # Both spinners move the back sheet and neither touches the front. With
+        # only an axis per row ("right (mm)") that was ambiguous once the two
+        # were stacked in the sidebar, so the heading has to say which side.
+        sidebar = self._sidebar()
+        headings = [
+            w.text() for w in sidebar.findChildren(QLabel)
+            if "Back offset" in w.text()
+        ]
+        self.assertEqual(len(headings), 1)
+        self.assertIn("back", headings[0].lower())
+        self.assertNotIn("front", headings[0].lower())
+
+    def test_each_offset_tooltip_names_the_printed_back_side(self):
+        # The tooltip is the other place the question gets answered, so it must
+        # not say merely "shift right".
+        sidebar = self._sidebar()
+        for spin in (sidebar.back_offset_spin, sidebar.back_offset_x_spin):
+            self.assertIn("back side", spin.toolTip())
 
     def test_toggling_borders_announces_it(self):
         sidebar = self._sidebar()

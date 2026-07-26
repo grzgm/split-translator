@@ -145,6 +145,16 @@ class PrintSidebar(QWidget):
         # Duplex registration nudge: shifts the printed back side so it lands on
         # its front despite the printer's mechanical two-sided offset. Only
         # affects the printed output, not the on-screen preview.
+        #
+        # Both spinners move the BACK sheet; the front never moves. The heading
+        # says so once, which keeps each row's own label short enough to leave
+        # the spinner room in a narrow sidebar. Naming only the axis per row
+        # ("right (mm)") was genuinely ambiguous when these two sat stacked.
+        offsets_heading = QLabel("Back offset (moves the printed back only)")
+        offsets_heading.setWordWrap(True)
+        offsets_heading.setStyleSheet("color: #55606e; margin-top: 4px;")
+        box.addWidget(offsets_heading)
+
         offsets = QFormLayout()
         self.back_offset_spin = QDoubleSpinBox()
         self.back_offset_spin.setRange(-15.0, 15.0)
@@ -158,7 +168,7 @@ class PrintSidebar(QWidget):
         self.back_offset_spin.valueChanged.connect(
             lambda _value: self.back_offset_changed.emit()
         )
-        offsets.addRow("Back offset up (mm)", self.back_offset_spin)
+        offsets.addRow("up (mm)", self.back_offset_spin)
 
         self.back_offset_x_spin = QDoubleSpinBox()
         self.back_offset_x_spin.setRange(-15.0, 15.0)
