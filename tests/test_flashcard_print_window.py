@@ -185,6 +185,17 @@ class SidebarWiringTests(unittest.TestCase):
         win, _store = self._window()
         self.assertIsNone(win.print_view._selected_card_id)
 
+    def test_the_selection_count_follows_the_ticks(self):
+        # The count sits by the Print button, so it has to track the ticks
+        # rather than only being set once at construction.
+        win, _store = self._window()
+        self.assertEqual(win.sidebar.selection_label.text(), "No cards selected")
+        win.panel._selected_ids.add("c")
+        win.refresh_preview()
+        self.assertEqual(
+            win.sidebar.selection_label.text(), "1 card selected, 1 sheet"
+        )
+
     def test_the_view_starts_in_step_with_the_sidebar(self):
         # The anti-drift push in __init__ exists so these two never disagree
         # about what the view is showing before anything has been touched.

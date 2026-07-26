@@ -7,6 +7,7 @@ from split_translator.flashcard_print_layout import (
     example_sense_order,
     grid_dims,
     incompleteness,
+    sheets_of_paper,
     paginate,
     render_card_tile,
     render_html,
@@ -344,6 +345,46 @@ class ManualExampleChoiceTests(unittest.TestCase):
 class GridDimsTests(unittest.TestCase):
     def test_a4_8mm_is_two_by_four(self):
         self.assertEqual(grid_dims(PAGE), (2, 4))
+
+
+class SheetsOfPaperTests(unittest.TestCase):
+    """Counted in paper, not printed sides: the output is double-sided, so one
+    sheet carries a grid of fronts and the same grid of backs. This is what the
+    sidebar tells the user to expect from a print run."""
+
+    def test_nothing_selected_needs_no_paper(self):
+        self.assertEqual(sheets_of_paper(0), 0)
+
+    def test_a_negative_count_is_treated_as_none(self):
+        self.assertEqual(sheets_of_paper(-3), 0)
+
+    def test_one_card_still_needs_a_whole_sheet(self):
+        self.assertEqual(sheets_of_paper(1), 1)
+
+    def test_a_full_grid_fits_one_sheet(self):
+        cols, rows = grid_dims(PAGE)
+        self.assertEqual(sheets_of_paper(cols * rows), 1)
+
+    def test_one_card_past_a_full_grid_starts_a_second_sheet(self):
+        cols, rows = grid_dims(PAGE)
+        self.assertEqual(sheets_of_paper(cols * rows + 1), 2)
+
+    def test_it_counts_paper_not_printed_sides(self):
+        # paginate emits a front sheet and a back sheet per group, so the number
+        # of sides is twice the paper. The user loads paper, not sides.
+        cards = [Card(headword=f"w{i}", id=str(i)) for i in range(9)]
+        sides = len(paginate(cards, PAGE))
+        self.assertEqual(sides, 4)
+        self.assertEqual(sheets_of_paper(len(cards)), 2)
+
+    def test_it_agrees_with_the_preview_sheet_numbering(self):
+        # The captions name "Sheet 1 front" and "Sheet 1 back" as one sheet, so
+        # the highest caption number must equal the paper count.
+        cards = [Card(headword=f"w{i}", id=str(i)) for i in range(17)]
+        html = render_html(cards)
+        expected = sheets_of_paper(len(cards))
+        self.assertIn(f"Sheet {expected} front", html)
+        self.assertNotIn(f"Sheet {expected + 1} front", html)
 
 
 class PaginateTests(unittest.TestCase):

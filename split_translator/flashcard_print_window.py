@@ -85,7 +85,9 @@ class FlashcardPrintWindow(QWidget):
         self._refresh_sidebar()
 
     def refresh_preview(self) -> None:
-        self.print_view.set_cards(self.panel.selected_cards())
+        cards = self.panel.selected_cards()
+        self.print_view.set_cards(cards)
+        self.sidebar.set_selection_count(len(cards))
 
     def _loaded_card(self):
         """The card loaded in the editor, read from the store rather than from

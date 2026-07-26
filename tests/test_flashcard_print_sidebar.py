@@ -8,8 +8,11 @@ from PySide6.QtWidgets import QApplication, QLabel
 from split_translator.flashcard_print_choices import AUTO, MANUAL, PrintChoices
 from split_translator.flashcard_print_layout import (
     MARKER_INCOMPLETE,
+    PAGE,
     PREVIEW_MARKERS,
+    grid_dims,
     render_html,
+    sheets_of_paper,
 )
 from split_translator.flashcard_print_sidebar import PrintSidebar
 from split_translator.flashcards import Card, Sense
@@ -272,6 +275,61 @@ class SidebarMeasurementDropTests(unittest.TestCase):
         sidebar.set_card(_card(), True)
         sidebar.drop_measurement("never-measured")  # must not raise
         self.assertEqual(sidebar.ticked_pairs(), [(0, 0), (0, 1), (1, 0)])
+
+
+class SidebarSelectionCountTests(unittest.TestCase):
+    """How much is about to be printed, shown next to the Print button. The
+    paper count is the half worth knowing before committing a run."""
+
+    def _sidebar(self):
+        sidebar = PrintSidebar(PrintChoices())
+        self.addCleanup(sidebar.deleteLater)
+        return sidebar
+
+    def test_it_starts_saying_nothing_is_selected(self):
+        self.assertEqual(
+            self._sidebar().selection_label.text(), "No cards selected"
+        )
+
+    def test_an_empty_selection_says_so_in_words(self):
+        # Not "0 cards selected, 0 sheets", which reads like a broken counter.
+        sidebar = self._sidebar()
+        sidebar.set_selection_count(5)
+        sidebar.set_selection_count(0)
+        self.assertEqual(sidebar.selection_label.text(), "No cards selected")
+
+    def test_one_card_reads_in_the_singular(self):
+        sidebar = self._sidebar()
+        sidebar.set_selection_count(1)
+        self.assertEqual(sidebar.selection_label.text(), "1 card selected, 1 sheet")
+
+    def test_several_cards_read_in_the_plural(self):
+        sidebar = self._sidebar()
+        cols, rows = grid_dims(PAGE)
+        sidebar.set_selection_count(cols * rows)
+        self.assertEqual(
+            sidebar.selection_label.text(),
+            f"{cols * rows} cards selected, 1 sheet",
+        )
+
+    def test_a_second_sheet_is_counted_and_pluralised(self):
+        sidebar = self._sidebar()
+        cols, rows = grid_dims(PAGE)
+        count = cols * rows + 1
+        sidebar.set_selection_count(count)
+        self.assertEqual(
+            sidebar.selection_label.text(), f"{count} cards selected, 2 sheets"
+        )
+
+    def test_the_paper_count_matches_the_layout(self):
+        # Derived in the sidebar from the card count rather than passed in, so
+        # it cannot disagree with what actually gets laid out.
+        sidebar = self._sidebar()
+        for count in (1, 3, 8, 9, 17, 40):
+            sidebar.set_selection_count(count)
+            self.assertIn(
+                f"{sheets_of_paper(count)} sheet", sidebar.selection_label.text()
+            )
 
 
 class SidebarLegendTests(unittest.TestCase):

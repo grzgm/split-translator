@@ -73,6 +73,20 @@ def grid_dims(page: PageSpec) -> tuple[int, int]:
     return cols, rows
 
 
+def sheets_of_paper(card_count: int, page: PageSpec = PAGE) -> int:
+    """How many physical sheets a selection needs.
+
+    Counted in paper, not in printed sides: the output is double-sided, so one
+    sheet carries a grid of fronts and the same grid of backs. That matches what
+    the preview's captions already mean by "Sheet 1", which names a front and a
+    back together."""
+    cols, rows = grid_dims(page)
+    per_sheet = cols * rows
+    if card_count <= 0:
+        return 0
+    return -(-card_count // per_sheet)
+
+
 def _mirror_rows(cells: list, cols: int) -> list:
     """Reverse the column order within each row (for the back sheet)."""
     out = []

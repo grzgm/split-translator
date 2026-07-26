@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from .flashcard_print_choices import MANUAL, PrintChoices, auto_pairs
-from .flashcard_print_layout import PAGE, PREVIEW_MARKERS
+from .flashcard_print_layout import PAGE, PREVIEW_MARKERS, sheets_of_paper
 from .flashcards import Card
 
 
@@ -94,6 +94,14 @@ class PrintSidebar(QWidget):
         outer.addWidget(self.reset_button)
 
         outer.addWidget(self._legend_widget())
+
+        # Directly above Print, so it reads as what Print is about to do. The
+        # paper count is the half worth knowing before committing a print run.
+        self.selection_label = QLabel()
+        self.selection_label.setWordWrap(True)
+        self.selection_label.setStyleSheet("font-weight: bold;")
+        outer.addWidget(self.selection_label)
+        self.set_selection_count(0)
 
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_requested)
@@ -186,6 +194,18 @@ class PrintSidebar(QWidget):
         box.addLayout(offsets)
 
         return widget
+
+    def set_selection_count(self, card_count: int) -> None:
+        """Say how many cards are ticked and how much paper they need. The paper
+        count is derived here rather than passed in, so the two can never
+        disagree."""
+        if card_count <= 0:
+            self.selection_label.setText("No cards selected")
+            return
+        sheets = sheets_of_paper(card_count)
+        cards_text = "1 card" if card_count == 1 else f"{card_count} cards"
+        sheets_text = "1 sheet" if sheets == 1 else f"{sheets} sheets"
+        self.selection_label.setText(f"{cards_text} selected, {sheets_text}")
 
     def _legend_widget(self) -> QWidget:
         """What the preview's colours mean, one swatched row each.
