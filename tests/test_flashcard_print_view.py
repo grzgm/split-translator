@@ -7,6 +7,7 @@ from PySide6.QtGui import QPageSize
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import QApplication
 
+from split_translator.flashcard_print_layout import PAGE
 from split_translator.flashcard_print_view import PrintView
 from split_translator.flashcards import Card, Sense
 
@@ -123,10 +124,14 @@ class PdfExportRoutingTests(unittest.TestCase):
 
 
 class PrintViewTests(unittest.TestCase):
-    def test_constructs_with_controls(self):
+    def test_constructs_with_defaults(self):
+        # The view carries the render inputs as plain state now; the widgets
+        # that set them live in the sidebar.
         view = PrintView()
-        self.assertIsNotNone(view.borders_checkbox)
         self.assertFalse(view.show_borders())
+        self.assertTrue(view.print_cut_lines())
+        self.assertEqual(view.back_offset(), PAGE.back_offset_mm)
+        self.assertEqual(view.back_offset_x(), PAGE.back_offset_x_mm)
 
     def test_set_cards_does_not_raise(self):
         view = PrintView()
@@ -154,34 +159,18 @@ class PrintViewTests(unittest.TestCase):
         self.assertIn("dataset.sense", js)
         self.assertIn("sort", js)
 
-    def test_cut_lines_checkbox_defaults_on(self):
-        view = PrintView()
-        self.assertIsNotNone(view.cut_lines_checkbox)
-        self.assertTrue(view.print_cut_lines())
-
     def test_cut_lines_js_toggles_body_class(self):
         view = PrintView()
         self.assertIn("add", view._cut_lines_js(True))
         self.assertIn("remove", view._cut_lines_js(False))
         self.assertIn("print-cut-lines", view._cut_lines_js(True))
 
-    def test_back_offset_spinbox_defaults_to_3mm(self):
-        view = PrintView()
-        self.assertIsNotNone(view.back_offset_spin)
-        self.assertEqual(view.back_offset(), 3.0)
-
-    def test_horizontal_back_offset_spinbox_defaults_to_zero(self):
-        view = PrintView()
-        self.assertIsNotNone(view.back_offset_x_spin)
-        self.assertEqual(view.back_offset_x(), 0.0)
-
     def test_set_cards_uses_both_back_offsets(self):
         # The rendered HTML must carry the chosen back offsets as the live CSS
         # variables, so the printed back sheet moves. The vertical value is
         # negated (a positive setting raises the back).
         view = PrintView()
-        view.back_offset_spin.setValue(5.0)
-        view.back_offset_x_spin.setValue(2.0)
+        view.set_back_offsets(5.0, 2.0)
         html = view._render()
         self.assertIn("--back-dx: 2mm", html)
         self.assertIn("--back-dy: -5mm", html)
@@ -190,8 +179,7 @@ class PrintViewTests(unittest.TestCase):
         # An offset change updates the print transform's CSS variables in place
         # via JS (no full reload), which is what keeps the preview responsive.
         view = PrintView()
-        view.back_offset_spin.setValue(4.0)
-        view.back_offset_x_spin.setValue(1.5)
+        view.set_back_offsets(4.0, 1.5)
         js = view._back_offset_js()
         self.assertIn("setProperty", js)
         self.assertIn("--back-dx", js)
@@ -228,17 +216,17 @@ class BlankHeadwordsToggleTests(unittest.TestCase):
                             senses=[Sense(english="a {{word}} naps")])])
         return view
 
-    def test_checkbox_on_by_default(self):
-        self.assertTrue(self._view().blank_headwords_checkbox.isChecked())
+    def test_blanking_is_on_by_default(self):
+        self.assertTrue(self._view().blank_headwords())
 
-    def test_render_blanks_token_when_checked(self):
+    def test_render_blanks_token_when_on(self):
         html = self._view()._render()
         self.assertIn('class="blank"', html)
         self.assertNotIn("{{word}}", html)
 
-    def test_render_shows_literal_token_when_unchecked(self):
+    def test_render_shows_literal_token_when_off(self):
         view = self._view()
-        view.blank_headwords_checkbox.setChecked(False)
+        view.set_blank_headwords(False)
         html = view._render()
         self.assertIn("{{word}}", html)
         self.assertNotIn('class="blank"', html)

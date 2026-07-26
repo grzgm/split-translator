@@ -1,5 +1,7 @@
-"""Right side of the Print window: the examples of the card loaded in the
-editor, with a tick per example choosing which ones print.
+"""Right side of the Print window: the print configuration at the top, the
+examples of the card loaded in the editor below it, and the Print button at the
+foot. The window has no separate control bar; everything that used to sit above
+the preview lives here instead.
 
 A card starts in auto mode, where the ticks show the default the browser's fit
 measurement produced (see PrintView.auto_fit_measured). Touching any tick
@@ -13,6 +15,8 @@ and no other panel: the print window is what connects it to the preview."""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDoubleSpinBox,
+    QFormLayout,
     QFrame,
     QLabel,
     QPushButton,
@@ -22,14 +26,21 @@ from PySide6.QtWidgets import (
 )
 
 from .flashcard_print_choices import MANUAL, PrintChoices, auto_pairs
+from .flashcard_print_layout import PAGE
 from .flashcards import Card
 
 
 class PrintSidebar(QWidget):
-    """The examples list for the loaded card."""
+    """The print configuration, the examples list for the loaded card, and the
+    Print button."""
 
     # The card id whose tick set just changed (by a tick or by a reset).
     choice_changed = Signal(str)
+    borders_toggled = Signal(bool)
+    cut_lines_toggled = Signal(bool)
+    blank_headwords_toggled = Signal(bool)
+    back_offset_changed = Signal()
+    print_requested = Signal()
 
     def __init__(self, choices: PrintChoices, parent=None):
         super().__init__(parent)
@@ -48,6 +59,8 @@ class PrintSidebar(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
+
+        outer.addWidget(self._options_widget())
 
         self.title_label = QLabel("Examples")
         self.title_label.setStyleSheet("font-weight: bold;")
@@ -79,7 +92,102 @@ class PrintSidebar(QWidget):
         self.reset_button.clicked.connect(self._on_reset)
         outer.addWidget(self.reset_button)
 
+        self.print_button = QPushButton("Print")
+        self.print_button.clicked.connect(self.print_requested)
+        outer.addWidget(self.print_button)
+
         self.set_card(None, False)
+
+    def _options_widget(self) -> QWidget:
+        """The print configuration, at a fixed spot at the top of the sidebar so
+        it stays visible however many examples a card has."""
+        widget = QWidget()
+        box = QVBoxLayout(widget)
+        box.setContentsMargins(0, 0, 0, 0)
+
+        heading = QLabel("Options")
+        heading.setStyleSheet("font-weight: bold;")
+        box.addWidget(heading)
+
+        self.borders_checkbox = QCheckBox("Show cut borders")
+        self.borders_checkbox.setToolTip(
+            "Draw thin borders around each card on screen to help cutting. "
+            "They are not printed."
+        )
+        self.borders_checkbox.toggled.connect(self.borders_toggled)
+        box.addWidget(self.borders_checkbox)
+
+        # Prints a hairline between the cards so they are easy to cut apart. On
+        # by default. The line is drawn with an outline, so it never shifts the
+        # card content, and it appears only in the printed output.
+        self.cut_lines_checkbox = QCheckBox("Print cut lines")
+        self.cut_lines_checkbox.setToolTip(
+            "Print a thin cut guide between the cards to make them easy to cut "
+            "out. Only affects the printed output, not the on-screen preview."
+        )
+        self.cut_lines_checkbox.setChecked(True)
+        self.cut_lines_checkbox.toggled.connect(self.cut_lines_toggled)
+        box.addWidget(self.cut_lines_checkbox)
+
+        self.blank_headwords_checkbox = QCheckBox("Blank out headwords")
+        self.blank_headwords_checkbox.setToolTip(
+            "Hide headword occurrences in the English definition, shown as a "
+            "blank, so the printed card is not a spoiler. Unticked prints the "
+            "stored {{word}} token."
+        )
+        self.blank_headwords_checkbox.setChecked(True)
+        self.blank_headwords_checkbox.toggled.connect(self.blank_headwords_toggled)
+        box.addWidget(self.blank_headwords_checkbox)
+
+        # Duplex registration nudge: shifts the printed back side so it lands on
+        # its front despite the printer's mechanical two-sided offset. Only
+        # affects the printed output, not the on-screen preview.
+        offsets = QFormLayout()
+        self.back_offset_spin = QDoubleSpinBox()
+        self.back_offset_spin.setRange(-15.0, 15.0)
+        self.back_offset_spin.setSingleStep(0.5)
+        self.back_offset_spin.setValue(PAGE.back_offset_mm)
+        self.back_offset_spin.setToolTip(
+            "Raise the printed back side by this many mm so it lines up with its "
+            "front (compensates the printer's vertical two-sided registration). "
+            "Only affects the printed output, not the preview."
+        )
+        self.back_offset_spin.valueChanged.connect(
+            lambda _value: self.back_offset_changed.emit()
+        )
+        offsets.addRow("Back offset up (mm)", self.back_offset_spin)
+
+        self.back_offset_x_spin = QDoubleSpinBox()
+        self.back_offset_x_spin.setRange(-15.0, 15.0)
+        self.back_offset_x_spin.setSingleStep(0.5)
+        self.back_offset_x_spin.setValue(PAGE.back_offset_x_mm)
+        self.back_offset_x_spin.setToolTip(
+            "Shift the printed back side right by this many mm (compensates the "
+            "printer's horizontal two-sided registration). Only affects the "
+            "printed output, not the preview."
+        )
+        self.back_offset_x_spin.valueChanged.connect(
+            lambda _value: self.back_offset_changed.emit()
+        )
+        offsets.addRow("right (mm)", self.back_offset_x_spin)
+        box.addLayout(offsets)
+
+        return widget
+
+    def show_borders(self) -> bool:
+        return self.borders_checkbox.isChecked()
+
+    def print_cut_lines(self) -> bool:
+        return self.cut_lines_checkbox.isChecked()
+
+    def blank_headwords(self) -> bool:
+        return self.blank_headwords_checkbox.isChecked()
+
+    def back_offset(self) -> float:
+        return self.back_offset_spin.value()
+
+    def back_offset_x(self) -> float:
+        return self.back_offset_x_spin.value()
 
     # --- reads ----------------------------------------------------------
 

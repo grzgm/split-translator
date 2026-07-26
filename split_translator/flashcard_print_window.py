@@ -68,7 +68,20 @@ class FlashcardPrintWindow(QWidget):
         # list and the sidebar all follow one card. load_card brings the usual
         # unsaved-changes prompt with it, and declining cancels the load.
         self.print_view.card_clicked.connect(self._on_tile_clicked)
+        self.sidebar.borders_toggled.connect(self.print_view.set_show_borders)
+        self.sidebar.cut_lines_toggled.connect(self.print_view.set_print_cut_lines)
+        self.sidebar.blank_headwords_toggled.connect(
+            self.print_view.set_blank_headwords
+        )
+        self.sidebar.back_offset_changed.connect(self._on_back_offset_changed)
+        self.sidebar.print_requested.connect(self.print_view.print_cards)
 
+        # Push the sidebar's starting values into the view once, so the two sets
+        # of defaults cannot drift apart.
+        self.print_view.set_show_borders(self.sidebar.show_borders())
+        self.print_view.set_print_cut_lines(self.sidebar.print_cut_lines())
+        self.print_view.set_blank_headwords(self.sidebar.blank_headwords())
+        self._on_back_offset_changed()
         self._refresh_sidebar()
 
     def refresh_preview(self) -> None:
@@ -89,6 +102,11 @@ class FlashcardPrintWindow(QWidget):
 
     def _on_choice_changed(self, _card_id: str) -> None:
         self.print_view.set_choices(self.choices.as_render_map())
+
+    def _on_back_offset_changed(self) -> None:
+        self.print_view.set_back_offsets(
+            self.sidebar.back_offset(), self.sidebar.back_offset_x()
+        )
 
     def _on_cards_changed(self) -> None:
         # An edit invalidates a hand-picked set, so the card goes back to the

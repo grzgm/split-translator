@@ -225,5 +225,61 @@ class SidebarResetTests(unittest.TestCase):
         self.assertIsNone(sidebar.card_id())
 
 
+class SidebarOptionTests(unittest.TestCase):
+    """The print config lives in the sidebar. Defaults must match what the
+    preview renders with before anything is touched."""
+
+    def _sidebar(self):
+        sidebar = PrintSidebar(PrintChoices())
+        self.addCleanup(sidebar.deleteLater)
+        return sidebar
+
+    def test_defaults(self):
+        sidebar = self._sidebar()
+        self.assertFalse(sidebar.show_borders())
+        self.assertTrue(sidebar.print_cut_lines())
+        self.assertTrue(sidebar.blank_headwords())
+        self.assertEqual(sidebar.back_offset(), 3.0)
+        self.assertEqual(sidebar.back_offset_x(), 0.0)
+
+    def test_toggling_borders_announces_it(self):
+        sidebar = self._sidebar()
+        seen = []
+        sidebar.borders_toggled.connect(seen.append)
+        sidebar.borders_checkbox.setChecked(True)
+        self.assertEqual(seen, [True])
+
+    def test_toggling_cut_lines_announces_it(self):
+        sidebar = self._sidebar()
+        seen = []
+        sidebar.cut_lines_toggled.connect(seen.append)
+        sidebar.cut_lines_checkbox.setChecked(False)
+        self.assertEqual(seen, [False])
+
+    def test_toggling_blank_headwords_announces_it(self):
+        sidebar = self._sidebar()
+        seen = []
+        sidebar.blank_headwords_toggled.connect(seen.append)
+        sidebar.blank_headwords_checkbox.setChecked(False)
+        self.assertEqual(seen, [False])
+
+    def test_changing_an_offset_announces_it(self):
+        sidebar = self._sidebar()
+        seen = []
+        sidebar.back_offset_changed.connect(lambda: seen.append(True))
+        sidebar.back_offset_spin.setValue(5.0)
+        sidebar.back_offset_x_spin.setValue(2.0)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(sidebar.back_offset(), 5.0)
+        self.assertEqual(sidebar.back_offset_x(), 2.0)
+
+    def test_the_print_button_announces_a_request(self):
+        sidebar = self._sidebar()
+        seen = []
+        sidebar.print_requested.connect(lambda: seen.append(True))
+        sidebar.print_button.click()
+        self.assertEqual(seen, [True])
+
+
 if __name__ == "__main__":
     unittest.main()
