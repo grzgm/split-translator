@@ -469,6 +469,16 @@ class RenderHtmlTests(unittest.TestCase):
         # out of the printed output.
         self.assertIn(".sheet-caption { display: none; }", html)
 
+    def test_tiles_look_clickable_on_screen_only(self):
+        # The tile is a click target in the preview (clicking one loads that
+        # card), so it gets a pointer cursor. That is screen presentation and
+        # must not reach the print block.
+        html = render_html(_cards(1))
+        screen_block = html.split("@media screen")[1]
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        self.assertIn("cursor: pointer", screen_block)
+        self.assertNotIn("cursor: pointer", print_block)
+
 
 class BlankHeadwordsTests(unittest.TestCase):
     def _card(self):

@@ -333,6 +333,9 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
     color: #55606e;
     margin: 0 0 4px 2px;
   }}
+  /* A tile is a click target in the preview (clicking one loads that card),
+     so it reads as one. Screen only: the printed card is not clickable. */
+  .tile[data-card-id] {{ cursor: pointer; }}
   .tile.is-overflow {{ outline: 2px solid red; outline-offset: -2px; }}
   body.show-borders .tile {{ border: 1px solid #000000; }}
 }}

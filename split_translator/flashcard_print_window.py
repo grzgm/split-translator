@@ -64,6 +64,10 @@ class FlashcardPrintWindow(QWidget):
         # Only the browser can measure a wrapped sentence, so the automatic
         # default reaches the sidebar this way.
         self.print_view.auto_fit_measured.connect(self.sidebar.set_auto_fit)
+        # Clicking a card in the preview loads it, so the preview, the saved
+        # list and the sidebar all follow one card. load_card brings the usual
+        # unsaved-changes prompt with it, and declining cancels the load.
+        self.print_view.card_clicked.connect(self._on_tile_clicked)
 
         self._refresh_sidebar()
 
@@ -105,3 +109,8 @@ class FlashcardPrintWindow(QWidget):
 
     def _on_cards_printed(self, card_ids) -> None:
         self.store.set_printed(card_ids, True)
+
+    def _on_tile_clicked(self, card_id: str) -> None:
+        card = next((c for c in self.store.cards if c.id == card_id), None)
+        if card is not None:
+            self.panel.load_card(card)

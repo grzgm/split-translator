@@ -142,6 +142,17 @@ class SidebarWiringTests(unittest.TestCase):
         self.assertEqual(win.choices.mode_of("c"), "auto")
         self.assertEqual(win.print_view._choices, {})
 
+    def test_a_tile_click_loads_that_card(self):
+        win, _store = self._window()
+        win.print_view.card_clicked.emit("c")
+        self.assertEqual(win.panel.state.loaded_card_id, "c")
+        self.assertEqual(win.sidebar.card_id(), "c")
+
+    def test_a_click_on_an_unknown_card_is_ignored(self):
+        win, _store = self._window()
+        win.print_view.card_clicked.emit("nobody")  # must not raise
+        self.assertIsNone(win.panel.state.loaded_card_id)
+
 
 if __name__ == "__main__":
     unittest.main()

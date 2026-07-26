@@ -9,8 +9,9 @@ walkthrough. Only construction and the JS-builder strings are covered by tests."
 import json
 from dataclasses import replace
 
-from PySide6.QtCore import QMarginsF, QTimer, Signal
+from PySide6.QtCore import QFile, QIODevice, QMarginsF, QTimer, Signal
 from PySide6.QtGui import QPageLayout
+from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -24,6 +25,18 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .flashcard_print_layout import PAGE, render_html, _fmt_mm
 from .flashcards import Card
+from .print_tile_bridge import PrintTileBridge
+
+
+def _qwebchannel_js() -> str:
+    """Read Qt's bundled qwebchannel.js client from the resource system."""
+    f = QFile(":/qtwebchannel/qwebchannel.js")
+    if not f.open(QIODevice.OpenModeFlag.ReadOnly):
+        return ""
+    try:
+        return bytes(f.readAll().data()).decode("utf-8")
+    finally:
+        f.close()
 
 
 class PrintView(QWidget):
@@ -35,6 +48,8 @@ class PrintView(QWidget):
     # emitted after each load. Only the browser can measure a wrapped sentence,
     # so this is the only way the sidebar can show the real default.
     auto_fit_measured = Signal(dict)
+    # The card id of a clicked preview tile. The window turns it into a load.
+    card_clicked = Signal(str)
 
     # Fits each front tile's examples to the tile, then puts the survivors back
     # into sense order. Runs after each load, before _OVERFLOW_JS.
@@ -105,6 +120,34 @@ class PrintView(QWidget):
     if (over) { t.classList.add('is-overflow'); }
     else { t.classList.remove('is-overflow'); }
   }
+})();
+"""
+
+    # Injected after each load. Reports a clicked tile's card id over the
+    # channel. __CHANNEL_JS__ is replaced with the bundled qwebchannel.js client
+    # using str.replace, not format, because that client text is full of braces.
+    #
+    # Every setHtml builds a fresh document, so re-attaching the listener on each
+    # load is correct rather than duplicative. Both the front and the back tile
+    # carry data-card-id, so either side of a card loads it; the padding tiles
+    # that fill out a part-used sheet carry none and are inert.
+    _TILE_CLICK_JS = """
+(function () {
+    __CHANNEL_JS__
+
+    document.addEventListener('click', function (ev) {
+        var target = ev.target;
+        if (!target || !target.closest) { return; }
+        var tile = target.closest('.tile[data-card-id]');
+        if (!tile) { return; }
+        if (window.printTileBridge) {
+            window.printTileBridge.clicked(tile.getAttribute('data-card-id'));
+        }
+    });
+
+    new QWebChannel(qt.webChannelTransport, function (channel) {
+        window.printTileBridge = channel.objects.printTileBridge;
+    });
 })();
 """
 
@@ -187,6 +230,12 @@ class PrintView(QWidget):
         self.view.printFinished.connect(self._on_print_finished)
         self.view.pdfPrintingFinished.connect(self._on_pdf_finished)
         outer.addWidget(self.view, stretch=1)
+
+        self._bridge = PrintTileBridge(self)
+        self._bridge.tile_clicked.connect(self.card_clicked)
+        self._channel = QWebChannel(self)
+        self._channel.registerObject("printTileBridge", self._bridge)
+        self.view.page().setWebChannel(self._channel)
 
         # Coalesce rapid preview rebuilds (a burst of selection ticks, a content
         # change) into a single reload. Without this each tick reloads the whole
@@ -288,11 +337,17 @@ class PrintView(QWidget):
             + "})();"
         )
 
+    def _tile_click_script(self) -> str:
+        return self._TILE_CLICK_JS.replace("__CHANNEL_JS__", _qwebchannel_js())
+
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:
             return
-        # One script, one IPC round-trip, and the fit measurement comes back on
-        # the same trip.
+        # Two calls, deliberately. The click wiring returns nothing, while the
+        # toggles-and-fit script returns the measurement through its callback;
+        # folding them together would put the channel setup last and lose that
+        # return value.
+        self.view.page().runJavaScript(self._tile_click_script())
         self.view.page().runJavaScript(self._load_script(), self._on_fit_measured)
 
     def _on_fit_measured(self, raw) -> None:

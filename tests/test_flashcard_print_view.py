@@ -297,5 +297,41 @@ class AutoFitReportTests(unittest.TestCase):
         self.assertEqual(seen, [])
 
 
+class TileClickTests(unittest.TestCase):
+    """A click on a tile loads that card. The page reaches Python over a
+    QWebChannel, the same mechanism the dictionary capture buttons and the
+    anchor editor use. The click itself needs a live web engine and is verified
+    by a runtime walkthrough; what is pinned here is the plumbing."""
+
+    def test_the_bridge_re_emits_a_click(self):
+        from split_translator.print_tile_bridge import PrintTileBridge
+        bridge = PrintTileBridge()
+        seen = []
+        bridge.tile_clicked.connect(seen.append)
+        bridge.clicked("card-7")
+        self.assertEqual(seen, ["card-7"])
+
+    def test_the_view_re_emits_the_bridge_signal(self):
+        view = PrintView()
+        seen = []
+        view.card_clicked.connect(seen.append)
+        view._bridge.clicked("card-7")
+        self.assertEqual(seen, ["card-7"])
+
+    def test_the_click_script_targets_tiles_with_a_card_id(self):
+        view = PrintView()
+        js = view._tile_click_script()
+        self.assertIn(".tile[data-card-id]", js)
+        self.assertIn("printTileBridge", js)
+
+    def test_the_click_script_carries_the_channel_client(self):
+        # Without Qt's bundled qwebchannel.js the page has no QWebChannel to
+        # construct, so the bridge would never connect.
+        view = PrintView()
+        js = view._tile_click_script()
+        self.assertIn("QWebChannel", js)
+        self.assertNotIn("__CHANNEL_JS__", js)
+
+
 if __name__ == "__main__":
     unittest.main()
