@@ -21,6 +21,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QIcon,
     QPainter,
+    QPen,
     QPixmap,
     QPolygonF,
 )
@@ -365,17 +366,22 @@ class SenseRow(QFrame):
         )
 
 
-def _printer_pixmap(size: int, colour: str) -> QPixmap:
-    """A small flat printer glyph: a body with a paper sheet above and an
-    output sheet below. Drawn rather than shipped as an asset, matching the
-    loaded-marker pixmap."""
+def _printer_pixmap(size: int, colour: str, filled: bool = True) -> QPixmap:
+    """A small printer glyph: a body with a paper sheet above and an output
+    sheet below. Drawn rather than shipped as an asset, matching the
+    loaded-marker pixmap. With filled=False it is stroked as an outline, used
+    for the "off" state of the toggle button."""
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QBrush(QColor(colour)))
     unit = size / 16.0
+    if filled:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(colour)))
+    else:
+        painter.setPen(QPen(QColor(colour), max(1.0, unit)))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
     # Body.
     painter.drawRoundedRect(
         int(2 * unit), int(6 * unit), int(12 * unit), int(6 * unit),
@@ -383,24 +389,33 @@ def _printer_pixmap(size: int, colour: str) -> QPixmap:
     )
     # Paper feeding in at the top.
     painter.drawRect(int(4 * unit), int(2 * unit), int(8 * unit), int(4 * unit))
-    # Printed sheet coming out at the bottom, in white so it reads on the body.
-    painter.setBrush(QBrush(QColor("#ffffff")))
+    # Printed sheet coming out at the bottom. Filled: white so it reads on the
+    # body; outline: just the stroked rectangle.
+    if filled:
+        painter.setBrush(QBrush(QColor("#ffffff")))
     painter.drawRect(int(4 * unit), int(10 * unit), int(8 * unit), int(4 * unit))
     painter.end()
     return pixmap
 
 
-def _star_pixmap(size: int, colour: str) -> QPixmap:
-    """A small filled five-point star, matching the printer glyph's weight."""
+def _star_pixmap(size: int, colour: str, filled: bool = True) -> QPixmap:
+    """A small five-point star, matching the printer glyph's weight. With
+    filled=False it is stroked as an outline, used for the "off" state of the
+    toggle button."""
     import math
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QBrush(QColor(colour)))
+    if filled:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(colour)))
+    else:
+        painter.setPen(QPen(QColor(colour), max(1.0, size / 16.0)))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
     cx = cy = size / 2.0
-    outer = size / 2.0
+    # Leave room for the outline stroke so it is not clipped at the edges.
+    outer = size / 2.0 - (0.0 if filled else max(1.0, size / 16.0))
     inner = outer * 0.5
     points = []
     for i in range(10):
@@ -469,10 +484,6 @@ class FlashcardEditorBase(QWidget):
     # way a text editor marks a modified file.
     altered_changed = Signal(bool)
 
-    _STAR_EMPTY = "Star"
-    _STAR_SET = "Starred"
-    _PRINTED_EMPTY = "Print"
-    _PRINTED_SET = "Printed"
     _PRINTED_ROLE = Qt.ItemDataRole.UserRole + 1
     _STARRED_ROLE = Qt.ItemDataRole.UserRole + 2
 
@@ -546,16 +557,24 @@ class FlashcardEditorBase(QWidget):
         self.headword_input.setToolTip(
             "Ctrl+N: fill from the search box (New from word)"
         )
-        self.star_button = QPushButton(self._STAR_EMPTY)
+        # Compact icon toggles: a filled glyph with a coloured background when
+        # on, an outline glyph with no background when off.
+        self._star_icon_on = QIcon(_star_pixmap(18, "#ffffff", filled=True))
+        self._star_icon_off = QIcon(_star_pixmap(18, "#f0b400", filled=False))
+        self._printed_icon_on = QIcon(_printer_pixmap(18, "#ffffff", filled=True))
+        self._printed_icon_off = QIcon(_printer_pixmap(18, "#4a90d9", filled=False))
+        self.star_button = QPushButton()
         self.star_button.setCheckable(True)
-        self.star_button.setMaximumWidth(70)
+        self.star_button.setMaximumWidth(32)
+        self.star_button.setIcon(self._star_icon_off)
         self.star_button.setToolTip("Star this card (mark as important)")
         self.star_button.toggled.connect(self._on_star_toggled)
         headword_row.addWidget(self.headword_input)
         headword_row.addWidget(self.star_button)
-        self.printed_button = QPushButton(self._PRINTED_EMPTY)
+        self.printed_button = QPushButton()
         self.printed_button.setCheckable(True)
-        self.printed_button.setMaximumWidth(70)
+        self.printed_button.setMaximumWidth(32)
+        self.printed_button.setIcon(self._printed_icon_off)
         self.printed_button.setToolTip("Mark this card as printed")
         self.printed_button.toggled.connect(self._on_printed_toggled)
         headword_row.addWidget(self.printed_button)
@@ -884,11 +903,11 @@ class FlashcardEditorBase(QWidget):
 
     def _on_star_toggled(self, checked: bool):
         self._on_user_edit()
-        self.star_button.setText(self._STAR_SET if checked else self._STAR_EMPTY)
+        self.star_button.setIcon(
+            self._star_icon_on if checked else self._star_icon_off
+        )
         self.star_button.setStyleSheet(
-            "background-color: #f0b400; color: #000; font-weight: bold;"
-            if checked
-            else ""
+            "background-color: #f0b400;" if checked else ""
         )
 
     def set_starred(self, starred: bool):
@@ -901,13 +920,11 @@ class FlashcardEditorBase(QWidget):
 
     def _on_printed_toggled(self, checked: bool):
         self._on_user_edit()
-        self.printed_button.setText(
-            self._PRINTED_SET if checked else self._PRINTED_EMPTY
+        self.printed_button.setIcon(
+            self._printed_icon_on if checked else self._printed_icon_off
         )
         self.printed_button.setStyleSheet(
-            "background-color: #4a90d9; color: #fff; font-weight: bold;"
-            if checked
-            else ""
+            "background-color: #4a90d9;" if checked else ""
         )
 
     def set_printed(self, printed: bool):

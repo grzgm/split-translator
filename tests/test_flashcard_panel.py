@@ -368,6 +368,32 @@ class FlashcardPanelTests(unittest.TestCase):
         # The card stays loaded, so the star stays set in the editor too.
         self.assertTrue(panel.is_starred())
 
+    def test_toggle_buttons_are_icon_only(self):
+        # They are compact icon buttons, not text buttons.
+        panel, _ = self._panel()
+        self.assertEqual(panel.star_button.text(), "")
+        self.assertEqual(panel.printed_button.text(), "")
+        self.assertFalse(panel.star_button.icon().isNull())
+        self.assertFalse(panel.printed_button.icon().isNull())
+
+    def test_star_button_shows_state_through_background(self):
+        # On: coloured background; off: no background. The icon swaps too, but
+        # the background is what a test can assert stably.
+        panel, _ = self._panel()
+        self.assertEqual(panel.star_button.styleSheet(), "")
+        panel.set_starred(True)
+        self.assertIn("background-color", panel.star_button.styleSheet())
+        panel.set_starred(False)
+        self.assertEqual(panel.star_button.styleSheet(), "")
+
+    def test_printed_button_shows_state_through_background(self):
+        panel, _ = self._panel()
+        self.assertEqual(panel.printed_button.styleSheet(), "")
+        panel.set_printed(True)
+        self.assertIn("background-color", panel.printed_button.styleSheet())
+        panel.set_printed(False)
+        self.assertEqual(panel.printed_button.styleSheet(), "")
+
     def test_build_card_carries_printed(self):
         panel, _ = self._panel()
         panel.headword_input.setText("address")
