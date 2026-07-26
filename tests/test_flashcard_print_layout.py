@@ -6,6 +6,7 @@ from split_translator.flashcard_print_layout import (
     example_fill_order,
     example_sense_order,
     grid_dims,
+    incompleteness,
     paginate,
     render_card_tile,
     render_html,
@@ -84,6 +85,120 @@ class ExampleFillOrderTests(unittest.TestCase):
             [(s, i) for s, i, _text in example_fill_order(card)],
             [(0, 0), (1, 0), (0, 1), (1, 1)],
         )
+
+
+class IncompletenessTests(unittest.TestCase):
+    """A card missing something is tinted in the preview so it can be corrected
+    before any paper is used. One failing check is enough to flag a card, and a
+    card failing several is reported at its worst level, because a tile carries
+    one tint."""
+
+    def _card(self, **overrides):
+        fields = dict(
+            headword="cat",
+            id="c",
+            own_notation="kat",
+            senses=[Sense(pos="n", polish="kot", english="a pet", examples=["A cat."])],
+        )
+        fields.update(overrides)
+        return Card(**fields)
+
+    def test_a_complete_card_is_not_flagged(self):
+        self.assertIsNone(incompleteness(self._card()))
+
+    def test_a_missing_headword_is_the_worst(self):
+        self.assertEqual(incompleteness(self._card(headword="")), "high")
+
+    def test_a_blank_headword_counts_as_missing(self):
+        self.assertEqual(incompleteness(self._card(headword="   ")), "high")
+
+    def test_a_missing_own_pronunciation_is_the_worst(self):
+        self.assertEqual(incompleteness(self._card(own_notation=None)), "high")
+        self.assertEqual(incompleteness(self._card(own_notation="  ")), "high")
+
+    def test_no_example_is_medium(self):
+        card = self._card(
+            senses=[Sense(pos="n", polish="kot", english="a pet", examples=[])]
+        )
+        self.assertEqual(incompleteness(card), "medium")
+
+    def test_a_blank_example_does_not_count_as_an_example(self):
+        card = self._card(
+            senses=[Sense(pos="n", polish="kot", english="a pet", examples=["  "])]
+        )
+        self.assertEqual(incompleteness(card), "medium")
+
+    def test_an_example_on_any_sense_satisfies_the_check(self):
+        card = self._card(senses=[
+            Sense(pos="n", polish="kot", english="a pet", examples=[]),
+            Sense(pos="v", polish="biegac", english="to run", examples=["Ran."]),
+        ])
+        self.assertIsNone(incompleteness(card))
+
+    def test_a_sense_missing_its_polish_is_low(self):
+        card = self._card(
+            senses=[Sense(pos="n", polish="", english="a pet", examples=["A cat."])]
+        )
+        self.assertEqual(incompleteness(card), "low")
+
+    def test_a_sense_missing_its_english_is_low(self):
+        card = self._card(
+            senses=[Sense(pos="n", polish="kot", english="", examples=["A cat."])]
+        )
+        self.assertEqual(incompleteness(card), "low")
+
+    def test_one_half_filled_sense_among_good_ones_still_flags(self):
+        card = self._card(senses=[
+            Sense(pos="n", polish="kot", english="a pet", examples=["A cat."]),
+            Sense(pos="v", polish="", english="to run", examples=["Ran."]),
+        ])
+        self.assertEqual(incompleteness(card), "low")
+
+    def test_the_worst_level_wins_when_several_apply(self):
+        # No headword, no example and no Polish all at once: the tint has to say
+        # the worst of them, not the last one checked.
+        card = self._card(
+            headword="", senses=[Sense(pos="n", polish="", english="", examples=[])]
+        )
+        self.assertEqual(incompleteness(card), "high")
+
+    def test_a_card_with_no_senses_is_medium(self):
+        # It has no examples either, which is the worse of the two things it is
+        # missing.
+        self.assertEqual(incompleteness(self._card(senses=[])), "medium")
+
+
+class IncompleteTileMarkupTests(unittest.TestCase):
+    """Both sides of a card carry the tint class, so one needing attention is
+    obvious on whichever sheet is being looked at."""
+
+    def _card(self, **overrides):
+        fields = dict(
+            headword="cat",
+            id="c",
+            own_notation="kat",
+            senses=[Sense(pos="n", polish="kot", english="a pet", examples=["A cat."])],
+        )
+        fields.update(overrides)
+        return Card(**fields)
+
+    def test_a_complete_card_carries_no_tint_class(self):
+        for side in ("front", "back"):
+            self.assertNotIn("tile--incomplete", render_card_tile(self._card(), side))
+
+    def test_both_sides_carry_the_level(self):
+        card = self._card(own_notation=None)
+        for side in ("front", "back"):
+            self.assertIn("tile--incomplete-high", render_card_tile(card, side))
+
+    def test_the_class_sits_alongside_the_existing_tile_classes(self):
+        # The side class and the base class still have to be there, or the tile
+        # loses its size and its layout.
+        html = render_card_tile(self._card(own_notation=None), "front")
+        self.assertIn('class="tile tile--front tile--incomplete-high"', html)
+
+    def test_an_empty_padding_tile_is_never_flagged(self):
+        self.assertNotIn("tile--incomplete", render_card_tile(None, "front"))
 
 
 class ExampleSenseOrderTests(unittest.TestCase):
@@ -492,6 +607,27 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertLess(
             screen_block.index(".tile--selected {"),
             screen_block.index(".tile.is-overflow {"),
+        )
+
+    def test_incomplete_cards_are_tinted_on_screen_only(self):
+        # An amber tint flags a card worth correcting. It is a preview aid: a
+        # printed card must stay black on white for a monochrome printer.
+        html = render_html(_cards(1))
+        screen_block = html.split("@media screen")[1]
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        for colour in ("#fff8e1", "#ffe082", "#ffca28"):
+            self.assertIn(colour, screen_block)
+            self.assertNotIn(colour, print_block)
+
+    def test_the_tint_wins_the_background_over_the_selection(self):
+        # A card that is both loaded and incomplete must keep the blue selection
+        # outline over an amber body, so neither signal is lost. The tint rules
+        # therefore come after the selected rule.
+        html = render_html(_cards(1))
+        screen_block = html.split("@media screen")[1]
+        self.assertLess(
+            screen_block.index(".tile--selected {"),
+            screen_block.index(".tile--incomplete-low {"),
         )
 
     def test_the_selection_marker_does_not_resize_the_card(self):

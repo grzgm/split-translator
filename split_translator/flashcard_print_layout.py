@@ -121,6 +121,47 @@ def example_sense_order(card: Card) -> list[tuple[int, int, str]]:
     return order
 
 
+def incompleteness(card: Card) -> str | None:
+    """How badly the card needs correcting, or None when nothing is missing.
+
+    The preview tints a card by this level so the ones worth fixing stand out
+    before any paper is used. A card only has to fail one check to be flagged,
+    and one failing several is reported at its worst level, since a tile carries
+    a single tint.
+
+    "high" is a missing headword or a missing own pronunciation, either of which
+    leaves the printed card close to useless. "medium" is a card with no usage
+    example at all. "low" is a sense missing its Polish or its English text,
+    which still prints something but only half of it.
+
+    A card with no senses falls out as "medium": it has no examples either, and
+    that is the worse of the two things it is missing."""
+    if not (card.headword or "").strip():
+        return "high"
+    if not (card.own_notation or "").strip():
+        return "high"
+    senses = card.senses or []
+    if not any((text or "").strip() for s in senses for text in (s.examples or [])):
+        return "medium"
+    if any(
+        not (s.polish or "").strip() or not (s.english or "").strip()
+        for s in senses
+    ):
+        return "low"
+    return None
+
+
+def _tile_classes(card: Card, side: str) -> str:
+    """The class attribute for a card's tile, including its incompleteness tint
+    when it has one. Both sides carry it, so a card needing attention is obvious
+    on whichever sheet is being looked at."""
+    classes = ["tile", f"tile--{side}"]
+    level = incompleteness(card)
+    if level:
+        classes.append(f"tile--incomplete-{level}")
+    return " ".join(classes)
+
+
 def render_card_tile(
     card: Card,
     side: str,
@@ -169,7 +210,7 @@ def render_card_tile(
             )
             examples = f'<div class="example-list"{fit_attr}>{items}</div>'
         return (
-            f'<div class="tile tile--front" data-card-id="{_esc(card.id)}">'
+            f'<div class="{_tile_classes(card, "front")}" data-card-id="{_esc(card.id)}">'
             f'{star}'
             f'<div class="headword">{_esc(card.headword)}</div>'
             f'{notation}{examples}'
@@ -191,7 +232,7 @@ def render_card_tile(
         )
         senses += f'<div class="sense">{pos}{meanings}</div>'
     return (
-        f'<div class="tile tile--back" data-card-id="{_esc(card.id)}">'
+        f'<div class="{_tile_classes(card, "back")}" data-card-id="{_esc(card.id)}">'
         f'{senses}'
         f'</div>'
     )
@@ -284,6 +325,9 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      printed card tinted blue would waste a sheet. */
   .tile.is-overflow {{ outline: none; }}
   .tile.tile--selected {{ outline: none; background: transparent; }}
+  .tile.tile--incomplete-low,
+  .tile.tile--incomplete-medium,
+  .tile.tile--incomplete-high {{ background: transparent; }}
   /* The card grid is narrower than the printable width, so it sits at the left
      margin. A long-edge duplex flip mirrors the page left-to-right, so the back
      grid has to be right-aligned to land on top of the flipped front (the front
@@ -365,6 +409,17 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
     outline-offset: -2px;
     background: #e8f0fe;
   }}
+  /* A card with something missing, tinted so it is easy to pick out before any
+     paper is used. The three levels run pale to strong with how badly the card
+     needs correcting (see incompleteness), so a wall of cards sorts itself by
+     eye. Amber rather than red, which stays the overflow warning's colour.
+
+     Listed after the selected rule so the tint wins the background: a card that
+     is both loaded and incomplete keeps the blue selection outline over an amber
+     body, and neither signal is lost. */
+  .tile--incomplete-low {{ background: #fff8e1; }}
+  .tile--incomplete-medium {{ background: #ffe082; }}
+  .tile--incomplete-high {{ background: #ffca28; }}
   .tile.is-overflow {{ outline: 2px solid red; outline-offset: -2px; }}
   body.show-borders .tile {{ border: 1px solid #000000; }}
 }}
