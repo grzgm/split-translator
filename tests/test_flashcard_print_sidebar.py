@@ -105,6 +105,17 @@ class SidebarTickStateTests(unittest.TestCase):
         sidebar.set_card(card, True)
         self.assertEqual(sidebar.ticked_pairs(), [(1, 0)])
 
+    def test_status_matches_the_ticks_for_a_measured_card_out_of_selection(self):
+        # _default_pairs prefers a stored measurement over "everything ticked"
+        # regardless of whether the card is in the print selection, so the
+        # status text must not claim there is no measured default once one
+        # exists, even after the card is unticked from the selection.
+        sidebar, _choices = self._sidebar()
+        sidebar.set_auto_fit({"c": [(0, 0), (1, 0)]})
+        sidebar.set_card(_card(), False)
+        self.assertEqual(sidebar.ticked_pairs(), [(0, 0), (1, 0)])
+        self.assertNotIn("no measured default", sidebar.status_label.text())
+
     def test_a_measurement_arriving_with_no_card_shown_is_kept_for_later(self):
         # The preview measures every card it renders, which is rarely the
         # moment that card is loaded. The measurement has to survive until the
@@ -214,15 +225,48 @@ class SidebarResetTests(unittest.TestCase):
         self.assertFalse(sidebar.reset_button.isEnabled())
 
     def test_reset_with_no_card_shown_is_inert(self):
-        # The button is disabled with no card, but a stray click must not reach
-        # the choices object or announce a change for a card that is not there.
+        # The button is disabled with no card loaded, so a real click on it
+        # short-circuits in Qt before ever reaching the handler. Calling the
+        # handler directly is what actually exercises its own
+        # "if self._card is None: return" guard.
         sidebar, _choices = self._sidebar()
         sidebar.set_card(None, False)
         seen = []
         sidebar.choice_changed.connect(seen.append)
-        sidebar.reset_button.click()
+        sidebar._on_reset()
         self.assertEqual(seen, [])
         self.assertIsNone(sidebar.card_id())
+
+
+class SidebarMeasurementDropTests(unittest.TestCase):
+    def _sidebar(self):
+        choices = PrintChoices()
+        sidebar = PrintSidebar(choices)
+        self.addCleanup(sidebar.deleteLater)
+        return sidebar, choices
+
+    def test_dropping_the_shown_cards_measurement_reticks_it(self):
+        sidebar, _choices = self._sidebar()
+        sidebar.set_auto_fit({"c": [(0, 0)]})
+        sidebar.set_card(_card(), True)
+        self.assertEqual(sidebar.ticked_pairs(), [(0, 0)])
+        sidebar.drop_measurement("c")
+        # No measurement left, so the default falls back to everything ticked,
+        # exactly as it would for a card that was never measured.
+        self.assertEqual(sidebar.ticked_pairs(), [(0, 0), (0, 1), (1, 0)])
+
+    def test_dropping_a_measurement_for_a_card_not_shown_is_harmless(self):
+        sidebar, _choices = self._sidebar()
+        sidebar.set_auto_fit({"c": [(0, 0)]})
+        sidebar.set_card(_card(), True)
+        sidebar.drop_measurement("somebody-else")
+        self.assertEqual(sidebar.ticked_pairs(), [(0, 0)])
+
+    def test_dropping_an_unknown_measurement_is_a_no_op(self):
+        sidebar, _choices = self._sidebar()
+        sidebar.set_card(_card(), True)
+        sidebar.drop_measurement("never-measured")  # must not raise
+        self.assertEqual(sidebar.ticked_pairs(), [(0, 0), (0, 1), (1, 0)])
 
 
 class SidebarOptionTests(unittest.TestCase):

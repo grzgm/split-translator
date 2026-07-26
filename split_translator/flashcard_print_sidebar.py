@@ -12,7 +12,7 @@ from nothing. "Reset to auto" hands the card back to the fit.
 The sidebar holds the PrintChoices object (a plain data object, like a store)
 and no other panel: the print window is what connects it to the preview."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -219,6 +219,19 @@ class PrintSidebar(QWidget):
             return
         self._apply_ticks()
 
+    def drop_measurement(self, card_id: str) -> None:
+        """Forget a stored measurement for a card, because the examples it was
+        measured against are gone: the card was edited (PrintChoices.drop_stale
+        already dropped any hand-picked set for the same reason) or it left the
+        store entirely. Safe to call for a card the sidebar is not currently
+        showing, or one it never measured."""
+        if card_id not in self._measured:
+            return
+        del self._measured[card_id]
+        if self.card_id() == card_id:
+            self._apply_ticks()
+            self._apply_status()
+
     # --- building -------------------------------------------------------
 
     def _rebuild(self) -> None:
@@ -308,7 +321,12 @@ class PrintSidebar(QWidget):
                 "Hand-picked. Exactly the ticked examples print, and a card "
                 "that overruns is outlined in red."
             )
-        elif not self._in_selection:
+        elif not self._in_selection and card.id not in self._measured:
+            # A card can be out of the print selection yet still carry a
+            # measurement from before it was unticked (see _default_pairs,
+            # which prefers that measurement over "everything"). Falling
+            # through to the "Automatic" branch below keeps this text in
+            # step with the ticks actually shown.
             self.status_label.setText(
                 "Not in the print selection, so there is no measured default "
                 "yet. Tick this card for print to see the automatic choice."

@@ -142,6 +142,21 @@ class SidebarWiringTests(unittest.TestCase):
         self.assertEqual(win.choices.mode_of("c"), "auto")
         self.assertEqual(win.print_view._choices, {})
 
+    def test_editing_a_card_drops_its_stale_measurement_too(self):
+        # drop_stale only reports ids that had a hand-picked set, so give the
+        # card one, exactly the case _on_cards_changed actually wires up: a
+        # manual card whose examples change loses both its choice and the
+        # measurement that would otherwise pre-tick it wrong on next load.
+        win, store = self._window()
+        win.sidebar.set_auto_fit({"c": [(0, 0)]})
+        win.choices.set_manual(store.cards[0], [(0, 0)])
+        edited = Card(
+            headword="cat", id="c",
+            senses=[Sense(pos="v", examples=["a1 reworded", "a2"])],
+        )
+        store.update_card(edited)
+        self.assertNotIn("c", win.sidebar._measured)
+
     def test_a_tile_click_loads_that_card(self):
         win, _store = self._window()
         win.print_view.card_clicked.emit("c")
@@ -152,6 +167,32 @@ class SidebarWiringTests(unittest.TestCase):
         win, _store = self._window()
         win.print_view.card_clicked.emit("nobody")  # must not raise
         self.assertIsNone(win.panel.state.loaded_card_id)
+
+    def test_the_view_starts_in_step_with_the_sidebar(self):
+        # The anti-drift push in __init__ exists so these two never disagree
+        # about what the view is showing before anything has been touched.
+        win, _store = self._window()
+        self.assertEqual(win.print_view.show_borders(), win.sidebar.show_borders())
+        self.assertEqual(
+            win.print_view.print_cut_lines(), win.sidebar.print_cut_lines()
+        )
+        self.assertEqual(
+            win.print_view.blank_headwords(), win.sidebar.blank_headwords()
+        )
+        self.assertEqual(win.print_view.back_offset(), win.sidebar.back_offset())
+        self.assertEqual(
+            win.print_view.back_offset_x(), win.sidebar.back_offset_x()
+        )
+
+    def test_blanking_headwords_on_the_sidebar_reaches_the_view(self):
+        win, _store = self._window()
+        win.sidebar.blank_headwords_checkbox.setChecked(False)
+        self.assertFalse(win.print_view.blank_headwords())
+
+    def test_changing_the_back_offset_on_the_sidebar_reaches_the_view(self):
+        win, _store = self._window()
+        win.sidebar.back_offset_spin.setValue(7.5)
+        self.assertEqual(win.print_view.back_offset(), 7.5)
 
 
 if __name__ == "__main__":

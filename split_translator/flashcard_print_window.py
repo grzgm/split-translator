@@ -112,8 +112,14 @@ class FlashcardPrintWindow(QWidget):
         # An edit invalidates a hand-picked set, so the card goes back to the
         # automatic choice. This covers every edit route, since the store emits
         # for the dock and the graph window too.
-        if self.choices.drop_stale(self.store.cards):
+        dropped = self.choices.drop_stale(self.store.cards)
+        if dropped:
             self.print_view.set_choices(self.choices.as_render_map())
+        # The stale measurement behind a dropped choice must go too, or the
+        # sidebar keeps pre-ticking against the pre-edit example list until
+        # the next debounced preview reload measures it again.
+        for card_id in dropped:
+            self.sidebar.drop_measurement(card_id)
         self.refresh_preview()
         self._refresh_sidebar()
 
