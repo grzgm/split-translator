@@ -8,7 +8,7 @@ walkthrough. Only construction and the JS-builder strings are covered by tests."
 
 from dataclasses import replace
 
-from PySide6.QtCore import QMarginsF, Signal
+from PySide6.QtCore import QMarginsF, QTimer, Signal
 from PySide6.QtGui import QPageLayout
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
-from .flashcard_print_layout import PAGE, render_html
+from .flashcard_print_layout import PAGE, render_html, _fmt_mm
 from .flashcards import Card
 
 
@@ -170,6 +170,15 @@ class PrintView(QWidget):
         self.view.pdfPrintingFinished.connect(self._on_pdf_finished)
         outer.addWidget(self.view, stretch=1)
 
+        # Coalesce rapid preview rebuilds (a burst of selection ticks, a content
+        # change) into a single reload. Without this each tick reloads the whole
+        # web view, which is the bulk of the perceived lag. A short window is
+        # imperceptible yet collapses a burst into one setHtml.
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(150)
+        self._render_timer.timeout.connect(self._reload_preview)
+
     def show_borders(self) -> bool:
         return self.borders_checkbox.isChecked()
 
@@ -196,47 +205,84 @@ class PrintView(QWidget):
         )
 
     def set_cards(self, cards: list[Card]) -> None:
+        # Update the card list synchronously (print and id capture read it), but
+        # debounce the heavy web reload so a burst of changes reloads once.
         self._cards = list(cards)
+        self._schedule_reload()
+
+    def _schedule_reload(self) -> None:
+        """Restart the debounce timer; a burst of changes collapses into one
+        reload once they settle."""
+        self._render_timer.start()
+
+    def _reload_preview(self) -> None:
         self.view.setHtml(self._render())
 
+    def _flush_pending_reload(self) -> None:
+        """Run any pending debounced reload now (e.g. just before printing, so
+        the print job renders the latest selection)."""
+        if self._render_timer.isActive():
+            self._render_timer.stop()
+            self._reload_preview()
+
     def _on_back_offset_changed(self, _value: float) -> None:
-        # The offset only shows in print, so the on-screen preview is unchanged,
-        # but re-render so the next Print uses the new value.
-        self.view.setHtml(self._render())
+        # The offset only shows in print (a CSS transform on the back sheet), so
+        # update the live CSS variables in place rather than reloading the whole
+        # preview. The print job reads the current CSSOM, so the next Print picks
+        # up the new value with no re-render.
+        self.view.page().runJavaScript(self._back_offset_js())
+
+    def _back_offset_js(self) -> str:
+        dx = _fmt_mm(self.back_offset_x())
+        dy = _fmt_mm(-self.back_offset())
+        return (
+            f"document.documentElement.style.setProperty('--back-dx', '{dx}mm');"
+            f"document.documentElement.style.setProperty('--back-dy', '{dy}mm');"
+        )
 
     def _on_load_finished(self, ok: bool) -> None:
         if not ok:
             return
-        page = self.view.page()
-        page.runJavaScript(self._borders_js(self.show_borders()))
-        page.runJavaScript(self._cut_lines_js(self.print_cut_lines()))
-        # Fit the examples first: it decides what each tile ends up holding, and
-        # the overflow flag has to describe the tile as it will actually print.
-        page.runJavaScript(self._FIT_EXAMPLES_JS)
-        page.runJavaScript(self._OVERFLOW_JS)
+        # One script, one IPC round-trip. Set the on-screen toggles, then fit the
+        # examples to each tile and flag any that still overflow. Fit must run
+        # before overflow so the flag describes the tile as it will actually
+        # print.
+        script = (
+            self._borders_js(self.show_borders())
+            + self._cut_lines_js(self.print_cut_lines())
+            + self._FIT_EXAMPLES_JS
+            + self._OVERFLOW_JS
+        )
+        self.view.page().runJavaScript(script)
+
+    def _body_class_js(self, name: str, on: bool) -> str:
+        action = "add" if on else "remove"
+        return f"document.body.classList.{action}('{name}');"
 
     def _borders_js(self, on: bool) -> str:
-        action = "add" if on else "remove"
-        return f"document.body.classList.{action}('show-borders');"
+        return self._body_class_js("show-borders", on)
 
     def _on_borders_toggled(self, checked: bool) -> None:
         self.view.page().runJavaScript(self._borders_js(checked))
 
     def _cut_lines_js(self, on: bool) -> str:
-        action = "add" if on else "remove"
-        return f"document.body.classList.{action}('print-cut-lines');"
+        return self._body_class_js("print-cut-lines", on)
 
     def _on_cut_lines_toggled(self, checked: bool) -> None:
         self.view.page().runJavaScript(self._cut_lines_js(checked))
 
     def _on_blank_headwords_toggled(self, _checked: bool) -> None:
         # This changes the rendered text (blank vs token), not just a CSS class,
-        # so re-render the preview. What is shown is what prints.
-        self.view.setHtml(self._render())
+        # so rebuild the preview (debounced like any other content change). What
+        # is shown is what prints.
+        self._schedule_reload()
 
     def print_cards(self) -> None:
         from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 
+        # The print job renders the currently loaded page, so make sure any
+        # debounced reload has run before we hand it to the printer.
+        self._flush_pending_reload()
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         dialog = QPrintDialog(printer, self)
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:

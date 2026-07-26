@@ -166,15 +166,14 @@ def _fmt_mm(value: float) -> str:
 
 def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
     star_css = ".star { position: absolute; top: 3mm; right: 3mm; }" if has_starred else ""
-    # Shift the back sheet by the configured duplex nudge: positive vertical moves
-    # it up (negative Y), positive horizontal moves it right (positive X). Emit a
-    # transform only when at least one axis is non-zero.
-    if page.back_offset_mm or page.back_offset_x_mm:
-        dx = _fmt_mm(page.back_offset_x_mm)
-        dy = _fmt_mm(-page.back_offset_mm)
-        back_transform = f" transform: translate({dx}mm, {dy}mm);"
-    else:
-        back_transform = ""
+    # The back sheet's duplex registration nudge is carried by two CSS variables
+    # so the print preview can update it live (see PrintView._back_offset_js)
+    # without rebuilding the whole document. --back-dx shifts the back right
+    # (positive X); --back-dy shifts it up when the setting is positive, so the
+    # vertical value is negated here. The print-only transform below consumes
+    # them, and a 0mm value is a harmless no-op translate.
+    dx = _fmt_mm(page.back_offset_x_mm)
+    dy = _fmt_mm(-page.back_offset_mm)
     return f"""
 /* The @page margin is left at 0 and the page margin is applied as padding on a
    full-page sheet box in the print block below. Relying on the @page margin put
@@ -183,6 +182,7 @@ def _styles(page: PageSpec, cols: int, has_starred: bool = False) -> str:
    onto the next page. A full-page sheet with internal padding is exact. */
 @page {{ size: {int(page.paper_w_mm)}mm {int(page.paper_h_mm)}mm; margin: 0; }}
 * {{ box-sizing: border-box; }}
+:root {{ --back-dx: {dx}mm; --back-dy: {dy}mm; }}
 html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 .sheet {{
   display: grid;
@@ -235,9 +235,10 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      grid has to be right-aligned to land on top of the flipped front (the front
      stays left-aligned). Push the columns to the right edge; combined with the
      per-row column reversal, each back then sits exactly behind its own front.
-     The transform (when set) raises the back by the duplex nudge to cancel the
-     printer's mechanical two-sided offset. */
-  .sheet--back {{ justify-content: end;{back_transform} }}
+     The transform reads the --back-* variables (set from the page spec and
+     updated live by the preview) to raise or shift the back by the duplex nudge,
+     cancelling the printer's mechanical two-sided offset; 0mm is a no-op. */
+  .sheet--back {{ justify-content: end; transform: translate(var(--back-dx), var(--back-dy)); }}
   /* Optional cut guides between the tightly packed cards, toggled by a body
      class. Each interior line is drawn exactly once: every tile draws its top
      and left edge, the last column adds a right edge and the last row a bottom
@@ -297,9 +298,6 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 """
 
 
-_KIND_LABEL = {"front": "front", "back": "back"}
-
-
 def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool, blank_headwords: bool) -> str:
     """One sheet: a screen-only caption plus the tile grid. `first` marks the
     very first sheet in the document so print does not page-break before it."""
@@ -309,8 +307,7 @@ def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool
     )
     first_class = " sheet--first" if first else ""
     caption = (
-        f'<div class="sheet-caption">Sheet {sheet_number} '
-        f'{_KIND_LABEL.get(kind_of_sheet, kind_of_sheet)}</div>'
+        f'<div class="sheet-caption">Sheet {sheet_number} {kind_of_sheet}</div>'
     )
     return (
         f'<div class="sheet-page">{caption}'

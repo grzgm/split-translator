@@ -297,30 +297,37 @@ class RenderHtmlTests(unittest.TestCase):
         self.assertIn(f".tile:nth-last-child(-n+{cols})", print_block)
 
     def test_back_offset_shifts_the_back_sheet_up_in_print(self):
-        # A per-printer duplex registration nudge: the back sheet can be moved by
-        # a configurable number of mm so it lands on its front despite the
-        # printer's mechanical offset. It is a print-only transform on the back
-        # sheet; the default raises the back by 3mm (negative Y).
+        # A per-printer duplex registration nudge: the back sheet is moved by a
+        # configurable number of mm so it lands on its front despite the printer's
+        # mechanical offset. The offsets are carried by CSS variables so the print
+        # preview can update the nudge live without rebuilding the document; the
+        # print-only transform on the back sheet consumes them. The vertical value
+        # is negated so a positive setting raises the back (default 3mm).
         from dataclasses import replace
         html = render_html(_cards(1), replace(PAGE, back_offset_mm=3.0))
+        self.assertIn("--back-dx: 0mm", html)
+        self.assertIn("--back-dy: -3mm", html)
         print_block = html.split("@media print")[1].split("@media screen")[0]
-        self.assertIn("translate(0mm, -3mm)", print_block)
-        # Zero offset on both axes draws no transform (nothing to compensate).
+        self.assertIn(
+            "transform: translate(var(--back-dx), var(--back-dy))", print_block
+        )
+        # Zero offset on both axes just sets the variables to 0mm (a no-op
+        # translate); the rule stays put and the preview can update it live.
         zero = render_html(
             _cards(1), replace(PAGE, back_offset_mm=0.0, back_offset_x_mm=0.0)
         )
-        zero_print = zero.split("@media print")[1].split("@media screen")[0]
-        self.assertNotIn("translate", zero_print)
+        self.assertIn("--back-dx: 0mm", zero)
+        self.assertIn("--back-dy: 0mm", zero)
 
     def test_back_offset_horizontal_shifts_the_back_sheet_right(self):
         # The horizontal nudge moves the back right (positive X) for printers that
-        # also drift sideways.
+        # also drift sideways; carried by the --back-dx variable.
         from dataclasses import replace
         html = render_html(
             _cards(1), replace(PAGE, back_offset_mm=0.0, back_offset_x_mm=2.0)
         )
-        print_block = html.split("@media print")[1].split("@media screen")[0]
-        self.assertIn("translate(2mm, 0mm)", print_block)
+        self.assertIn("--back-dx: 2mm", html)
+        self.assertIn("--back-dy: 0mm", html)
 
     def test_default_page_has_a_3mm_back_offset(self):
         # The shipped default compensates the known printer drift.

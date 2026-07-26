@@ -176,13 +176,28 @@ class PrintViewTests(unittest.TestCase):
         self.assertEqual(view.back_offset_x(), 0.0)
 
     def test_set_cards_uses_both_back_offsets(self):
-        # The rendered HTML must reflect the chosen back offsets, so changing a
-        # spinbox actually moves the back sheet.
+        # The rendered HTML must carry the chosen back offsets as the live CSS
+        # variables, so the printed back sheet moves. The vertical value is
+        # negated (a positive setting raises the back).
         view = PrintView()
         view.back_offset_spin.setValue(5.0)
         view.back_offset_x_spin.setValue(2.0)
         html = view._render()
-        self.assertIn("translate(2mm, -5mm)", html)
+        self.assertIn("--back-dx: 2mm", html)
+        self.assertIn("--back-dy: -5mm", html)
+
+    def test_back_offset_js_sets_the_css_variables(self):
+        # An offset change updates the print transform's CSS variables in place
+        # via JS (no full reload), which is what keeps the preview responsive.
+        view = PrintView()
+        view.back_offset_spin.setValue(4.0)
+        view.back_offset_x_spin.setValue(1.5)
+        js = view._back_offset_js()
+        self.assertIn("setProperty", js)
+        self.assertIn("--back-dx", js)
+        self.assertIn("1.5mm", js)
+        self.assertIn("--back-dy", js)
+        self.assertIn("-4mm", js)
 
 
 class BlankHeadwordsToggleTests(unittest.TestCase):
