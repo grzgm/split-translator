@@ -35,6 +35,35 @@ class PageSpec:
 PAGE = PageSpec()
 
 
+# The preview's on-screen markers. Every one of these colours is screen only:
+# the printed card is black on white whatever it is flagged with.
+#
+# The blue is the app's selection colour, shared with the saved-list row tint and
+# the anchor editor. The three ambers run pale to strong with how badly a card
+# needs correcting (see incompleteness); red stays reserved for the overflow
+# warning so the two never read as the same kind of problem.
+MARKER_SELECTED = "#1a73e8"
+MARKER_SELECTED_TINT = "#e8f0fe"
+MARKER_OVERFLOW = "#ff0000"
+MARKER_INCOMPLETE = {
+    "high": "#ffca28",
+    "medium": "#ffe082",
+    "low": "#fff8e1",
+}
+
+# What each marker means, as (colour, meaning), worst first. Single source of
+# truth for both the preview's CSS and the sidebar's colour key, so a colour can
+# never come to mean two different things. Mirrors LINK_TYPES, which serves the
+# editor dropdown and the graph legend the same way.
+PREVIEW_MARKERS = [
+    (MARKER_SELECTED, "Loaded in the editor"),
+    (MARKER_OVERFLOW, "Holds more than fits, so it is clipped"),
+    (MARKER_INCOMPLETE["high"], "No headword, or no own pronunciation"),
+    (MARKER_INCOMPLETE["medium"], "No usage example"),
+    (MARKER_INCOMPLETE["low"], "A sense missing its Polish or English"),
+]
+
+
 def grid_dims(page: PageSpec) -> tuple[int, int]:
     """Columns and rows that fit inside the printable area, packed tightly."""
     usable_w = page.paper_w_mm - 2 * page.margin_mm
@@ -405,9 +434,9 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      but the order says so plainly. The blue tint still shows underneath, so a
      card that is both selected and overflowing reads as both. */
   .tile--selected {{
-    outline: 2px solid #1a73e8;
+    outline: 2px solid {MARKER_SELECTED};
     outline-offset: -2px;
-    background: #e8f0fe;
+    background: {MARKER_SELECTED_TINT};
   }}
   /* A card with something missing, tinted so it is easy to pick out before any
      paper is used. The three levels run pale to strong with how badly the card
@@ -417,10 +446,13 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
      Listed after the selected rule so the tint wins the background: a card that
      is both loaded and incomplete keeps the blue selection outline over an amber
      body, and neither signal is lost. */
-  .tile--incomplete-low {{ background: #fff8e1; }}
-  .tile--incomplete-medium {{ background: #ffe082; }}
-  .tile--incomplete-high {{ background: #ffca28; }}
-  .tile.is-overflow {{ outline: 2px solid red; outline-offset: -2px; }}
+  .tile--incomplete-low {{ background: {MARKER_INCOMPLETE["low"]}; }}
+  .tile--incomplete-medium {{ background: {MARKER_INCOMPLETE["medium"]}; }}
+  .tile--incomplete-high {{ background: {MARKER_INCOMPLETE["high"]}; }}
+  .tile.is-overflow {{
+    outline: 2px solid {MARKER_OVERFLOW};
+    outline-offset: -2px;
+  }}
   body.show-borders .tile {{ border: 1px solid #000000; }}
 }}
 """

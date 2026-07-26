@@ -6,6 +6,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from split_translator.flashcard_print_choices import AUTO, MANUAL, PrintChoices
+from split_translator.flashcard_print_layout import (
+    MARKER_INCOMPLETE,
+    PREVIEW_MARKERS,
+    render_html,
+)
 from split_translator.flashcard_print_sidebar import PrintSidebar
 from split_translator.flashcards import Card, Sense
 
@@ -267,6 +272,48 @@ class SidebarMeasurementDropTests(unittest.TestCase):
         sidebar.set_card(_card(), True)
         sidebar.drop_measurement("never-measured")  # must not raise
         self.assertEqual(sidebar.ticked_pairs(), [(0, 0), (0, 1), (1, 0)])
+
+
+class SidebarLegendTests(unittest.TestCase):
+    """The preview marks a card five different ways and none of them explains
+    itself, least of all three shades of one amber. The key is built from the
+    same list the preview's CSS uses, so it cannot drift from what the sheets
+    actually show."""
+
+    def _sidebar(self):
+        sidebar = PrintSidebar(PrintChoices())
+        self.addCleanup(sidebar.deleteLater)
+        return sidebar
+
+    def test_a_row_per_marker(self):
+        sidebar = self._sidebar()
+        self.assertEqual(sidebar.legend_rows, list(PREVIEW_MARKERS))
+
+    def test_every_marker_is_explained_in_words(self):
+        sidebar = self._sidebar()
+        for _colour, meaning in sidebar.legend_rows:
+            self.assertTrue(meaning.strip())
+
+    def test_the_colours_are_the_ones_the_preview_uses(self):
+        # The point of the key is that it matches the sheets. Assert against the
+        # rendered CSS, not against a second copy of the palette.
+        sidebar = self._sidebar()
+        css = render_html([Card(headword="w", id="w")])
+        for colour, _meaning in sidebar.legend_rows:
+            self.assertIn(colour, css)
+
+    def test_the_markers_run_worst_first(self):
+        # The three ambers are a scale, so the key has to read in the same order
+        # the severity does or it teaches the wrong thing.
+        levels = [colour for colour, _meaning in PREVIEW_MARKERS]
+        self.assertLess(
+            levels.index(MARKER_INCOMPLETE["high"]),
+            levels.index(MARKER_INCOMPLETE["medium"]),
+        )
+        self.assertLess(
+            levels.index(MARKER_INCOMPLETE["medium"]),
+            levels.index(MARKER_INCOMPLETE["low"]),
+        )
 
 
 class SidebarOptionTests(unittest.TestCase):

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from .flashcard_print_choices import MANUAL, PrintChoices, auto_pairs
-from .flashcard_print_layout import PAGE
+from .flashcard_print_layout import PAGE, PREVIEW_MARKERS
 from .flashcards import Card
 
 
@@ -91,6 +92,8 @@ class PrintSidebar(QWidget):
         )
         self.reset_button.clicked.connect(self._on_reset)
         outer.addWidget(self.reset_button)
+
+        outer.addWidget(self._legend_widget())
 
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_requested)
@@ -171,6 +174,45 @@ class PrintSidebar(QWidget):
         )
         offsets.addRow("right (mm)", self.back_offset_x_spin)
         box.addLayout(offsets)
+
+        return widget
+
+    def _legend_widget(self) -> QWidget:
+        """What the preview's colours mean, one swatched row each.
+
+        The preview marks a card five different ways and none of them is
+        self-explanatory, least of all three shades of the same amber. Built from
+        PREVIEW_MARKERS rather than from its own copy of the colours, so the key
+        cannot drift from what the sheets actually show."""
+        widget = QWidget()
+        box = QVBoxLayout(widget)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(2)
+
+        heading = QLabel("Colour key")
+        heading.setStyleSheet("font-weight: bold;")
+        box.addWidget(heading)
+
+        self.legend_rows = []
+        for colour, meaning in PREVIEW_MARKERS:
+            row = QWidget()
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(6)
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            # The outline matters: the palest amber is nearly white and would
+            # otherwise be an invisible swatch on a light theme.
+            swatch.setStyleSheet(
+                f"background: {colour}; border: 1px solid #7a7f8a;"
+            )
+            label = QLabel(meaning)
+            label.setWordWrap(True)
+            label.setStyleSheet("color: #55606e;")
+            line.addWidget(swatch)
+            line.addWidget(label, stretch=1)
+            self.legend_rows.append((colour, meaning))
+            box.addWidget(row)
 
         return widget
 
