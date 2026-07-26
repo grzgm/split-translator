@@ -155,6 +155,77 @@ class ExampleTileMarkupTests(unittest.TestCase):
         self.assertNotIn("example-list", render_card_tile(card, "front"))
 
 
+class ManualExampleChoiceTests(unittest.TestCase):
+    """A hand-picked set replaces the automatic fit for that card: exactly the
+    chosen examples print, in reading order, and the list is tagged so the
+    browser's fit measurement skips it."""
+
+    def _card(self):
+        return Card(
+            headword="w", id="w",
+            senses=[
+                Sense(pos="v", examples=["a1", "a2"]),
+                Sense(pos="n", examples=["b1"]),
+            ],
+        )
+
+    def test_only_the_chosen_examples_are_emitted(self):
+        html = render_card_tile(self._card(), "front", chosen={(0, 1), (1, 0)})
+        self.assertIn(">a2<", html)
+        self.assertIn(">b1<", html)
+        self.assertNotIn(">a1<", html)
+
+    def test_chosen_examples_are_in_reading_order(self):
+        # All of sense one, then all of sense two. No interleaving is needed,
+        # because nothing will be dropped.
+        html = render_card_tile(self._card(), "front", chosen={(0, 0), (0, 1), (1, 0)})
+        self.assertLess(html.index(">a1<"), html.index(">a2<"))
+        self.assertLess(html.index(">a2<"), html.index(">b1<"))
+
+    def test_the_list_is_tagged_so_the_fit_skips_it(self):
+        html = render_card_tile(self._card(), "front", chosen={(0, 0)})
+        self.assertIn('data-fit="manual"', html)
+
+    def test_an_untouched_card_is_not_tagged(self):
+        html = render_card_tile(self._card(), "front")
+        self.assertNotIn("data-fit", html)
+
+    def test_an_empty_chosen_set_prints_no_examples(self):
+        # A deliberate "no examples on this card", distinct from auto mode.
+        html = render_card_tile(self._card(), "front", chosen=set())
+        self.assertNotIn("example-list", html)
+        self.assertNotIn(">a1<", html)
+
+    def test_chosen_examples_are_still_escaped(self):
+        card = Card(
+            headword="w", id="w",
+            senses=[Sense(pos="v", examples=["a <b> & c"])],
+        )
+        html = render_card_tile(card, "front", chosen={(0, 0)})
+        self.assertIn("a &lt;b&gt; &amp; c", html)
+        self.assertNotIn("<b>", html)
+
+    def test_render_html_applies_the_choice_to_the_named_card_only(self):
+        chosen = Card(
+            headword="chosen", id="pick",
+            senses=[Sense(pos="v", examples=["keep me", "drop me"])],
+        )
+        untouched = Card(
+            headword="untouched", id="auto",
+            senses=[Sense(pos="v", examples=["both", "of these"])],
+        )
+        html = render_html([chosen, untouched], choices={"pick": {(0, 0)}})
+        self.assertIn("keep me", html)
+        self.assertNotIn("drop me", html)
+        # The card absent from the map still emits everything, as before.
+        self.assertIn("both", html)
+        self.assertIn("of these", html)
+
+    def test_render_html_without_choices_is_unchanged(self):
+        card = self._card()
+        self.assertEqual(render_html([card]), render_html([card], choices={}))
+
+
 class GridDimsTests(unittest.TestCase):
     def test_a4_8mm_is_two_by_four(self):
         self.assertEqual(grid_dims(PAGE), (2, 4))

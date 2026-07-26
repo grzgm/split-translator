@@ -49,9 +49,13 @@ class PrintView(QWidget):
     #
     # Reordering cannot change the total height (same boxes, same widths), so the
     # set that fitted still fits after it is regrouped.
+    #
+    # A list the user hand-picked carries data-fit="manual" and is skipped
+    # entirely: the chosen set is what prints, even when it overruns the tile.
+    # _OVERFLOW_JS still runs over it, so an overrun is flagged in red.
     _FIT_EXAMPLES_JS = """
 (function () {
-  var lists = document.querySelectorAll('.tile--front .example-list');
+  var lists = document.querySelectorAll('.tile--front .example-list:not([data-fit="manual"])');
   for (var i = 0; i < lists.length; i++) {
     var list = lists[i];
     var tile = list.closest('.tile');
@@ -94,6 +98,7 @@ class PrintView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cards: list[Card] = []
+        self._choices: dict = {}
         self._printing_ids: list[str] = []
 
         outer = QVBoxLayout(self)
@@ -202,12 +207,20 @@ class PrintView(QWidget):
             self._cards,
             page,
             blank_headwords=self.blank_headwords_checkbox.isChecked(),
+            choices=self._choices,
         )
 
     def set_cards(self, cards: list[Card]) -> None:
         # Update the card list synchronously (print and id capture read it), but
         # debounce the heavy web reload so a burst of changes reloads once.
         self._cards = list(cards)
+        self._schedule_reload()
+
+    def set_choices(self, choices: dict) -> None:
+        """Replace the hand-picked example sets, keyed by card id. This changes
+        the rendered text, so it needs a reload (debounced like any other
+        content change)."""
+        self._choices = dict(choices)
         self._schedule_reload()
 
     def _schedule_reload(self) -> None:

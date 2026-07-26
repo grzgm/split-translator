@@ -199,6 +199,26 @@ class PrintViewTests(unittest.TestCase):
         self.assertIn("--back-dy", js)
         self.assertIn("-4mm", js)
 
+    def test_set_choices_reaches_the_rendered_html(self):
+        # A hand-picked set has to survive into the document the preview loads
+        # and the printer prints, not just live in the sidebar.
+        view = PrintView()
+        card = Card(
+            headword="w", id="w",
+            senses=[Sense(pos="v", examples=["keep me", "drop me"])],
+        )
+        view.set_cards([card])
+        view.set_choices({"w": {(0, 0)}})
+        html = view._render()
+        self.assertIn("keep me", html)
+        self.assertNotIn("drop me", html)
+
+    def test_fit_js_skips_a_hand_picked_list(self):
+        # The fit measurement must leave a manual card alone, or it would trim
+        # the set the user explicitly asked for.
+        view = PrintView()
+        self.assertIn(':not([data-fit="manual"])', view._FIT_EXAMPLES_JS)
+
 
 class BlankHeadwordsToggleTests(unittest.TestCase):
     def _view(self):

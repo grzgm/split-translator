@@ -121,9 +121,19 @@ def example_sense_order(card: Card) -> list[tuple[int, int, str]]:
     return order
 
 
-def render_card_tile(card: Card, side: str, blank_headwords: bool = True) -> str:
+def render_card_tile(
+    card: Card,
+    side: str,
+    blank_headwords: bool = True,
+    chosen: set | None = None,
+) -> str:
     """Inner HTML of one tile. side is 'front' or 'back'. When blank_headwords is
-    true, each REDACTION_TOKEN in an English definition renders as a blank."""
+    true, each REDACTION_TOKEN in an English definition renders as a blank.
+
+    chosen is a set of (sense index, example index) pairs when the user has
+    hand-picked this card's examples, or None to leave the card to the browser's
+    fit measurement. None and an empty set differ: an empty set is a deliberate
+    "print no examples"."""
     if card is None:
         return '<div class="tile tile--empty"></div>'
     if side == "front":
@@ -132,19 +142,32 @@ def render_card_tile(card: Card, side: str, blank_headwords: bool = True) -> str
             f'<div class="own-notation">{_esc(card.own_notation)}</div>'
             if card.own_notation else ""
         )
-        # Emitted in fill order, not reading order, and tagged with the sense and
-        # the position it came from: the view drops what does not fit and then
-        # puts the survivors back into sense order, and reports the survivors
-        # back to Python by those two indices. See example_fill_order.
+        # Auto mode emits every example in fill order, not reading order, and
+        # tagged with the sense and position it came from: the view drops what
+        # does not fit, puts the survivors back into sense order, and reports
+        # them back to Python by those two indices. See example_fill_order.
+        #
+        # A hand-picked set instead emits exactly the chosen examples in reading
+        # order (nothing will be dropped, so there is nothing to interleave for)
+        # and marks the list so the fit skips it.
+        if chosen is None:
+            fill = example_fill_order(card)
+            fit_attr = ""
+        else:
+            fill = [
+                (sense_index, example_index, text)
+                for sense_index, example_index, text in example_sense_order(card)
+                if (sense_index, example_index) in chosen
+            ]
+            fit_attr = ' data-fit="manual"'
         examples = ""
-        fill = example_fill_order(card)
         if fill:
             items = "".join(
                 f'<div class="example" data-sense="{sense_index}"'
                 f' data-example="{example_index}">{_esc(text)}</div>'
                 for sense_index, example_index, text in fill
             )
-            examples = f'<div class="example-list">{items}</div>'
+            examples = f'<div class="example-list"{fit_attr}>{items}</div>'
         return (
             f'<div class="tile tile--front" data-card-id="{_esc(card.id)}">'
             f'{star}'
@@ -316,11 +339,25 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
 """
 
 
-def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool, blank_headwords: bool) -> str:
+def _sheet_block(
+    sheet: dict,
+    kind_of_sheet: str,
+    sheet_number: int,
+    first: bool,
+    blank_headwords: bool,
+    choices: dict,
+) -> str:
     """One sheet: a screen-only caption plus the tile grid. `first` marks the
-    very first sheet in the document so print does not page-break before it."""
+    very first sheet in the document so print does not page-break before it.
+    `choices` maps a card id to its hand-picked example set; a card absent from
+    it is left to the browser's fit."""
     tiles = "".join(
-        render_card_tile(cell, kind_of_sheet, blank_headwords)
+        render_card_tile(
+            cell,
+            kind_of_sheet,
+            blank_headwords,
+            choices.get(cell.id) if cell is not None else None,
+        )
         for cell in sheet["cells"]
     )
     first_class = " sheet--first" if first else ""
@@ -334,7 +371,13 @@ def _sheet_block(sheet: dict, kind_of_sheet: str, sheet_number: int, first: bool
     )
 
 
-def render_html(cards: list[Card], page: PageSpec = PAGE, blank_headwords: bool = True) -> str:
+def render_html(
+    cards: list[Card],
+    page: PageSpec = PAGE,
+    blank_headwords: bool = True,
+    choices: dict | None = None,
+) -> str:
+    choices = choices or {}
     cols, _rows = grid_dims(page)
     sheets = paginate(cards, page)
     # paginate emits sheets as consecutive front, back, front, back, ... pairs.
@@ -348,7 +391,12 @@ def render_html(cards: list[Card], page: PageSpec = PAGE, blank_headwords: bool 
         for offset, sheet in enumerate(pair):
             is_first_sheet = pair_index == 0 and offset == 0
             blocks += _sheet_block(
-                sheet, sheet["kind"], sheet_number, is_first_sheet, blank_headwords
+                sheet,
+                sheet["kind"],
+                sheet_number,
+                is_first_sheet,
+                blank_headwords,
+                choices,
             )
         body += f'<div class="sheet-pair">{blocks}</div>'
     has_starred = any(card is not None and card.starred for card in cards)
