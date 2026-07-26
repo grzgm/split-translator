@@ -321,5 +321,56 @@ class TileClickTests(unittest.TestCase):
         self.assertNotIn("__CHANNEL_JS__", js)
 
 
+class ScrollPreservationTests(unittest.TestCase):
+    """setHtml replaces the document, so every reload would otherwise jump the
+    preview back to the first sheet. Ticking an example on a card halfway down a
+    long print run has to leave that card where it was.
+
+    The capture itself needs a live page with real content to scroll, so what is
+    pinned here is the plumbing: the position is recorded on reload and written
+    back by the per-load script."""
+
+    def test_a_fresh_view_starts_at_the_top(self):
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        self.assertEqual(view._pending_scroll, (0.0, 0.0))
+
+    def test_the_restore_script_scrolls_to_the_pending_position(self):
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view._pending_scroll = (0.0, 840.0)
+        self.assertIn("window.scrollTo(0, 840)", view._restore_scroll_js())
+
+    def test_a_fractional_position_is_rounded_to_whole_pixels(self):
+        # scrollPosition reports floats; a fractional offset would be rounded by
+        # the browser anyway, so it must not reach the page as "840.7".
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view._pending_scroll = (12.4, 840.7)
+        self.assertIn("window.scrollTo(12, 841)", view._restore_scroll_js())
+
+    def test_the_load_script_restores_after_the_fit_and_before_the_return(self):
+        # After the fit, so a layout change cannot undo it; before the return,
+        # or it would replace the fit measurement as the script's value.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        script = view._load_script()
+        self.assertIn("window.scrollTo", script)
+        self.assertLess(script.index("__stFit"), script.index("window.scrollTo"))
+        self.assertLess(
+            script.index("window.scrollTo"), script.index("JSON.stringify")
+        )
+
+    def test_reloading_records_the_current_position(self):
+        # The offscreen page has nothing to scroll, so this pins that the reload
+        # reads the live position rather than leaving a stale one behind.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        view._pending_scroll = (99.0, 99.0)
+        view.set_cards([Card(headword="alpha", id="a")])
+        view._reload_preview()
+        self.assertEqual(view._pending_scroll, (0.0, 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()

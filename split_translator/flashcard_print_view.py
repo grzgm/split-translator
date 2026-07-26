@@ -175,6 +175,11 @@ class PrintView(QWidget):
         self._channel.registerObject("printTileBridge", self._bridge)
         self.view.page().setWebChannel(self._channel)
 
+        # Where the preview was scrolled to when the last reload started, so the
+        # reloaded page can be put back there (see _reload_preview). Starts at
+        # the top, which is where a fresh page loads anyway.
+        self._pending_scroll = (0.0, 0.0)
+
         # Coalesce rapid preview rebuilds (a burst of selection ticks, a content
         # change) into a single reload. Without this each tick reloads the whole
         # web view, which is the bulk of the perceived lag. A short window is
@@ -258,6 +263,15 @@ class PrintView(QWidget):
         self._render_timer.start()
 
     def _reload_preview(self) -> None:
+        # setHtml replaces the document, which drops the scroll position back to
+        # the first sheet. Remember where the view was so the load can put it
+        # back: ticking an example on a card halfway down a long print run
+        # should leave that card where it was, not throw the preview to the top.
+        # Restoring is unconditional, so it also covers a content change or a
+        # toggle that reloads. A position past the end of a now-shorter document
+        # is clamped by the browser, which is the sane landing spot anyway.
+        point = self.view.page().scrollPosition()
+        self._pending_scroll = (point.x(), point.y())
         self.view.setHtml(self._render())
 
     def _flush_pending_reload(self) -> None:
@@ -275,15 +289,24 @@ class PrintView(QWidget):
             f"document.documentElement.style.setProperty('--back-dy', '{dy}mm');"
         )
 
+    def _restore_scroll_js(self) -> str:
+        """Put the preview back where it was before the reload that just
+        finished. Whole pixels, because a fractional scroll offset would be
+        rounded by the browser anyway."""
+        x, y = self._pending_scroll
+        return f"window.scrollTo({x:.0f}, {y:.0f});"
+
     def _load_script(self) -> str:
         """The one script run after each load. Sets the on-screen toggles, fits
-        the examples to each tile, flags any that still overflow, and returns
-        the fit measurement.
+        the examples to each tile, flags any that still overflow, restores the
+        scroll position, and returns the fit measurement.
 
-        Order matters: the fit must run before the overflow flagging, so the
-        flag describes the tile as it will actually print. The blocks stay
-        separate IIFEs and hand the measurement over on window.__stFit, which is
-        why the outer wrapper can return it without any of them sharing scope.
+        Order matters twice. The fit must run before the overflow flagging, so
+        the flag describes the tile as it will actually print. The scroll is
+        restored last, once the DOM has settled, so it cannot be undone by a
+        later layout change. The blocks stay separate IIFEs and hand the
+        measurement over on window.__stFit, which is why the outer wrapper can
+        return it without any of them sharing scope.
 
         The return value must be a string: a bare JS object arrives in the
         Python callback as an empty string (see dictionary_panel._GRAB_JS)."""
@@ -293,6 +316,7 @@ class PrintView(QWidget):
             + self._cut_lines_js(self.print_cut_lines())
             + self._FIT_EXAMPLES_JS
             + self._OVERFLOW_JS
+            + self._restore_scroll_js()
             + "return JSON.stringify(window.__stFit || {});"
             + "})();"
         )
