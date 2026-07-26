@@ -443,6 +443,86 @@ class BodySwapTests(unittest.TestCase):
         self.assertNotIn("<style>", script)
 
 
+class SelectedTileTests(unittest.TestCase):
+    """The card loaded in the editor is marked in the preview too, so the saved
+    list, the editor, the sidebar and the sheets all point at one card. It is a
+    class toggle rather than a re-render, and it has to survive the reloads and
+    body swaps that replace the tiles it sits on."""
+
+    def _view(self):
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        return view
+
+    def test_nothing_is_marked_to_begin_with(self):
+        self.assertIsNone(self._view()._selected_card_id)
+
+    def test_setting_a_card_records_it(self):
+        view = self._view()
+        view.set_selected_card("c")
+        self.assertEqual(view._selected_card_id, "c")
+
+    def test_clearing_with_none_records_nothing(self):
+        view = self._view()
+        view.set_selected_card("c")
+        view.set_selected_card(None)
+        self.assertIsNone(view._selected_card_id)
+
+    def test_an_empty_id_clears_rather_than_marking_nothing(self):
+        # An empty string would build a selector matching no tile, which happens
+        # to work, but storing it as None keeps "nothing selected" one value.
+        view = self._view()
+        view.set_selected_card("c")
+        view.set_selected_card("")
+        self.assertIsNone(view._selected_card_id)
+
+    def test_the_script_clears_any_previous_mark_first(self):
+        # Loading another card must unmark the old one, or every card ever
+        # loaded would stay highlighted.
+        view = self._view()
+        view.set_selected_card("c")
+        js = view._selected_js()
+        self.assertIn("classList.remove('tile--selected')", js)
+        self.assertLess(
+            js.index("classList.remove"), js.index("classList.add")
+        )
+
+    def test_the_script_marks_the_card_by_id(self):
+        view = self._view()
+        view.set_selected_card("c")
+        js = view._selected_js()
+        self.assertIn('var id = "c";', js)
+        self.assertIn("data-card-id", js)
+        self.assertIn("classList.add('tile--selected')", js)
+
+    def test_the_id_is_embedded_as_a_json_literal(self):
+        view = self._view()
+        view.set_selected_card('we"ird\\id')
+        js = view._selected_js()
+        marker = "var id = "
+        start = js.index(marker) + len(marker)
+        decoded, _end = json.JSONDecoder().raw_decode(js, start)
+        self.assertEqual(decoded, 'we"ird\\id')
+
+    def test_marking_nothing_leaves_the_script_a_plain_clear(self):
+        view = self._view()
+        js = view._selected_js()
+        self.assertIn('var id = "";', js)
+        self.assertIn("classList.remove('tile--selected')", js)
+
+    def test_the_mark_is_reapplied_after_a_reload(self):
+        # A reload builds fresh tiles, so the class has to go back on.
+        view = self._view()
+        view.set_selected_card("c")
+        self.assertIn("tile--selected", view._load_script())
+
+    def test_the_mark_is_reapplied_after_a_body_swap(self):
+        # A body swap replaces the tiles the class was sitting on.
+        view = self._view()
+        view.set_selected_card("c")
+        self.assertIn("tile--selected", view._body_swap_script())
+
+
 class ScrollPreservationTests(unittest.TestCase):
     """setHtml replaces the document, so every reload would otherwise jump the
     preview back to the first sheet. Ticking an example on a card halfway down a
@@ -479,8 +559,10 @@ class ScrollPreservationTests(unittest.TestCase):
         script = view._load_script()
         self.assertIn("window.scrollTo", script)
         self.assertLess(script.index("__stFit"), script.index("window.scrollTo"))
+        # Anchor on the script's own return, not on any JSON.stringify: other
+        # blocks in the script use that call too.
         self.assertLess(
-            script.index("window.scrollTo"), script.index("JSON.stringify")
+            script.index("window.scrollTo"), script.index("return JSON.stringify")
         )
 
     def test_reloading_records_the_current_position(self):

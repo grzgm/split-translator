@@ -145,11 +145,36 @@ class PrintView(QWidget):
 })();
 """
 
+    # Marks the card loaded in the editor, on both its front and its back tile.
+    # Toggled in place rather than rendered in, so loading a card costs a class
+    # change instead of a re-render. Re-applied after every reload and body swap,
+    # since those replace the tiles the class was sitting on. __CARD_ID__ is
+    # replaced with a JSON string literal; an empty one just clears the mark.
+    _SELECTED_JS = """
+(function () {
+  var previous = document.querySelectorAll('.tile--selected');
+  for (var i = 0; i < previous.length; i++) {
+    previous[i].classList.remove('tile--selected');
+  }
+  var id = __CARD_ID__;
+  if (!id) { return; }
+  var tiles = document.querySelectorAll(
+    '.tile[data-card-id=' + JSON.stringify(id) + ']'
+  );
+  for (var i = 0; i < tiles.length; i++) {
+    tiles[i].classList.add('tile--selected');
+  }
+})();
+"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cards: list[Card] = []
         self._choices: dict = {}
         self._printing_ids: list[str] = []
+        # The card loaded in the editor, marked in the preview so it is obvious
+        # which card the editor and the sidebar are showing. None marks nothing.
+        self._selected_card_id: str | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -323,6 +348,17 @@ class PrintView(QWidget):
         x, y = self._pending_scroll
         return f"window.scrollTo({x:.0f}, {y:.0f});"
 
+    def set_selected_card(self, card_id: str | None) -> None:
+        """Mark this card in the preview, or clear the mark with None. A class
+        toggle, so it needs no re-render."""
+        self._selected_card_id = card_id or None
+        self.view.page().runJavaScript(self._selected_js())
+
+    def _selected_js(self) -> str:
+        return self._SELECTED_JS.replace(
+            "__CARD_ID__", json.dumps(self._selected_card_id or "")
+        )
+
     def _measure_js(self) -> str:
         """Fit the examples to each tile, then flag any that still overflow.
 
@@ -354,6 +390,7 @@ class PrintView(QWidget):
             "var x = window.scrollX, y = window.scrollY;"
             f"document.body.innerHTML = {body};"
             + self._measure_js()
+            + self._selected_js()
             + "window.scrollTo(x, y);"
             + "return JSON.stringify(window.__stFit || {});"
             "})();"
@@ -376,6 +413,7 @@ class PrintView(QWidget):
             + self._borders_js(self.show_borders())
             + self._cut_lines_js(self.print_cut_lines())
             + self._measure_js()
+            + self._selected_js()
             + self._restore_scroll_js()
             + "return JSON.stringify(window.__stFit || {});"
             + "})();"

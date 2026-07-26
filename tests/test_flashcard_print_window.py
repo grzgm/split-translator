@@ -168,6 +168,23 @@ class SidebarWiringTests(unittest.TestCase):
         win.print_view.card_clicked.emit("nobody")  # must not raise
         self.assertIsNone(win.panel.state.loaded_card_id)
 
+    def test_loading_a_card_marks_it_in_the_preview(self):
+        # The saved list, the editor, the sidebar and the sheets must all point
+        # at one card, or it is unclear which card is being worked on.
+        win, store = self._window()
+        win.panel.load_card(store.cards[0])
+        self.assertEqual(win.print_view._selected_card_id, "c")
+
+    def test_clearing_the_editor_clears_the_preview_mark(self):
+        win, store = self._window()
+        win.panel.load_card(store.cards[0])
+        win.panel.clear_editor()
+        self.assertIsNone(win.print_view._selected_card_id)
+
+    def test_nothing_is_marked_before_a_card_is_loaded(self):
+        win, _store = self._window()
+        self.assertIsNone(win.print_view._selected_card_id)
+
     def test_the_view_starts_in_step_with_the_sidebar(self):
         # The anti-drift push in __init__ exists so these two never disagree
         # about what the view is showing before anything has been touched.

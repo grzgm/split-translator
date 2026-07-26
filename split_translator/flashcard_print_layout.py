@@ -278,7 +278,12 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
     break-before: page;
   }}
   .sheet--first {{ break-before: auto; }}
+  /* Both markers are screen-only aids, so neither reaches paper. Their rules
+     live in the screen block below and so do not apply here at all; these are
+     the same belt and braces the overflow outline has always carried, because a
+     printed card tinted blue would waste a sheet. */
   .tile.is-overflow {{ outline: none; }}
+  .tile.tile--selected {{ outline: none; background: transparent; }}
   /* The card grid is narrower than the printable width, so it sits at the left
      margin. A long-edge duplex flip mirrors the page left-to-right, so the back
      grid has to be right-aligned to land on top of the flipped front (the front
@@ -344,6 +349,22 @@ html, body {{ margin: 0; padding: 0; background: #ffffff; color: #000000; }}
   /* A tile is a click target in the preview (clicking one loads that card),
      so it reads as one. Screen only: the printed card is not clickable. */
   .tile[data-card-id] {{ cursor: pointer; }}
+  /* The card currently loaded in the editor, marked on both its front and its
+     back so it is obvious which card the sidebar and the editor are showing.
+     Same blue as the saved-list row tint and the anchor editor's selection, so
+     one selection colour runs through the app. An outline rather than a border
+     keeps the tile at its exact size, matching the overflow marker.
+
+     Deliberately listed before the overflow rule: a clipped card is a warning
+     and must keep its red outline even while selected. That falls out of
+     specificity too (.tile.is-overflow carries two classes to this rule's one),
+     but the order says so plainly. The blue tint still shows underneath, so a
+     card that is both selected and overflowing reads as both. */
+  .tile--selected {{
+    outline: 2px solid #1a73e8;
+    outline-offset: -2px;
+    background: #e8f0fe;
+  }}
   .tile.is-overflow {{ outline: 2px solid red; outline-offset: -2px; }}
   body.show-borders .tile {{ border: 1px solid #000000; }}
 }}

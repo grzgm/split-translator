@@ -469,6 +469,40 @@ class RenderHtmlTests(unittest.TestCase):
         # out of the printed output.
         self.assertIn(".sheet-caption { display: none; }", html)
 
+    def test_the_selected_card_is_marked_on_screen_only(self):
+        # The loaded card is tinted and outlined in the preview so it is obvious
+        # which card the editor and sidebar are showing. It is an on-screen aid:
+        # a printed card tinted blue would waste a sheet.
+        html = render_html(_cards(1))
+        screen_block = html.split("@media screen")[1]
+        print_block = html.split("@media print")[1].split("@media screen")[0]
+        self.assertIn("tile--selected", screen_block)
+        self.assertIn("#1a73e8", screen_block)
+        self.assertIn("#e8f0fe", screen_block)
+        self.assertNotIn("#1a73e8", print_block)
+        self.assertNotIn("#e8f0fe", print_block)
+
+    def test_a_clipped_card_keeps_its_red_outline_while_selected(self):
+        # Overflow is a warning and outranks the selection marker, which still
+        # shows through as the background tint.
+        # Match the rule declarations, not bare selector text: the explanatory
+        # comment above them names both selectors too.
+        html = render_html(_cards(1))
+        screen_block = html.split("@media screen")[1]
+        self.assertLess(
+            screen_block.index(".tile--selected {"),
+            screen_block.index(".tile.is-overflow {"),
+        )
+
+    def test_the_selection_marker_does_not_resize_the_card(self):
+        # An outline is drawn over the tile; a border would inset its content and
+        # change the exact physical card size.
+        html = render_html(_cards(1))
+        screen_block = html.split("@media screen")[1]
+        selected_rule = screen_block.split(".tile--selected")[1].split("}")[0]
+        self.assertIn("outline", selected_rule)
+        self.assertNotIn("border", selected_rule)
+
     def test_tiles_look_clickable_on_screen_only(self):
         # The tile is a click target in the preview (clicking one loads that
         # card), so it gets a pointer cursor. That is screen presentation and

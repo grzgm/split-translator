@@ -99,6 +99,9 @@ class FlashcardPrintWindow(QWidget):
         card = self._loaded_card()
         in_selection = card is not None and card.id in set(self.panel.selected_ids())
         self.sidebar.set_card(card, in_selection)
+        # Mark the same card in the preview, so the saved list, the editor, the
+        # sidebar and the sheets all point at one card.
+        self.print_view.set_selected_card(card.id if card is not None else None)
 
     def _on_choice_changed(self, _card_id: str) -> None:
         self.print_view.set_choices(self.choices.as_render_map())
