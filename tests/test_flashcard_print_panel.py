@@ -36,6 +36,13 @@ class FlashcardPrintPanelTests(unittest.TestCase):
                 return it
         raise AssertionError(f"no row for {card_id}")
 
+    def test_toggle_printed_button_emits_signal(self):
+        panel, _ = self._panel()
+        seen = []
+        panel.toggle_printed_requested.connect(lambda: seen.append(True))
+        panel.toggle_printed_button.click()
+        self.assertEqual(seen, [True])
+
     def test_no_selection_is_empty(self):
         panel, _ = self._panel()
         self.assertEqual(panel.selected_cards(), [])

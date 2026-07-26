@@ -29,7 +29,6 @@ class PrintView(QWidget):
     """Preview + Print button + Show cut borders (screen) and Print cut lines
     (print) toggles."""
 
-    toggle_printed_requested = Signal()
     cards_printed = Signal(list)
 
     # Fits each front tile's examples to the tile, then puts the survivors back
@@ -142,12 +141,6 @@ class PrintView(QWidget):
             "printed output, not the preview."
         )
         self.back_offset_x_spin.valueChanged.connect(self._on_back_offset_changed)
-        self.toggle_printed_button = QPushButton("Toggle printed")
-        self.toggle_printed_button.setToolTip(
-            "Flip the printed flag on the currently selected cards. If they are "
-            "all printed, this clears them; otherwise it marks them all printed."
-        )
-        self.toggle_printed_button.clicked.connect(self.toggle_printed_requested)
         self.print_button = QPushButton("Print")
         self.print_button.clicked.connect(self.print_cards)
         controls.addWidget(self.borders_checkbox)
@@ -156,7 +149,6 @@ class PrintView(QWidget):
         controls.addWidget(self.back_offset_spin)
         controls.addWidget(back_offset_x_label)
         controls.addWidget(self.back_offset_x_spin)
-        controls.addWidget(self.toggle_printed_button)
         controls.addStretch()
         controls.addWidget(self.print_button)
         outer.addLayout(controls)

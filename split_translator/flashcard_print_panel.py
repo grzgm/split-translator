@@ -3,6 +3,7 @@ checkboxes choose which cards to print. No dictionary/search wiring (the Print
 window never connects those signals) and no card linking."""
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidgetItem,
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .flashcard_editor_base import FlashcardEditorBase
+from .flashcard_editor_base import FlashcardEditorBase, _printer_pixmap
 from .flashcards import Card
 
 
@@ -31,6 +32,7 @@ class FlashcardPrintPanel(FlashcardEditorBase):
     """
 
     selection_changed = Signal()
+    toggle_printed_requested = Signal()
 
     def __init__(self, store, parent=None):
         # Initialised before super().__init__ because the base constructor calls
@@ -96,15 +98,25 @@ class FlashcardPrintPanel(FlashcardEditorBase):
         return True
 
     def _saved_controls_widget(self) -> QWidget:
-        # An "Unselect all" button under the saved list, to empty the print
-        # selection in one click.
+        # Under the saved list: an "Unselect all" button to empty the print
+        # selection, and a compact icon button to flip the printed flag on the
+        # currently selected cards.
         widget = QWidget()
         row = QHBoxLayout(widget)
         row.setContentsMargins(0, 0, 0, 0)
         self.unselect_all_button = QPushButton("Unselect all")
         self.unselect_all_button.setToolTip("Untick every card (clear the print selection)")
         self.unselect_all_button.clicked.connect(self.clear_selection)
+        self.toggle_printed_button = QPushButton()
+        self.toggle_printed_button.setIcon(QIcon(_printer_pixmap(18, "#4a90d9")))
+        self.toggle_printed_button.setMaximumWidth(32)
+        self.toggle_printed_button.setToolTip(
+            "Flip the printed flag on the currently selected cards. If they are "
+            "all printed, this clears them; otherwise it marks them all printed."
+        )
+        self.toggle_printed_button.clicked.connect(self.toggle_printed_requested)
         row.addWidget(self.unselect_all_button)
+        row.addWidget(self.toggle_printed_button)
         row.addStretch()
         return widget
 

@@ -184,13 +184,6 @@ class PrintViewTests(unittest.TestCase):
         html = view._render()
         self.assertIn("translate(2mm, -5mm)", html)
 
-    def test_toggle_printed_button_emits_signal(self):
-        view = PrintView()
-        seen = []
-        view.toggle_printed_requested.connect(lambda: seen.append(True))
-        view.toggle_printed_button.click()
-        self.assertEqual(seen, [True])
-
 
 if __name__ == "__main__":
     unittest.main()
