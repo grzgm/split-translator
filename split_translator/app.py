@@ -1,13 +1,17 @@
 """Application bootstrap: configures Qt, builds the web profile and runs the main window."""
 
-import os
-
-# Force software rendering to avoid GPU/EGL context errors. Must be set before any Qt
-# WebEngine import initialises the GPU process.
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
-
-# Uncomment to open http://localhost:9222 for QWebEngineView dev tools.
-# os.environ.setdefault("QTWEBENGINE_REMOTE_DEBUGGING", "9222")
+# The web engine used to be pinned to software rendering here (a "--disable-gpu"
+# Chromium flag) to dodge GPU/EGL context errors. That made every web view paint
+# and scroll on the CPU, which left the print preview visibly laggy to scroll, so
+# the flag is gone and the GPU is used again.
+#
+# If a machine does hit GPU trouble (blank or black web panes, EGL errors), force
+# software rendering from the shell for that run, without changing the code:
+#     QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu .venv/bin/python -m split_translator
+# Qt reads that variable itself, so nothing here needs to set it.
+#
+# For QWebEngineView dev tools, launch with QTWEBENGINE_REMOTE_DEBUGGING=9222 set
+# and open http://localhost:9222
 
 import sys
 
