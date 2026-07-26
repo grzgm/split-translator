@@ -139,6 +139,8 @@ def render_card_tile(card: Card, side: str, blank_headwords: bool = True) -> str
         pos = f'<div class="part-of-speech">{_esc(sense.pos)}</div>' if sense.pos else '<div class="part-of-speech"></div>'
         english = _esc(sense.english)
         if blank_headwords:
+            # Safe only because REDACTION_TOKEN has no HTML-special characters:
+            # _esc leaves it intact, so this replace still matches the token.
             english = english.replace(REDACTION_TOKEN, _BLANK_HTML)
         meanings = (
             f'<div class="meanings">'
