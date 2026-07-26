@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QPageSize
 from PySide6.QtPrintSupport import QPrinter
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog, QRadioButton, QTabWidget
 
 from split_translator.flashcard_print_layout import PAGE
 from split_translator.flashcard_print_view import PrintView
@@ -115,10 +115,12 @@ class PdfExportRoutingTests(unittest.TestCase):
         self.addCleanup(view.deleteLater)
         shown = []
 
-        class _RejectingDialog:
-            DialogCode = print_support.QPrintDialog.DialogCode
-
-            def __init__(self, printer, _parent):
+        # A real QDialog, so the Options-tab step meets a dialog with none of
+        # the widgets it looks for, exactly as it would on a platform with a
+        # native print dialog.
+        class _RejectingDialog(QDialog):
+            def __init__(self, printer, parent):
+                super().__init__(parent)
                 shown.append(printer)
 
             def exec(self):
@@ -133,6 +135,41 @@ class PdfExportRoutingTests(unittest.TestCase):
 
         self.assertEqual(len(shown), 1)
         self.assertEqual(shown[0].duplex(), QPrinter.DuplexMode.DuplexLongSide)
+
+    def test_the_dialog_opens_on_the_two_sided_setting(self):
+        # Qt builds the dialog collapsed and on its Copies tab, which puts the
+        # long-edge default this window sets two clicks out of sight.
+        #
+        # The dialog is never shown here: a QPrintDialog segfaults under the
+        # offscreen platform once the web engine is loaded, so what is asserted
+        # is the state it would be shown in. The two assertions before the call
+        # pin what Qt builds, so this cannot quietly pass on a future Qt that
+        # already opens where it should.
+        from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        dialog = QPrintDialog(QPrinter(), None)
+        self.addCleanup(dialog.deleteLater)
+        tabs = dialog.findChild(QTabWidget)
+        duplex = dialog.findChild(QRadioButton, "duplexLong")
+        self.assertIsNotNone(duplex, "Qt's dialog no longer has a duplex radio")
+        self.assertFalse(tabs.isVisibleTo(dialog))
+        self.assertFalse(tabs.widget(tabs.currentIndex()).isAncestorOf(duplex))
+
+        view._open_on_options_tab(dialog)
+
+        self.assertTrue(tabs.isVisibleTo(dialog))
+        self.assertTrue(tabs.widget(tabs.currentIndex()).isAncestorOf(duplex))
+
+    def test_a_dialog_without_those_widgets_is_left_alone(self):
+        # A native print dialog has none of the widgets this hunts for. It must
+        # come out untouched rather than raising or clicking something else.
+        view = PrintView()
+        self.addCleanup(view.deleteLater)
+        dialog = QDialog()
+        self.addCleanup(dialog.deleteLater)
+        view._open_on_options_tab(dialog)  # must not raise
 
     def test_captured_ids_emit_on_successful_completion(self):
         view = PrintView()

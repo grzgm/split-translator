@@ -14,7 +14,13 @@ from dataclasses import replace
 from PySide6.QtCore import QFile, QIODevice, QMarginsF, QTimer, Signal
 from PySide6.QtGui import QPageLayout
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialogButtonBox,
+    QRadioButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .flashcard_print_layout import PAGE, render_body, render_html, _fmt_mm
@@ -485,6 +491,36 @@ class PrintView(QWidget):
         printer.setDuplex(QPrinter.DuplexMode.DuplexLongSide)
         return printer
 
+    def _open_on_options_tab(self, dialog) -> None:
+        """Expand the dialog's collapsed half and land it on its Options tab,
+        which is where the two-sided setting lives.
+
+        Qt opens the dialog collapsed on Copies, so the long-edge duplex default
+        set above sits two clicks out of sight and has to be taken on trust.
+        Nothing public opens it, so the collapse toggle is found by its button
+        role (it is the only Reset-role button in the dialog's box, so this does
+        not read the button's wording and survives translation) and the tab by
+        the one holding the duplex radios.
+
+        Every lookup has to succeed before anything is clicked. A platform whose
+        print dialog is the native one has none of these widgets, and there the
+        dialog is left exactly as Qt built it. Qt builds it collapsed, so the one
+        click expands it; if that ever changed the click would collapse it and
+        the dialog would open the way it does today."""
+        tabs = dialog.findChild(QTabWidget)
+        duplex = dialog.findChild(QRadioButton, "duplexLong")
+        buttons = dialog.findChild(QDialogButtonBox)
+        if tabs is None or duplex is None or buttons is None:
+            return
+        for button in buttons.buttons():
+            if buttons.buttonRole(button) == QDialogButtonBox.ButtonRole.ResetRole:
+                button.click()
+                break
+        for index in range(tabs.count()):
+            if tabs.widget(index).isAncestorOf(duplex):
+                tabs.setCurrentIndex(index)
+                return
+
     def print_cards(self) -> None:
         from PySide6.QtPrintSupport import QPrintDialog
 
@@ -493,6 +529,7 @@ class PrintView(QWidget):
         self._flush_pending_reload()
         printer = self._new_printer()
         dialog = QPrintDialog(printer, self)
+        self._open_on_options_tab(dialog)
         if dialog.exec() != QPrintDialog.DialogCode.Accepted:
             return
         self._send_to(printer)
