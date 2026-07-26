@@ -358,5 +358,37 @@ class FlashcardPrintPanelTests(unittest.TestCase):
         self.assertTrue(any(c.headword == "delta" for c in store.cards))
 
 
+class LoadedCardChangedTests(unittest.TestCase):
+    """One signal for the window to hang the sidebar refresh on. It has to fire
+    for a clear as well as a load, or clearing the editor would leave the
+    sidebar showing a card that is no longer loaded."""
+
+    def _panel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [Card(headword="cat", id="c")]
+        panel = FlashcardPrintPanel(store)
+        self.addCleanup(panel.deleteLater)
+        panel._refresh_saved_list()
+        return panel, store
+
+    def test_loading_a_card_announces_it(self):
+        panel, store = self._panel()
+        seen = []
+        panel.loaded_card_changed.connect(lambda: seen.append(True))
+        panel.load_card(store.cards[0])
+        self.assertTrue(seen)
+
+    def test_clearing_the_editor_announces_it(self):
+        panel, store = self._panel()
+        panel.load_card(store.cards[0])
+        seen = []
+        panel.loaded_card_changed.connect(lambda: seen.append(True))
+        panel.clear_editor()
+        self.assertTrue(seen)
+
+
 if __name__ == "__main__":
     unittest.main()

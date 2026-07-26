@@ -33,6 +33,10 @@ class FlashcardPrintPanel(FlashcardEditorBase):
 
     selection_changed = Signal()
     toggle_printed_requested = Signal()
+    # The card loaded in the editor may have changed. Hung off the saved-list
+    # refresh hook, which the base class runs after a load, a clear, a save and
+    # an external store change alike, so one signal covers every route.
+    loaded_card_changed = Signal()
 
     def __init__(self, store, parent=None):
         # Initialised before super().__init__ because the base constructor calls
@@ -96,6 +100,9 @@ class FlashcardPrintPanel(FlashcardEditorBase):
 
     def _loaded_row_is_checkable(self) -> bool:
         return True
+
+    def _on_saved_list_refreshed(self) -> None:
+        self.loaded_card_changed.emit()
 
     def _saved_controls_widget(self) -> QWidget:
         # Under the saved list: an "Unselect all" button to empty the print

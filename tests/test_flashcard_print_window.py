@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from split_translator.flashcard_print_window import FlashcardPrintWindow
-from split_translator.flashcards import Card, FlashcardStore
+from split_translator.flashcards import Card, FlashcardStore, Sense
 
 app = QApplication.instance() or QApplication([])
 
@@ -95,6 +95,52 @@ class TogglePrintedResolutionTests(unittest.TestCase):
         window, store = self._window()  # "a" unprinted, "b" printed
         window.print_view.cards_printed.emit(["a"])
         self.assertTrue(store.cards[0].printed)
+
+
+class SidebarWiringTests(unittest.TestCase):
+    def _window(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [
+            Card(
+                headword="cat", id="c",
+                senses=[Sense(pos="v", examples=["a1", "a2"])],
+            )
+        ]
+        win = FlashcardPrintWindow(store)
+        self.addCleanup(win.deleteLater)
+        win.panel._refresh_saved_list()
+        return win, store
+
+    def test_loading_a_card_shows_it_in_the_sidebar(self):
+        win, store = self._window()
+        win.panel.load_card(store.cards[0])
+        self.assertEqual(win.sidebar.card_id(), "c")
+
+    def test_clearing_the_editor_empties_the_sidebar(self):
+        win, store = self._window()
+        win.panel.load_card(store.cards[0])
+        win.panel.clear_editor()
+        self.assertIsNone(win.sidebar.card_id())
+
+    def test_a_choice_reaches_the_preview(self):
+        win, store = self._window()
+        win.panel.load_card(store.cards[0])
+        win.sidebar._boxes[(0, 1)].setChecked(False)
+        self.assertEqual(win.print_view._choices, {"c": {(0, 0)}})
+
+    def test_editing_a_card_drops_its_hand_picked_set(self):
+        win, store = self._window()
+        win.choices.set_manual(store.cards[0], [(0, 0)])
+        edited = Card(
+            headword="cat", id="c",
+            senses=[Sense(pos="v", examples=["a1 reworded", "a2"])],
+        )
+        store.update_card(edited)
+        self.assertEqual(win.choices.mode_of("c"), "auto")
+        self.assertEqual(win.print_view._choices, {})
 
 
 if __name__ == "__main__":
