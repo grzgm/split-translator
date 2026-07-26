@@ -259,13 +259,17 @@ class PrintView(QWidget):
         self._blank_headwords = bool(on)
         self._schedule_reload()
 
-    def set_back_offsets(self, up_mm: float, right_mm: float) -> None:
+    def set_back_offsets(self, up_mm: float, left_mm: float) -> None:
         # The offset only shows in print (a CSS transform on the back sheet), so
         # update the live CSS variables in place rather than reloading the whole
         # preview. The print job reads the current CSSOM, so the next Print picks
         # up the new value with no re-render.
+        #
+        # left_mm is left as seen from the front of the sheet, which is right on
+        # the back's own page, so it goes to the +X variable unchanged. See
+        # PrintSidebar.back_offset_x.
         self._back_offset_mm = float(up_mm)
-        self._back_offset_x_mm = float(right_mm)
+        self._back_offset_x_mm = float(left_mm)
         self.view.page().runJavaScript(self._back_offset_js())
 
     def _page_spec(self):

@@ -26,7 +26,10 @@ class PageSpec:
     # Duplex registration nudge: how many mm to shift the back sheet so it lands
     # on its front despite the printer's mechanical two-sided offset. back_offset_mm
     # is the vertical nudge (positive moves the back up); back_offset_x_mm is the
-    # horizontal nudge (positive moves the back right). Vertical defaults to 3mm to
+    # horizontal nudge (positive moves the back right on the back's own page).
+    # Up reads the same from either side of the paper, but left and right do not:
+    # the long-edge flip swaps them, so the sidebar labels this axis "left", which
+    # is the same direction seen from the front. Vertical defaults to 3mm to
     # compensate the known printer drift; 0 on either axis applies no shift there.
     back_offset_mm: float = 3.0
     back_offset_x_mm: float = 0.0
@@ -301,9 +304,10 @@ def _styles(page: PageSpec, cols: int) -> str:
     star_css = ".star { position: absolute; top: 3mm; right: 3mm; }"
     # The back sheet's duplex registration nudge is carried by two CSS variables
     # so the print preview can update it live (see PrintView._back_offset_js)
-    # without rebuilding the whole document. --back-dx shifts the back right
-    # (positive X); --back-dy shifts it up when the setting is positive, so the
-    # vertical value is negated here. The print-only transform below consumes
+    # without rebuilding the whole document. --back-dx shifts the back right on
+    # the back's own page, which is left as seen from the front and is how the
+    # sidebar labels it; --back-dy shifts it up when the setting is positive, so
+    # the vertical value is negated here. The print-only transform below consumes
     # them, and a 0mm value is a harmless no-op translate.
     dx = _fmt_mm(page.back_offset_x_mm)
     dy = _fmt_mm(-page.back_offset_mm)

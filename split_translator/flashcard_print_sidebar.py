@@ -163,6 +163,19 @@ class PrintSidebar(QWidget):
         offsets_heading.setStyleSheet("color: #55606e; margin-top: 4px;")
         box.addWidget(offsets_heading)
 
+        # Which way is "left" depends on which side of the paper you are looking
+        # at, and the answer has to be the side the registration is judged from:
+        # the front, holding the sheet up to the light. The back shows through
+        # mirrored from there, so the horizontal row is labelled by what that
+        # view does, not by what the back's own page does. See back_offset_x.
+        offsets_note = QLabel(
+            "Directions are as seen from the front: hold the sheet up to the "
+            "light and nudge the back until it lines up."
+        )
+        offsets_note.setWordWrap(True)
+        offsets_note.setStyleSheet("color: #7a7f8a; font-size: 11px;")
+        box.addWidget(offsets_note)
+
         offsets = QFormLayout()
         self.back_offset_spin = QDoubleSpinBox()
         self.back_offset_spin.setRange(-15.0, 15.0)
@@ -183,14 +196,14 @@ class PrintSidebar(QWidget):
         self.back_offset_x_spin.setSingleStep(0.5)
         self.back_offset_x_spin.setValue(PAGE.back_offset_x_mm)
         self.back_offset_x_spin.setToolTip(
-            "Shift the printed back side right by this many mm (compensates the "
-            "printer's horizontal two-sided registration). Only affects the "
-            "printed output, not the preview."
+            "Shift the printed back side left by this many mm as seen from the "
+            "front of the sheet (compensates the printer's horizontal two-sided "
+            "registration). Only affects the printed output, not the preview."
         )
         self.back_offset_x_spin.valueChanged.connect(
             lambda _value: self.back_offset_changed.emit()
         )
-        offsets.addRow("right (mm)", self.back_offset_x_spin)
+        offsets.addRow("left (mm)", self.back_offset_x_spin)
         box.addLayout(offsets)
 
         return widget
@@ -259,6 +272,16 @@ class PrintSidebar(QWidget):
         return self.back_offset_spin.value()
 
     def back_offset_x(self) -> float:
+        """The horizontal back nudge in mm, positive meaning left as seen from
+        the front of the sheet.
+
+        The sign is not flipped anywhere on the way to the page, because those
+        are two names for one direction. The long-edge flip turns the paper
+        about its vertical centre, so the back's own left and right swap over
+        when you look at the sheet from the front; the value that moves the back
+        grid right on the back's own page is exactly the value that moves it
+        left in the only view that matters, the one you check registration in.
+        Which is also why the back grid is right-aligned to begin with."""
         return self.back_offset_x_spin.value()
 
     # --- reads ----------------------------------------------------------

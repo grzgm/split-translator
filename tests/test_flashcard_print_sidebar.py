@@ -1,5 +1,6 @@
 import os
 import unittest
+from dataclasses import replace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -403,6 +404,33 @@ class SidebarOptionTests(unittest.TestCase):
         self.assertEqual(len(headings), 1)
         self.assertIn("back", headings[0].lower())
         self.assertNotIn("front", headings[0].lower())
+
+    def test_the_horizontal_offset_is_labelled_from_the_front(self):
+        # Left and right swap over between the two sides of the paper, so the
+        # label is only meaningful with a stated viewpoint. It has to be the
+        # front: that is the side you look at when you hold the sheet up to the
+        # light to see whether the back lines up. Calling it "right" described
+        # the back's own page, the side nobody judges the alignment from.
+        sidebar = self._sidebar()
+        labels = [w.text().lower() for w in sidebar.findChildren(QLabel)]
+        rows = [text for text in labels if "(mm)" in text]
+        self.assertIn("left (mm)", rows)
+        self.assertNotIn("right (mm)", rows)
+        self.assertTrue(
+            any("from the front" in text for text in labels),
+            "the viewpoint the label depends on is not stated anywhere",
+        )
+
+    def test_the_horizontal_offset_still_moves_the_back_the_same_way(self):
+        # Renaming the axis must not have negated it on the way to the page. A
+        # long-edge flip mirrors the sheet, so the value that moves the back
+        # right on its own page is the one that moves it left seen from the
+        # front: the same number, two names, no sign flip.
+        sidebar = self._sidebar()
+        sidebar.back_offset_x_spin.setValue(2.0)
+        self.assertEqual(sidebar.back_offset_x(), 2.0)
+        page = replace(PAGE, back_offset_mm=0.0, back_offset_x_mm=2.0)
+        self.assertIn("--back-dx: 2mm", render_html([], page))
 
     def test_each_offset_tooltip_names_the_printed_back_side(self):
         # The tooltip is the other place the question gets answered, so it must
