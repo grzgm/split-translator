@@ -500,6 +500,7 @@ class FlashcardEditorBase(QWidget):
 
     _PRINTED_ROLE = Qt.ItemDataRole.UserRole + 1
     _STARRED_ROLE = Qt.ItemDataRole.UserRole + 2
+    _TAGS_ROLE = Qt.ItemDataRole.UserRole + 3
 
     def __init__(self, store: FlashcardStore, parent=None):
         super().__init__(parent)
@@ -731,7 +732,7 @@ class FlashcardEditorBase(QWidget):
         saved_layout.setContentsMargins(0, 0, 0, 0)
         saved_layout.addWidget(QLabel("Saved cards"))
         self.saved_filter = QLineEdit()
-        self.saved_filter.setPlaceholderText("Filter saved cards")
+        self.saved_filter.setPlaceholderText("Filter by headword or tag")
         self.saved_filter.setClearButtonEnabled(True)
         self.saved_filter.textChanged.connect(self._apply_saved_filter)
         saved_layout.addWidget(self.saved_filter)
@@ -1286,6 +1287,13 @@ class FlashcardEditorBase(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, card.id)
                 item.setData(self._PRINTED_ROLE, bool(card.printed))
                 item.setData(self._STARRED_ROLE, bool(card.starred))
+                # The filter box matches tags, but the row label stays the
+                # headword alone, so the tooltip is what explains why a
+                # tag-filtered row is on show. Joined once here rather than per
+                # keystroke; stored tags are already lowercase.
+                item.setData(self._TAGS_ROLE, " ".join(card.tags))
+                if card.tags:
+                    item.setToolTip(", ".join(card.tags))
                 if card.id == self.state.loaded_card_id:
                     loaded_row = index
                     item.setIcon(self._loaded_marker_icon())
@@ -1342,7 +1350,12 @@ class FlashcardEditorBase(QWidget):
         needle = self.saved_filter.text().strip().lower()
         for i in range(self.saved_list.count()):
             item = self.saved_list.item(i)
-            item.setHidden(bool(needle) and needle not in item.text().lower())
+            tags = item.data(self._TAGS_ROLE) or ""
+            item.setHidden(
+                bool(needle)
+                and needle not in item.text().lower()
+                and needle not in tags
+            )
 
     def _on_saved_clicked(self, item):
         if self._checkbox_click:

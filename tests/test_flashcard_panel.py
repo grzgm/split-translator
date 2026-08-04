@@ -528,6 +528,40 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.autofill_book_example("She saw the dog run.", "book:dracula")
         self.assertEqual(panel.tags_input.text(), "book:dracula, noun")
 
+    def _two_tagged_cards(self):
+        panel, store = self._panel()
+        store.cards = [
+            Card(headword="address", id="id-a", tags=["book:dracula", "noun"]),
+            Card(headword="dog", id="id-d"),
+        ]
+        panel._refresh_saved_list()
+        return panel
+
+    def test_filter_matches_a_tag(self):
+        panel = self._two_tagged_cards()
+        panel.saved_filter.setText("dracula")
+        self.assertFalse(panel.saved_list.item(0).isHidden())
+        self.assertTrue(panel.saved_list.item(1).isHidden())
+
+    def test_filter_matches_the_book_prefix(self):
+        panel = self._two_tagged_cards()
+        panel.saved_filter.setText("book:")
+        self.assertFalse(panel.saved_list.item(0).isHidden())
+        self.assertTrue(panel.saved_list.item(1).isHidden())
+
+    def test_filter_still_matches_a_headword(self):
+        panel = self._two_tagged_cards()
+        panel.saved_filter.setText("dog")
+        self.assertTrue(panel.saved_list.item(0).isHidden())
+        self.assertFalse(panel.saved_list.item(1).isHidden())
+
+    def test_tagged_rows_carry_their_tags_as_a_tooltip(self):
+        panel = self._two_tagged_cards()
+        self.assertEqual(
+            panel.saved_list.item(0).toolTip(), "book:dracula, noun"
+        )
+        self.assertEqual(panel.saved_list.item(1).toolTip(), "")
+
     # --- printed flag vs. content edits ---------------------------------
 
     def _loaded_printed_card(self):
