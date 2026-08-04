@@ -8,10 +8,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-# Cards file schema. v3 dropped the embedded "links" array: links now live in
-# their own file (see LINKS_SCHEMA_VERSION). load_cards ignores the version
-# field, so an older v2 file (cards and links together) still loads its cards.
-SCHEMA_VERSION = 3
+from .flashcard_tags import parse_tag_list
+
+# Cards file schema. v4 added the per-card "tags" array; v3 dropped the embedded
+# "links" array (links live in their own file now, see LINKS_SCHEMA_VERSION).
+# load_cards ignores the version field, so there is no migration code at all: an
+# older file simply loads with no tags and is rewritten in the current shape on
+# the next save.
+SCHEMA_VERSION = 4
 LINKS_SCHEMA_VERSION = 1
 
 # The links file lives beside the cards file under this name when the store is
@@ -87,6 +91,7 @@ class Card:
     senses: list[Sense] = field(default_factory=list)
     starred: bool = False
     printed: bool = False
+    tags: list[str] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 
@@ -104,6 +109,7 @@ class Card:
             "senses": [s.to_dict() for s in self.senses],
             "starred": self.starred,
             "printed": self.printed,
+            "tags": list(self.tags),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -123,6 +129,7 @@ class Card:
             senses=[Sense.from_dict(s) for s in data.get("senses", [])],
             starred=bool(data.get("starred", False)),
             printed=bool(data.get("printed", False)),
+            tags=parse_tag_list(data.get("tags", [])),
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
         )

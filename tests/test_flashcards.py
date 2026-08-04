@@ -80,6 +80,29 @@ class CardTests(unittest.TestCase):
         card = Card.from_dict({"headword": "dog"})
         self.assertFalse(card.printed)
 
+    def test_round_trip_preserves_tags(self):
+        card = Card(headword="address", tags=["book:dracula", "noun"])
+        restored = Card.from_dict(card.to_dict())
+        self.assertEqual(restored.tags, ["book:dracula", "noun"])
+        self.assertEqual(restored, card)
+
+    def test_tags_default_to_an_empty_list(self):
+        self.assertEqual(Card(headword="dog").tags, [])
+        self.assertEqual(Card.from_dict({"headword": "dog"}).tags, [])
+
+    def test_from_dict_cleans_and_dedupes_tags(self):
+        card = Card.from_dict(
+            {"headword": "dog", "tags": [" Gothic ", "gothic", None]}
+        )
+        self.assertEqual(card.tags, ["gothic"])
+
+    def test_from_dict_tolerates_a_malformed_tags_value(self):
+        card = Card.from_dict({"headword": "dog", "tags": "gothic"})
+        self.assertEqual(card.tags, [])
+
+    def test_serialise_reports_schema_version_4(self):
+        self.assertEqual(serialise_cards([])["version"], 4)
+
 
 class StorageTests(unittest.TestCase):
     def test_load_missing_returns_empty(self):
@@ -108,7 +131,7 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(loaded[0].senses[0].polish, "adres")
 
     def test_serialise_has_version(self):
-        self.assertEqual(serialise_cards([])["version"], 3)
+        self.assertEqual(serialise_cards([])["version"], 4)
 
 
 class StoreUpdateTests(unittest.TestCase):

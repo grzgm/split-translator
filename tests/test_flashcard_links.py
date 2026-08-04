@@ -54,8 +54,8 @@ class LinkStorageTests(unittest.TestCase):
     def test_serialise_cards_omits_links(self):
         cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
         data = serialise_cards(cards)
-        self.assertEqual(data["version"], 3)
-        self.assertEqual(SCHEMA_VERSION, 3)
+        self.assertEqual(data["version"], 4)
+        self.assertEqual(SCHEMA_VERSION, 4)
         self.assertNotIn("links", data)
 
     def test_serialise_links_has_own_version(self):
