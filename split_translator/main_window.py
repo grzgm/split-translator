@@ -389,6 +389,10 @@ class TranslationTool(QMainWindow):
         if self.flashcard_dock.isVisible():
             self.flashcard_dock.hide()
             return
+        # Open it docked, re-docking it if it was left floating, so Ctrl+Shift+F
+        # brings the editor back where it starts and where Ctrl+N puts it. Alt+D
+        # and the title bar's float button are how it gets detached again.
+        self.flashcard_dock.setFloating(False)
         self.flashcard_dock.show()
         # Grab the already-loaded page now; the panel ignores it unless the
         # editor is empty. (A still-loading page also fires the auto-grab on
