@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from .flashcard_editor_state import EditorState
+from .flashcard_tags import format_tags, parse_tags
 from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
 
 # A light-blue border shown on a fillable field while it is still empty, so it is
@@ -661,11 +662,19 @@ class FlashcardEditorBase(QWidget):
         self.own_notation_input = QLineEdit()
         form.addRow("Own notation", self.own_notation_input)
 
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("comma separated")
+        self.tags_input.setToolTip(
+            "Free-form labels, comma separated. The book a card's example came "
+            "from is recorded here automatically."
+        )
+        form.addRow("Tags", self.tags_input)
+
         # Mark every fillable card field while empty; keep the marker in sync and
         # route genuine user typing into an edit handler. The headword and the
         # own notation are printed on the card, so editing them also clears the
-        # printed flag; the spellings and the IPA never reach paper, so they only
-        # mark the card altered.
+        # printed flag; the spellings, the IPA and the tags never reach paper, so
+        # they only mark the card altered.
         for field, on_edit in (
             (self.headword_input, self._on_printed_content_edit),
             (self.spelling_uk_input, self._on_user_edit),
@@ -673,6 +682,7 @@ class FlashcardEditorBase(QWidget):
             (self.ipa_uk_input, self._on_user_edit),
             (self.ipa_us_input, self._on_user_edit),
             (self.own_notation_input, self._on_printed_content_edit),
+            (self.tags_input, self._on_user_edit),
         ):
             field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
             field.textChanged.connect(on_edit)
@@ -1042,6 +1052,7 @@ class FlashcardEditorBase(QWidget):
             senses=senses,
             starred=self.is_starred(),
             printed=self.is_printed(),
+            tags=parse_tags(self.tags_input.text()),
             created_at=self.state.loaded_created_at or now,
             updated_at=now,
         )
@@ -1179,6 +1190,7 @@ class FlashcardEditorBase(QWidget):
                 self.ipa_uk_input,
                 self.ipa_us_input,
                 self.own_notation_input,
+                self.tags_input,
             ):
                 widget.clear()
             self._audio_uk_url = None
@@ -1401,6 +1413,7 @@ class FlashcardEditorBase(QWidget):
             _fill(self.ipa_uk_input, card.ipa_uk or "")
             _fill(self.ipa_us_input, card.ipa_us or "")
             _fill(self.own_notation_input, card.own_notation or "")
+            _fill(self.tags_input, format_tags(card.tags))
             self._audio_uk_url = card.audio_uk_url
             self._audio_us_url = card.audio_us_url
             self._update_play_buttons()

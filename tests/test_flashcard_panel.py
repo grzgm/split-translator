@@ -430,6 +430,47 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.build_card().printed)
         store.shutdown()
 
+    # --- tags -----------------------------------------------------------
+
+    def test_typed_tags_are_saved_as_a_cleaned_list(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("address")
+        panel.tags_input.setText("Gothic, ,  gothic , phrasal verb")
+        panel.save_card()
+        self.assertEqual(store.cards[0].tags, ["gothic", "phrasal verb"])
+
+    def test_no_tags_typed_saves_an_empty_list(self):
+        panel, store = self._panel()
+        panel.headword_input.setText("address")
+        panel.save_card()
+        self.assertEqual(store.cards[0].tags, [])
+
+    def test_loading_a_card_fills_the_tags_field(self):
+        panel, store = self._panel()
+        store.cards = [
+            Card(headword="address", id="id-addr", tags=["book:dracula", "noun"])
+        ]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertEqual(panel.tags_input.text(), "book:dracula, noun")
+        # Loading is a programmatic fill, so it leaves the card unaltered.
+        self.assertFalse(panel.state.altered)
+
+    def test_clear_empties_the_tags_field(self):
+        panel, _ = self._panel()
+        panel.tags_input.setText("gothic")
+        panel.ctrl_held = lambda: True  # skip the discard prompt
+        panel.clear_editor()
+        self.assertEqual(panel.tags_input.text(), "")
+
+    def test_editing_tags_marks_altered_but_keeps_the_printed_flag(self):
+        # Tags never reach paper, so unlike the headword they do not make the
+        # card due a reprint.
+        panel, _ = self._loaded_printed_card()
+        panel.tags_input.setText("gothic")
+        self.assertTrue(panel.state.altered)
+        self.assertTrue(panel.is_printed())
+
     # --- printed flag vs. content edits ---------------------------------
 
     def _loaded_printed_card(self):
