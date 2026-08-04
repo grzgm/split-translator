@@ -12,6 +12,7 @@ class EditorStateTests(unittest.TestCase):
         self.assertIsNone(state.loaded_card_id)
         self.assertIsNone(state.loaded_created_at)
         self.assertFalse(state.altered)
+        self.assertFalse(state.printed_flag_altered)
 
     def test_to_editing_sets_ids_and_stays_unaltered(self):
         state = EditorState()
@@ -39,3 +40,20 @@ class EditorStateTests(unittest.TestCase):
         self.assertFalse(state.altered)
         state.mark_altered()
         self.assertTrue(state.altered)
+
+    def test_mark_printed_flag_altered_sets_flag(self):
+        state = EditorState()
+        self.assertFalse(state.printed_flag_altered)
+        state.mark_printed_flag_altered()
+        self.assertTrue(state.printed_flag_altered)
+
+    def test_load_clear_and_save_reset_printed_flag_altered(self):
+        # Both entry points are a fresh baseline for the printed flag, the same
+        # way they are for altered: the next content edit may clear it again.
+        state = EditorState()
+        state.mark_printed_flag_altered()
+        state.to_editing("id-1", "t")
+        self.assertFalse(state.printed_flag_altered)
+        state.mark_printed_flag_altered()
+        state.to_new()
+        self.assertFalse(state.printed_flag_altered)

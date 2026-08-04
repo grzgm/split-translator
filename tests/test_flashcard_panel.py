@@ -430,6 +430,93 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.build_card().printed)
         store.shutdown()
 
+    # --- printed flag vs. content edits ---------------------------------
+
+    def _loaded_printed_card(self):
+        """A saved, printed card loaded into the editor, exactly as clicking it
+        in the saved list leaves things: printed on, unaltered, and the flag not
+        set by hand this session."""
+        panel, store = self._panel()
+        store.cards = [
+            Card(
+                headword="address",
+                id="id-addr",
+                printed=True,
+                senses=[
+                    Sense(
+                        pos="noun",
+                        polish="adres",
+                        english="where someone lives",
+                        examples=["Write your address here."],
+                    )
+                ],
+            )
+        ]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertTrue(panel.is_printed())
+        self.assertFalse(panel.state.printed_flag_altered)
+        return panel, store
+
+    def test_editing_the_headword_clears_the_printed_flag(self):
+        # The card on paper stops matching the card in the editor, so it is due
+        # a reprint.
+        panel, _ = self._loaded_printed_card()
+        panel.headword_input.setText("addresses")
+        self.assertFalse(panel.is_printed())
+        self.assertTrue(panel.state.altered)
+
+    def test_editing_an_example_clears_the_printed_flag(self):
+        panel, _ = self._loaded_printed_card()
+        row = panel._rows()[0]
+        row._example_rows()[0].example_input.setText("A different sentence.")
+        self.assertFalse(panel.is_printed())
+
+    def test_starring_clears_the_printed_flag(self):
+        # The star is printed in the corner of the card front, so it is content.
+        panel, _ = self._loaded_printed_card()
+        panel.star_button.setChecked(True)
+        self.assertFalse(panel.is_printed())
+
+    def test_editing_a_field_that_is_not_printed_keeps_the_flag(self):
+        # The spellings and the IPA never reach paper, so the printed copy is
+        # still accurate.
+        panel, _ = self._loaded_printed_card()
+        panel.ipa_uk_input.setText("/@'dres/")
+        panel.spelling_us_input.setText("address")
+        self.assertTrue(panel.is_printed())
+        self.assertTrue(panel.state.altered)
+
+    def test_setting_printed_by_hand_survives_later_edits(self):
+        # Ticking the button is a deliberate "this one is printed"; carrying on
+        # editing must not undo it.
+        panel, _ = self._loaded_printed_card()
+        panel.headword_input.setText("addresses")
+        self.assertFalse(panel.is_printed())
+        panel.printed_button.setChecked(True)
+        panel.headword_input.setText("addressing")
+        self.assertTrue(panel.is_printed())
+
+    def test_programmatic_fills_leave_the_printed_flag_alone(self):
+        # A book sentence filling the first example is not the user editing the
+        # card, so it neither alters it nor clears the flag.
+        panel, _ = self._loaded_printed_card()
+        panel.autofill_book_example("A sentence from the book.")
+        self.assertTrue(panel.is_printed())
+        self.assertFalse(panel.state.altered)
+
+    def test_saving_starts_a_fresh_printed_baseline(self):
+        panel, store = self._loaded_printed_card()
+        panel.headword_input.setText("addresses")
+        panel.printed_button.setChecked(True)
+        panel.save_card()
+        self.assertTrue(panel.is_printed())
+        # Save is a new baseline, so the next content edit clears the flag
+        # again, just as it would on a freshly loaded card.
+        panel.headword_input.setText("addressing")
+        self.assertFalse(panel.is_printed())
+        store.shutdown()
+
     # --- auto-grab (autofill_pronunciation) -----------------------------
 
     def test_grab_fills_everything_when_editor_empty(self):

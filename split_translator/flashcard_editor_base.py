@@ -471,9 +471,11 @@ class FlashcardEditorBase(QWidget):
     A single EditorState answers the two questions the editor keeps asking:
     which mode (new or editing) and has the user altered the card. Every user
     edit routes through _on_user_edit (sets altered); every programmatic fill
-    runs inside _programmatic() (never sets altered). Three indicators, the
-    Save button label, the read-only Id field and the loaded-row dot, are all
-    refreshed by _apply_state_to_ui so they can never disagree.
+    runs inside _programmatic() (never sets altered). Edits to fields that are
+    printed on the card go through _on_printed_content_edit instead, which does
+    that and also clears the printed flag. Three indicators, the Save button
+    label, the read-only Id field and the loaded-row dot, are all refreshed by
+    _apply_state_to_ui so they can never disagree.
 
     Saved-list row behaviour that a subclass wants to add (for example
     tick-to-link checkboxes) is factored behind five hooks called at fixed
@@ -544,6 +546,25 @@ class FlashcardEditorBase(QWidget):
         """A genuine user edit. No-op during a programmatic fill."""
         if self._programmatic_depth == 0:
             self.state.mark_altered()
+
+    def _on_printed_content_edit(self, *_args) -> None:
+        """A user edit to something that reaches paper: the headword, the own
+        notation, the star, or any sense or example. Marks the card altered like
+        any edit, and additionally clears the printed flag, because what was
+        printed no longer matches the card and it is due a reprint.
+
+        The clear is skipped once the user has set the flag by hand for this
+        card, so a deliberate "this one is printed" survives carrying on
+        editing. It runs guarded, so the clear itself is not read back as a
+        hand-set flag. Fields that never reach paper (the spellings, the IPA,
+        the audio, the links) stay on _on_user_edit and leave the flag alone."""
+        if self._programmatic_depth:
+            return
+        self._on_user_edit()
+        if self.state.printed_flag_altered or not self.is_printed():
+            return
+        with self._programmatic():
+            self.set_printed(False)
 
     def init_ui(self):
         outer = QVBoxLayout(self)
@@ -641,17 +662,20 @@ class FlashcardEditorBase(QWidget):
         form.addRow("Own notation", self.own_notation_input)
 
         # Mark every fillable card field while empty; keep the marker in sync and
-        # route genuine user typing into _on_user_edit.
-        for field in (
-            self.headword_input,
-            self.spelling_uk_input,
-            self.spelling_us_input,
-            self.ipa_uk_input,
-            self.ipa_us_input,
-            self.own_notation_input,
+        # route genuine user typing into an edit handler. The headword and the
+        # own notation are printed on the card, so editing them also clears the
+        # printed flag; the spellings and the IPA never reach paper, so they only
+        # mark the card altered.
+        for field, on_edit in (
+            (self.headword_input, self._on_printed_content_edit),
+            (self.spelling_uk_input, self._on_user_edit),
+            (self.spelling_us_input, self._on_user_edit),
+            (self.ipa_uk_input, self._on_user_edit),
+            (self.ipa_us_input, self._on_user_edit),
+            (self.own_notation_input, self._on_printed_content_edit),
         ):
             field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
-            field.textChanged.connect(self._on_user_edit)
+            field.textChanged.connect(on_edit)
             _mark_empty(field)
 
         layout.addLayout(form)
@@ -780,7 +804,9 @@ class FlashcardEditorBase(QWidget):
         row = SenseRow()
         row.activated.connect(self.set_active_row)
         row.remove_requested.connect(self.remove_sense)
-        row.edited.connect(self._on_user_edit)
+        # Everything a sense row holds (part of speech, Polish, English,
+        # examples) is printed, so its edits clear the printed flag too.
+        row.edited.connect(self._on_printed_content_edit)
         self.senses_container.addWidget(row)
         self.set_active_row(row)
 
@@ -795,7 +821,7 @@ class FlashcardEditorBase(QWidget):
             self.set_active_row(rows[index - 1])
 
     def remove_sense(self, row):
-        self._on_user_edit()
+        self._on_printed_content_edit()
         rows = self._rows()
         if len(rows) <= 1:
             row.pos_combo.setCurrentText("")
@@ -928,7 +954,9 @@ class FlashcardEditorBase(QWidget):
     # --- star -----------------------------------------------------------
 
     def _on_star_toggled(self, checked: bool):
-        self._on_user_edit()
+        # The star is printed in the top right corner of the card front, so
+        # starring is a change to the printed content like any other.
+        self._on_printed_content_edit()
         self.star_button.setIcon(
             self._star_icon_on if checked else self._star_icon_off
         )
@@ -945,6 +973,12 @@ class FlashcardEditorBase(QWidget):
     # --- printed --------------------------------------------------------
 
     def _on_printed_toggled(self, checked: bool):
+        if self._programmatic_depth == 0:
+            # Set by hand, so editing the card afterwards does not clear it
+            # again (see _on_printed_content_edit). A guarded set (load, reset,
+            # the resync in _refresh_saved_list) is not a decision, so it does
+            # not count as by hand.
+            self.state.mark_printed_flag_altered()
         self._on_user_edit()
         self.printed_button.setIcon(
             self._printed_icon_on if checked else self._printed_icon_off
