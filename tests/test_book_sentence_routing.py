@@ -15,11 +15,14 @@ class BookSentenceRoutingTests(unittest.TestCase):
     def _carrier(self, dock_visible):
         captured = {}
         panel = SimpleNamespace(
-            autofill_book_example=lambda s: captured.setdefault("sentence", s)
+            autofill_book_example=lambda s, tag="": captured.update(
+                sentence=s, tag=tag
+            )
         )
         carrier = SimpleNamespace(
             flashcard_dock=SimpleNamespace(isVisible=lambda: dock_visible),
             flashcard_panel=panel,
+            book_tag="book:dracula",
         )
         return carrier, captured
 
@@ -36,6 +39,11 @@ class BookSentenceRoutingTests(unittest.TestCase):
         self._run(carrier, "She saw the dog run.")
         self.assertEqual(captured, {})  # autofill_book_example never called
 
+    def test_forwards_the_source_book_tag(self):
+        carrier, captured = self._carrier(dock_visible=True)
+        self._run(carrier, "She saw the dog run.")
+        self.assertEqual(captured.get("tag"), "book:dracula")
+
 
 class NewFlashcardBookExampleTests(unittest.TestCase):
     """New from word clears the editor and then pulls in both the Cambridge grab
@@ -47,7 +55,9 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
         captured = {}
         flashcard_panel = SimpleNamespace(
             new_card=lambda force=False: new_card_ok,
-            autofill_book_example=lambda s: captured.setdefault("sentence", s),
+            autofill_book_example=lambda s, tag="": captured.update(
+                sentence=s, tag=tag
+            ),
         )
         carrier = SimpleNamespace(
             flashcard_dock=SimpleNamespace(
@@ -60,6 +70,7 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
             book_panel=SimpleNamespace(
                 current_match_sentence=lambda cb: cb(book_sentence)
             ),
+            book_tag="book:dracula",
         )
         return carrier, captured
 
@@ -85,6 +96,13 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
         )
         TranslationTool.new_flashcard(carrier)
         self.assertEqual(captured, {})
+
+    def test_new_from_word_forwards_the_source_book_tag(self):
+        carrier, captured = self._carrier(
+            new_card_ok=True, book_sentence="She saw the dog run."
+        )
+        TranslationTool.new_flashcard(carrier)
+        self.assertEqual(captured.get("tag"), "book:dracula")
 
 
 class WordSearchedClearsEditorTests(unittest.TestCase):

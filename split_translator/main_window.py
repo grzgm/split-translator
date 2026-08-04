@@ -23,6 +23,7 @@ from .dictionary_panel import DictionaryPanel
 from .flashcard_panel import FlashcardPanel
 from .flashcard_graph import FlashcardGraphWindow
 from .flashcard_print_window import FlashcardPrintWindow
+from .flashcard_tags import book_tag
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
 from .book_panel import BookPanel
@@ -49,6 +50,11 @@ class TranslationTool(QMainWindow):
         flashcard_links_file = CONFIG_DIR / "flashcard_links.json"
         self.flashcard_store = FlashcardStore(flashcards_file, flashcard_links_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
+        # The tag recording which book a card's example came from. Computed once
+        # here because this window is the only component that knows the config,
+        # and passing it with each fill (rather than handing it to the panel as
+        # state) keeps the panel free of config entirely.
+        self.book_tag = book_tag(config.original_path)
         self.flashcard_graph_window = None
         self.flashcard_print_window = None
 
@@ -456,7 +462,9 @@ class TranslationTool(QMainWindow):
         # Original-only gate and hands back "" when there is no match, which
         # autofill_book_example ignores.
         self.book_panel.current_match_sentence(
-            self.flashcard_panel.autofill_book_example
+            lambda sentence: self.flashcard_panel.autofill_book_example(
+                sentence, self.book_tag
+            )
         )
 
     def capture_to_polish(self):
@@ -533,7 +541,7 @@ class TranslationTool(QMainWindow):
         # unaltered (see autofill_book_example).
         if not self.flashcard_dock.isVisible():
             return
-        self.flashcard_panel.autofill_book_example(sentence)
+        self.flashcard_panel.autofill_book_example(sentence, self.book_tag)
 
     def on_pronunciation_grabbed(self, data):
         # Fires on every Cambridge English page load. Only fill the flashcard
