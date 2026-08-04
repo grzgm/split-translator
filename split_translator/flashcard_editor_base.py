@@ -741,9 +741,14 @@ class FlashcardEditorBase(QWidget):
         self.editor_splitter.addWidget(self.editor_scroll)
         self.editor_splitter.addWidget(saved_widget)
         self.editor_splitter.setChildrenCollapsible(False)
-        self.editor_splitter.setStretchFactor(0, 0)
+        # Both panes grow with the splitter (a stretch factor of 0 would pin one
+        # of them at its starting height, which is what used to leave the editor
+        # stuck at 480px however tall the panel was and hand every extra pixel
+        # to the card list). Extra height is then shared in proportion to the
+        # sizes below, so an even start stays even at any height.
+        self.editor_splitter.setStretchFactor(0, 1)
         self.editor_splitter.setStretchFactor(1, 1)
-        self.editor_splitter.setSizes([480, 160])
+        self.editor_splitter.setSizes([320, 320])
         outer.addWidget(self.editor_splitter)
 
         self._update_play_buttons()

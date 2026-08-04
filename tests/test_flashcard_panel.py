@@ -1103,6 +1103,19 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.editor_scroll.widgetResizable())
         self.assertFalse(panel.editor_splitter.childrenCollapsible())
 
+    def test_editor_and_saved_list_share_the_height_evenly(self):
+        panel, _ = self._panel()
+        splitter = panel.editor_splitter
+        editor_size, list_size = splitter.sizes()
+        self.assertLessEqual(abs(editor_size - list_size), 1)
+        # Neither pane is pinned, which is what keeps that even split even at
+        # any height: a stretch factor of 0 held the editor at its starting
+        # height and handed every extra pixel to the card list.
+        self.assertEqual(
+            [splitter.widget(i).sizePolicy().verticalStretch() for i in (0, 1)],
+            [1, 1],
+        )
+
     def test_reset_scrolls_editor_to_top(self):
         panel, _ = self._panel()
         panel.resize(400, 250)
