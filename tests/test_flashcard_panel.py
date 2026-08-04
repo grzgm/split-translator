@@ -1144,6 +1144,17 @@ class FlashcardPanelTests(unittest.TestCase):
         # First example replaced, later examples untouched.
         self.assertEqual(row.examples(), ["replaced", "second"])
 
+    def test_set_first_example_scrolls_field_to_start(self):
+        from split_translator.flashcard_panel import SenseRow
+        row = SenseRow()
+        row.add_example("short")
+        long_text = (
+            "a very long book sentence that overflows the example field width"
+        )
+        row.set_first_example(long_text)
+        # Left showing its start like every other example, not its end.
+        self.assertEqual(row._example_rows()[0].example_input.cursorPosition(), 0)
+
     # --- autofill_book_example -----------------------------------------
     def test_book_example_fills_first_sense_first_slot_when_unaltered(self):
         panel, _ = self._panel()

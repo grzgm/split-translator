@@ -344,7 +344,10 @@ class SenseRow(QFrame):
         if not rows:
             self.add_example(text)
             return
-        rows[0].example_input.setText(text)
+        # Through _fill, like every other programmatic fill: a plain setText
+        # leaves the cursor at the end, so a sentence wider than the field shows
+        # its end and reads as right-aligned next to the examples below it.
+        _fill(rows[0].example_input, text)
 
     def _remove_example(self, row) -> None:
         self.examples_container.removeWidget(row)
