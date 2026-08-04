@@ -97,10 +97,13 @@ class TranslationTool(QMainWindow):
         self.addDockWidget(
             Qt.DockWidgetArea.RightDockWidgetArea, self.flashcard_dock
         )
-        # Open detached: float it as a separate window from the start. It stays
-        # re-dockable, so dragging it back into the main window keeps it there.
-        self.flashcard_dock.setFloating(True)
-        self.flashcard_dock.hide()
+        # On screen from the start, so the editor is there to capture into
+        # without a toggle first, and docked into the right-hand area rather
+        # than floating: the same state Ctrl+N opens it in. addDockWidget
+        # already leaves it docked, so this only has to show it. It stays
+        # detachable, through Alt+D or the title bar's float button.
+        # Ctrl+Shift+F now hides it on the first press rather than showing it.
+        self.flashcard_dock.show()
 
     def setup_menu(self):
         # A View menu reachable without keyboard shortcuts. PySide6's bundled Qt
