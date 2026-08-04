@@ -217,6 +217,27 @@ class StoreLinkTests(unittest.TestCase):
         store.shutdown()
         self.assertEqual(store.cards[0].id, "d")  # inserted at front
 
+    def test_delete_card_takes_its_links_with_it(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        store.set_links_for("c", [Link("c", "b", "related")])
+        store.delete_card("a")
+        store.shutdown()
+        # The deleted card's link is gone in memory and on disk; the link
+        # between the two survivors is untouched.
+        self.assertEqual(store.links_for("a"), [])
+        self.assertEqual([l.type for l in store.links], ["related"])
+        stored = load_links(store.links_filepath, {c.id for c in store.cards})
+        self.assertEqual([(l.a_id, l.b_id) for l in stored], [("b", "c")])
+
+    def test_delete_card_writes_links_and_cards_in_one_emit(self):
+        store = self._store()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        fired = []
+        store.cards_changed.connect(lambda: fired.append(True))
+        store.delete_card("a")
+        self.assertEqual(fired, [True])  # one write, one refresh
+
     def test_save_card_with_links_preserves_other_cards_links(self):
         store = self._store()
         store.set_links_for("c", [Link("c", "b", "related")])

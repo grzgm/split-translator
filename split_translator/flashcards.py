@@ -338,6 +338,21 @@ class FlashcardStore:
                 return True
         return False
 
+    def delete_card(self, card_id: str) -> bool:
+        """Remove the card with this id, and every link touching it, in one save.
+
+        The links go with the card rather than being left to the load-time prune,
+        so the in-memory list and the file agree the moment the card is gone.
+        Returns True when a card was actually removed, so deleting an id that is
+        no longer there does not churn disk or UI."""
+        remaining = [c for c in self.cards if c.id != card_id]
+        if len(remaining) == len(self.cards):
+            return False
+        self.cards = remaining
+        self.links = [l for l in self.links if card_id not in (l.a_id, l.b_id)]
+        self.save()
+        return True
+
     def set_printed(self, card_ids, value: bool) -> bool:
         """Set the printed flag to value on every card whose id is in card_ids.
         Does one disk write and emits cards_changed once. Returns True when at

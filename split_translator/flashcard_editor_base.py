@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QListView,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -719,6 +720,14 @@ class FlashcardEditorBase(QWidget):
         # guard so it cannot swallow the next real text click.
         self.saved_list.key_handled.connect(self._clear_checkbox_click_guard)
         self.saved_list.itemChanged.connect(self._saved_item_changed_dispatch)
+        # Right-clicking a row offers to delete that card, the way the history
+        # list does. Deleting is the one thing the list cannot otherwise do.
+        self.saved_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.saved_list.customContextMenuRequested.connect(
+            self._show_saved_context_menu
+        )
         saved_layout.addWidget(self.saved_list, stretch=1)
 
         controls = self._saved_controls_widget()
@@ -1278,6 +1287,59 @@ class FlashcardEditorBase(QWidget):
         card = next((c for c in self.store.cards if c.id == card_id), None)
         if card is not None:
             self.load_card(card)
+
+    def _show_saved_context_menu(self, position) -> None:
+        """Right-click menu for a saved-list row. Delete is the only entry:
+        loading a card and ticking it are each one click or one key press away,
+        so repeating them here would only pad the menu. A right-click on empty
+        space below the rows opens nothing."""
+        item = self.saved_list.itemAt(position)
+        if item is None:
+            return
+        menu = QMenu(self)
+        delete_action = menu.addAction("Delete")
+        action = menu.exec(self.saved_list.mapToGlobal(position))
+        if action == delete_action:
+            self.delete_saved_card(item)
+
+    def delete_saved_card(self, item) -> bool:
+        """Delete the card behind a saved-list row, after confirming. Returns
+        True when the card was removed."""
+        card_id = item.data(Qt.ItemDataRole.UserRole)
+        card = next((c for c in self.store.cards if c.id == card_id), None)
+        if card is None:
+            return False
+        if not self._confirm_delete(card):
+            return False
+        # The card is going, so whatever is in the editor for it goes too.
+        # Deliberately not through clear_editor: that asks whether to discard
+        # unsaved edits, which is a pointless question about a card the user has
+        # just agreed to delete.
+        if self.state.loaded_card_id == card_id:
+            self._reset_editor()
+        self.store.delete_card(card_id)
+        # The store's own signal refreshes the list wherever it is wired up, but
+        # the editor must not depend on its owner having done that.
+        self._refresh_saved_list()
+        return True
+
+    def _confirm_delete(self, card: Card) -> bool:
+        """Ask before deleting. A card is a lot of work and there is no undo, so
+        unlike the history list this never deletes straight off a right-click.
+        The links are named because they go with the card and are not otherwise
+        visible from the list."""
+        links = len(self.store.links_for(card.id))
+        if links:
+            detail = f" and its {links} link" + ("s" if links != 1 else "")
+        else:
+            detail = ""
+        reply = QMessageBox.question(
+            self,
+            "Delete card",
+            f'Delete the card "{card.headword}"{detail}? This cannot be undone.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
 
     def load_card(self, card: Card) -> bool:
         """Load a saved card for review or editing. Asks to discard unsaved

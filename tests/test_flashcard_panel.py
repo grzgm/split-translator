@@ -5,11 +5,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
 
+from split_translator import flashcard_editor_base
 from split_translator.flashcard_panel import FlashcardPanel
-from split_translator.flashcards import Card, FlashcardStore, Sense
+from split_translator.flashcards import Card, FlashcardStore, Link, Sense
 
 app = QApplication.instance() or QApplication([])
 
@@ -1177,6 +1178,174 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.autofill_book_example("   ")
         self.assertEqual(panel._rows()[0].examples(), [])
         self.assertFalse(panel.state.altered)
+
+
+class SavedCardDeleteTests(unittest.TestCase):
+    """The saved list's right-click Delete. Both the menu and the confirmation
+    are modal, so each is replaced with a stand-in that records what it was
+    asked and answers immediately."""
+
+    def _panel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "cards.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [
+            Card(headword="alpha", id="a"),
+            Card(headword="bravo", id="b"),
+        ]
+        panel = FlashcardPanel(store)
+        panel._refresh_saved_list()
+        return panel, store
+
+    def _capture_menu(self, choose=None):
+        """Swap QMenu in the editor module for a stand-in that records its
+        entries and picks the entry named by choose (None for a dismissed menu)
+        instead of opening a modal one. Returns the list the menus land in, so a
+        test can assert both what was offered and that nothing was offered."""
+        built = []
+
+        class _FakeMenu:
+            def __init__(self, parent=None):
+                self.entries = {}
+                built.append(self)
+
+            def addAction(self, label):
+                action = f"action:{label}"
+                self.entries[label] = action
+                return action
+
+            def exec(self, _global_pos):
+                return self.entries.get(choose)
+
+        original = flashcard_editor_base.QMenu
+        flashcard_editor_base.QMenu = _FakeMenu
+        self.addCleanup(setattr, flashcard_editor_base, "QMenu", original)
+        return built
+
+    def _row_position(self, panel, row: int):
+        return panel.saved_list.visualItemRect(panel.saved_list.item(row)).center()
+
+    # --- the menu -------------------------------------------------------
+
+    def test_right_click_on_a_row_offers_delete(self):
+        panel, store = self._panel()
+        built = self._capture_menu()  # menu dismissed without choosing
+        panel._show_saved_context_menu(self._row_position(panel, 0))
+        self.assertEqual([list(m.entries) for m in built], [["Delete"]])
+        self.assertEqual(len(store.cards), 2)  # dismissing deletes nothing
+
+    def test_right_click_below_the_rows_opens_nothing(self):
+        panel, _ = self._panel()
+        built = self._capture_menu(choose="Delete")
+        panel._show_saved_context_menu(QPoint(5, 10000))
+        self.assertEqual(built, [])
+
+    # --- deleting -------------------------------------------------------
+
+    def test_choosing_delete_removes_the_card(self):
+        panel, store = self._panel()
+        self._capture_menu(choose="Delete")
+        panel._confirm_delete = lambda card: True
+        panel._show_saved_context_menu(self._row_position(panel, 0))
+        self.assertEqual([c.headword for c in store.cards], ["bravo"])
+        self.assertEqual(panel.saved_list.count(), 1)
+
+    def test_declining_the_confirmation_keeps_the_card(self):
+        panel, store = self._panel()
+        self._capture_menu(choose="Delete")
+        panel._confirm_delete = lambda card: False
+        panel._show_saved_context_menu(self._row_position(panel, 0))
+        self.assertEqual(len(store.cards), 2)
+        self.assertEqual(panel.saved_list.count(), 2)
+
+    def test_the_confirmation_names_the_card_and_its_links(self):
+        panel, store = self._panel()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        asked = []
+
+        class _FakeBox:
+            StandardButton = QMessageBox.StandardButton
+
+            @staticmethod
+            def question(parent, title, text, buttons):
+                asked.append(text)
+                return QMessageBox.StandardButton.No
+
+        original = flashcard_editor_base.QMessageBox
+        flashcard_editor_base.QMessageBox = _FakeBox
+        self.addCleanup(setattr, flashcard_editor_base, "QMessageBox", original)
+
+        panel._confirm_delete(store.cards[0])
+        self.assertEqual(len(asked), 1)
+        self.assertIn("alpha", asked[0])
+        # The links go with the card and are not visible from the list, so the
+        # prompt has to say how many are about to go.
+        self.assertIn("1 link", asked[0])
+
+    def test_the_confirmation_says_nothing_about_links_when_there_are_none(self):
+        panel, store = self._panel()
+        asked = []
+
+        class _FakeBox:
+            StandardButton = QMessageBox.StandardButton
+
+            @staticmethod
+            def question(parent, title, text, buttons):
+                asked.append(text)
+                return QMessageBox.StandardButton.No
+
+        original = flashcard_editor_base.QMessageBox
+        flashcard_editor_base.QMessageBox = _FakeBox
+        self.addCleanup(setattr, flashcard_editor_base, "QMessageBox", original)
+
+        panel._confirm_delete(store.cards[0])
+        self.assertNotIn("link", asked[0])
+
+    def test_deleting_takes_the_links_with_it(self):
+        panel, store = self._panel()
+        store.set_links_for("a", [Link("a", "b", "synonym")])
+        self._capture_menu(choose="Delete")
+        panel._confirm_delete = lambda card: True
+        panel._show_saved_context_menu(self._row_position(panel, 0))
+        self.assertEqual(store.links, [])
+
+    # --- the editor's own state ----------------------------------------
+
+    def test_deleting_the_loaded_card_returns_the_editor_to_new_mode(self):
+        panel, store = self._panel()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertTrue(panel.state.is_editing)
+        self._capture_menu(choose="Delete")
+        panel._confirm_delete = lambda card: True
+        panel._show_saved_context_menu(self._row_position(panel, 0))
+        self.assertTrue(panel.state.is_new)
+        self.assertEqual(panel.id_input.text(), "")
+        self.assertEqual(panel.headword_input.text(), "")
+
+    def test_deleting_the_loaded_card_asks_nothing_about_unsaved_edits(self):
+        panel, store = self._panel()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.headword_input.setText("edited")  # genuine user edit -> altered
+        self.assertTrue(panel.state.altered)
+        # A discard prompt here would be a question about a card the user has
+        # already agreed to delete, so _confirm_discard must never be reached.
+        panel._confirm_discard = lambda: self.fail("asked about unsaved edits")
+        self._capture_menu(choose="Delete")
+        panel._confirm_delete = lambda card: True
+        panel._show_saved_context_menu(self._row_position(panel, 0))
+        self.assertTrue(panel.state.is_new)
+        self.assertFalse(panel.state.altered)
+
+    def test_deleting_another_card_leaves_the_loaded_one_alone(self):
+        panel, store = self._panel()
+        panel._on_saved_clicked(panel.saved_list.item(0))  # load "alpha"
+        self._capture_menu(choose="Delete")
+        panel._confirm_delete = lambda card: True
+        panel._show_saved_context_menu(self._row_position(panel, 1))  # "bravo"
+        self.assertTrue(panel.state.is_editing)
+        self.assertEqual(panel.id_input.text(), "a")
+        self.assertEqual(panel.headword_input.text(), "alpha")
 
 
 if __name__ == "__main__":

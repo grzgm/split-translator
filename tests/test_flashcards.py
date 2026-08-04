@@ -166,6 +166,32 @@ class StoreUpdateTests(unittest.TestCase):
         self.assertTrue(store.set_printed(["a"], False))
         self.assertFalse(store.cards[0].printed)
 
+    def test_delete_card_removes_only_that_card(self):
+        store = self._store()
+        store.cards = [
+            Card(headword="a", id="a"),
+            Card(headword="b", id="b"),
+            Card(headword="c", id="c"),
+        ]
+        self.assertTrue(store.delete_card("b"))
+        self.assertEqual([c.headword for c in store.cards], ["a", "c"])
+
+    def test_delete_card_returns_false_when_id_missing(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a")]
+        fired = []
+        store.cards_changed.connect(lambda: fired.append(True))
+        self.assertFalse(store.delete_card("zzz"))
+        self.assertEqual(len(store.cards), 1)
+        self.assertEqual(fired, [])  # no write, no refresh
+
+    def test_delete_card_reaches_the_file(self):
+        store = self._store()
+        store.cards = [Card(headword="a", id="a"), Card(headword="b", id="b")]
+        store.delete_card("a")
+        store.shutdown()
+        self.assertEqual([c.headword for c in load_cards(store.filepath)], ["b"])
+
 
 class HeadwordFormsTests(unittest.TestCase):
     def test_collects_headword_and_spellings_longest_first(self):

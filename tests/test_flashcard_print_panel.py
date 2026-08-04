@@ -390,5 +390,32 @@ class LoadedCardChangedTests(unittest.TestCase):
         self.assertTrue(seen)
 
 
+class DeleteFromThePrintListTests(unittest.TestCase):
+    """Delete lives on the shared editor, so this list has it too. What is
+    specific here is the print selection: a deleted card must not still count
+    as chosen."""
+
+    def _panel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "f.json")
+        self.addCleanup(store.shutdown)
+        store.cards = [Card(headword="alpha", id="a"), Card(headword="bravo", id="b")]
+        panel = FlashcardPrintPanel(store)
+        self.addCleanup(panel.deleteLater)
+        panel._refresh_saved_list()
+        return panel, store
+
+    def test_a_deleted_card_drops_out_of_the_print_selection(self):
+        panel, store = self._panel()
+        for row in range(panel.saved_list.count()):
+            panel.saved_list.item(row).setCheckState(Qt.CheckState.Checked)
+        self.assertEqual(panel.selected_ids(), ["a", "b"])
+        panel._confirm_delete = lambda card: True
+        panel.delete_saved_card(panel.saved_list.item(0))
+        self.assertEqual(panel.selected_ids(), ["b"])
+        self.assertEqual([c.id for c in panel.selected_cards()], ["b"])
+
+
 if __name__ == "__main__":
     unittest.main()
