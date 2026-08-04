@@ -471,6 +471,63 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.state.altered)
         self.assertTrue(panel.is_printed())
 
+    def test_a_book_fill_adds_the_book_tag(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "book:dracula")
+        # Passive tagging, like the fill itself, is not an edit.
+        self.assertFalse(panel.state.altered)
+
+    def test_a_second_fill_from_the_same_book_adds_no_duplicate(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        panel.autofill_book_example("He saw the cat sleep.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "book:dracula")
+
+    def test_a_fill_from_another_book_adds_a_second_tag(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        panel.autofill_book_example("On widzial kota.", "book:pan tadeusz")
+        self.assertEqual(
+            panel.tags_input.text(), "book:dracula, book:pan tadeusz"
+        )
+
+    def test_no_book_tag_once_the_card_is_altered(self):
+        panel, _ = self._panel()
+        panel.headword_input.setText("dog")  # a genuine edit
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "")
+
+    def test_no_book_tag_without_a_sentence(self):
+        # Nothing was filled, so the book supplied nothing to record.
+        panel, _ = self._panel()
+        panel.autofill_book_example("", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "")
+
+    def test_no_book_tag_when_none_is_given(self):
+        panel, _ = self._panel()
+        panel.autofill_book_example("She saw the dog run.")
+        self.assertEqual(panel.tags_input.text(), "")
+
+    def test_a_loaded_card_can_gain_a_book_tag(self):
+        # An unaltered loaded card still takes passive fills, so it takes the
+        # tag too, and neither the altered state nor the printed flag moves.
+        panel, _ = self._loaded_printed_card()
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "book:dracula")
+        self.assertFalse(panel.state.altered)
+        self.assertTrue(panel.is_printed())
+
+    def test_a_book_tag_already_present_is_left_alone(self):
+        panel, store = self._panel()
+        store.cards = [
+            Card(headword="address", id="id-addr", tags=["book:dracula", "noun"])
+        ]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "book:dracula, noun")
+
     # --- printed flag vs. content edits ---------------------------------
 
     def _loaded_printed_card(self):

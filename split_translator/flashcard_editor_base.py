@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from .flashcard_editor_state import EditorState
-from .flashcard_tags import format_tags, parse_tags
+from .flashcard_tags import format_tags, normalise_tag, parse_tags
 from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
 
 # A light-blue border shown on a fillable field while it is still empty, so it is
@@ -879,12 +879,31 @@ class FlashcardEditorBase(QWidget):
             return
         self._ensure_active_row().add_example_text(text)
 
-    def autofill_book_example(self, sentence: str) -> None:
+    def add_book_tag(self, tag: str) -> None:
+        """Record the book that has just filled something into this card.
+
+        Called only from autofill_book_example, so it only ever runs on an
+        unaltered card. A blank tag, or one the card already carries, does
+        nothing. Otherwise the field is rewritten with the tag appended, inside
+        the programmatic guard so this passive tagging never marks the card
+        altered (which would stop the next book match refilling it)."""
+        tag = normalise_tag(tag)
+        if not tag:
+            return
+        current = parse_tags(self.tags_input.text())
+        if tag in current:
+            return
+        with self._programmatic():
+            _fill(self.tags_input, format_tags(current + [tag]))
+
+    def autofill_book_example(self, sentence: str, book_tag: str = "") -> None:
         """Passive auto-fill of the book match sentence into the first sense's
-        first example. Same rule as autofill_pronunciation: only while the card
-        is unaltered, and written through the programmatic guard so the fill
-        itself never marks the card altered (which lets a later book match
-        refill again). A blank sentence is ignored."""
+        first example, and of that book's tag into the tags field. Same rule as
+        autofill_pronunciation: only while the card is unaltered, and written
+        through the programmatic guard so the fill itself never marks the card
+        altered (which lets a later book match refill again). A blank sentence is
+        ignored, and the tag with it: nothing was taken from the book, so there
+        is no source to record."""
         sentence = (sentence or "").strip()
         if not sentence:
             return
@@ -892,6 +911,7 @@ class FlashcardEditorBase(QWidget):
             return
         with self._programmatic():
             self._rows()[0].set_first_example(sentence)
+        self.add_book_tag(book_tag)
 
     # --- pronunciation / auto-grab --------------------------------------
 
