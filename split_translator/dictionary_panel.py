@@ -620,11 +620,32 @@ class DictionaryPanel(QWidget):
             });
         }
 
+        // Which region a pronunciation block belongs to, or "" when it does not
+        // say. The two Cambridge dictionaries mark this differently: the English
+        // page puts the class on the block itself (span.uk.dpron-i), while the
+        // English-Polish page wraps it one level down (span.dpron-info holding a
+        // span.uk.dloc). An unmarked block is left alone rather than guessed at,
+        // which is what skips the English-Polish inflection blocks (the
+        // pronunciation of "ran" under "run" carries no region at all).
+        function stBlockRegion(block) {
+            var marked = block.classList.contains('uk')
+                || block.classList.contains('us');
+            var el = marked ? block : block.querySelector('.dloc');
+            if (!el) { return ''; }
+            return el.classList.contains('uk') ? 'uk'
+                : el.classList.contains('us') ? 'us' : '';
+        }
+
         // Buttons next to each pronunciation that overwrite the current card's
         // notation and clip for that block's region (uk/us). A card has one UK
         // and one US slot for each, so the action is replace (no +new). The
-        // region is read from the block's class; the mp3 URL and IPA come from
-        // stReadBlockPron, the same reader the "New from word" seed uses.
+        // region comes from stBlockRegion; the mp3 URL and IPA come from
+        // stReadBlockPron, the same reader the "New from word" seed uses, which
+        // searches inside the block and so reads either page's shape.
+        //
+        // Both block classes are matched because the two Cambridge pages use one
+        // each, and neither page carries the other's (checked against both live
+        // pages), so nothing is visited twice.
         //
         // The notation and the clip get a button each rather than sharing one:
         // a page shows several blocks per region (a plain one, a variant, a
@@ -632,11 +653,12 @@ class DictionaryPanel(QWidget):
         // one holding the clip you want. A block with only one of the two shows
         // only that button.
         function injectAudio() {
-            var blocks = document.querySelectorAll('span.dpron-i');
+            var blocks = document.querySelectorAll(
+                'span.dpron-i, span.dpron-info'
+            );
             blocks.forEach(function(block) {
                 if (block.dataset.stAudioCapture === '1') { return; }
-                var region = block.classList.contains('uk') ? 'uk'
-                    : block.classList.contains('us') ? 'us' : '';
+                var region = stBlockRegion(block);
                 if (!region) { return; }
                 var pron = stReadBlockPron(block);
                 if (!pron.audio && !pron.ipa) { return; }  // nothing to capture
