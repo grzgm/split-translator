@@ -731,6 +731,52 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "touched")
         self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
 
+    # --- search seed (autofill_headword) ---------------------------------
+
+    def test_seed_fills_the_headword_without_altering(self):
+        # The searched phrase lands in the Headword before any page has loaded,
+        # and passively: the card must stay unaltered so the grab can replace it.
+        panel, _ = self._panel()
+        panel.autofill_headword("running")
+        self.assertEqual(panel.headword_input.text(), "running")
+        self.assertFalse(panel.state.altered)
+
+    def test_seed_is_trimmed(self):
+        panel, _ = self._panel()
+        panel.autofill_headword("  running  ")
+        self.assertEqual(panel.headword_input.text(), "running")
+
+    def test_blank_seed_is_ignored(self):
+        panel, _ = self._panel()
+        panel.autofill_headword("running")
+        panel.autofill_headword("   ")
+        self.assertEqual(panel.headword_input.text(), "running")
+
+    def test_page_headword_replaces_the_seed(self):
+        # The whole point of the seed: it holds the searched phrase until the
+        # Cambridge page arrives with the canonical spelling.
+        panel, _ = self._panel()
+        panel.autofill_headword("running")
+        panel.autofill_pronunciation("/aa/", None, "a.mp3", None, word="run")
+        self.assertEqual(panel.headword_input.text(), "run")
+
+    def test_seed_survives_a_grab_with_no_headword(self):
+        # A page that yields pronunciation but no headword must not blank the
+        # seed: the searched phrase is better than an empty Headword.
+        panel, _ = self._panel()
+        panel.autofill_headword("running")
+        panel.autofill_pronunciation("/aa/", None, "a.mp3", None, word=None)
+        self.assertEqual(panel.headword_input.text(), "running")
+        self.assertEqual(panel.ipa_uk_input.text(), "/aa/")
+
+    def test_seed_skips_an_altered_card(self):
+        # Same rule as the other passive fills: in-progress work is never
+        # clobbered by a search.
+        panel, _ = self._panel()
+        panel.headword_input.setText("editing")  # user edit -> altered
+        panel.autofill_headword("running")
+        self.assertEqual(panel.headword_input.text(), "editing")
+
     # --- prepare_for_new_search (clear before new-search auto-fill) ------
 
     def test_prepare_clears_stale_senses_then_new_word_fills(self):

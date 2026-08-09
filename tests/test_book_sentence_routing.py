@@ -55,6 +55,7 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
         captured = {}
         flashcard_panel = SimpleNamespace(
             new_card=lambda force=False: new_card_ok,
+            autofill_headword=lambda w: captured.update(seed=w),
             autofill_book_example=lambda s, tag="": captured.update(
                 sentence=s, tag=tag
             ),
@@ -65,7 +66,8 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
             ),
             flashcard_panel=flashcard_panel,
             dictionary_panel=SimpleNamespace(
-                grab_pronunciation=lambda: captured.setdefault("grabbed", True)
+                search_input=SimpleNamespace(text=lambda: "running"),
+                grab_pronunciation=lambda: captured.setdefault("grabbed", True),
             ),
             book_panel=SimpleNamespace(
                 current_match_sentence=lambda cb: cb(book_sentence)
@@ -142,7 +144,8 @@ class WordSearchedClearsEditorTests(unittest.TestCase):
         order = []
         carrier = SimpleNamespace(
             flashcard_panel=SimpleNamespace(
-                prepare_for_new_search=lambda: order.append("prepare")
+                prepare_for_new_search=lambda: order.append("prepare"),
+                autofill_headword=lambda w: order.append(("seed", w)),
             ),
             history_panel=SimpleNamespace(
                 add_to_history=lambda w: order.append(("history", w))
@@ -161,6 +164,12 @@ class WordSearchedClearsEditorTests(unittest.TestCase):
         self.assertEqual(order[0], "prepare")
         self.assertIn(("history", "walk"), order)
         self.assertIn(("book", "walk"), order)
+
+    def test_seeds_the_headword_after_the_clear(self):
+        # The seed must follow the clear, or the clear would wipe it.
+        carrier, order = self._carrier()
+        TranslationTool.on_word_searched(carrier, "walk")
+        self.assertEqual(order[:2], ["prepare", ("seed", "walk")])
 
 
 if __name__ == "__main__":

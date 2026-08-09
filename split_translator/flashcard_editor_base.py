@@ -916,6 +916,24 @@ class FlashcardEditorBase(QWidget):
 
     # --- pronunciation / auto-grab --------------------------------------
 
+    def autofill_headword(self, word: str) -> None:
+        """Seed the headword with the phrase that was searched, before any
+        dictionary page has loaded.
+
+        Same passive rule as the other auto-fills: only while the card is
+        unaltered, and written through the programmatic guard so the seed never
+        marks the card altered. A blank word is ignored.
+
+        This is what leaves a usable headword when the sites do not load at all
+        (no connection, a failed page). When a Cambridge page does load,
+        autofill_pronunciation replaces the seed with the page's own canonical
+        spelling."""
+        word = (word or "").strip()
+        if not word or self.state.altered:
+            return
+        with self._programmatic():
+            _fill(self.headword_input, word)
+
     def autofill_pronunciation(
         self,
         ipa_uk,
@@ -930,13 +948,20 @@ class FlashcardEditorBase(QWidget):
         IPA, spelling and audio only while the card is unaltered; once the user
         has altered it, do nothing silently (no dialog, no overwrite). The
         refill runs programmatically so it never marks the card altered, which
-        lets a later page load refill again."""
+        lets a later page load refill again.
+
+        The headword this replaces is usually the search phrase seeded up front
+        by autofill_headword, so the field is filled from the moment of the
+        search and gains the page's canonical spelling once it loads."""
         if self.state.altered:
             return
         # Write every grab field (even to empty) so a re-fill clears values the
-        # previous word had but the new one lacks.
+        # previous word had but the new one lacks. The headword is the one
+        # exception: a page with no headword leaves the search-phrase seed in
+        # place (see autofill_headword) rather than blanking the field.
         with self._programmatic():
-            _fill(self.headword_input, word or "")
+            if word:
+                _fill(self.headword_input, word)
             _fill(self.ipa_uk_input, ipa_uk or "")
             _fill(self.ipa_us_input, ipa_us or "")
             _fill(self.spelling_uk_input, spelling_uk or "")
@@ -1172,8 +1197,9 @@ class FlashcardEditorBase(QWidget):
     def new_card(self, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
         to discard unsaved content. force skips the confirmation. The headword is
-        not seeded here: the caller re-grabs the Cambridge page, which fills it
-        (see main_window.new_flashcard / on_pronunciation_grabbed)."""
+        not seeded here: the caller seeds it from the search box and re-grabs the
+        Cambridge page, which replaces it (see main_window.new_flashcard /
+        on_pronunciation_grabbed)."""
         if not force and self.state.altered and not self._confirm_discard():
             return False
         self._reset_editor()

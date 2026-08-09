@@ -25,10 +25,12 @@ class NewFlashcardDocksTests(unittest.TestCase):
             flashcard_panel=SimpleNamespace(
                 new_card=lambda force=False: calls.append(("new_card", force))
                 or True,
+                autofill_headword=lambda word: None,
                 autofill_book_example=lambda text: None,
             ),
             dictionary_panel=SimpleNamespace(
-                grab_pronunciation=lambda: calls.append(("grab",))
+                search_input=SimpleNamespace(text=lambda: "walk"),
+                grab_pronunciation=lambda: calls.append(("grab",)),
             ),
             book_panel=SimpleNamespace(
                 current_match_sentence=lambda cb: calls.append(("sentence",))

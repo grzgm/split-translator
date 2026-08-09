@@ -241,6 +241,12 @@ class TranslationTool(QMainWindow):
         # of the previous word's senses and examples. Runs once per search,
         # before the repeating page-load grabs.
         self.flashcard_panel.prepare_for_new_search()
+        # Seed the headword with the phrase just searched, after the clear (which
+        # would otherwise wipe it). The card then carries the word straight away,
+        # even if the dictionary sites never load; when the Cambridge page does
+        # arrive, the grab replaces the seed with its canonical spelling (see
+        # on_pronunciation_grabbed).
+        self.flashcard_panel.autofill_headword(word)
         self.history_panel.add_to_history(word)
         self.book_panel.search(word)
 
@@ -469,6 +475,12 @@ class TranslationTool(QMainWindow):
         # button).
         if not self.flashcard_panel.new_card(force=force):
             return
+        # Seed the headword from the search box, so the fresh card is filled even
+        # when the Cambridge page never loaded; the grab below replaces it with
+        # the page's own headword when it is there.
+        self.flashcard_panel.autofill_headword(
+            self.dictionary_panel.search_input.text()
+        )
         self.dictionary_panel.grab_pronunciation()
         # Also pull the current Original-edition book sentence into the fresh
         # card's first example, so New from word populates it immediately rather

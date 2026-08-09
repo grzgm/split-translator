@@ -68,5 +68,61 @@ class HeadwordSourceTests(unittest.TestCase):
         self.assertEqual(captured, {})  # autofill_pronunciation never called
 
 
+class SearchSeedTests(unittest.TestCase):
+    """Before any page has loaded, the Headword is seeded with the phrase the
+    user searched, so a card is never left blank when the dictionary sites do
+    not load. Both entry points seed it: a search (``on_word_searched``) and New
+    from word (``new_flashcard``, which reads the search box). The methods are
+    driven as unbound functions against a lightweight carrier."""
+
+    def _search_carrier(self):
+        seeded = []
+        carrier = SimpleNamespace(
+            flashcard_panel=SimpleNamespace(
+                prepare_for_new_search=lambda: None,
+                autofill_headword=seeded.append,
+            ),
+            history_panel=SimpleNamespace(add_to_history=lambda w: None),
+            book_panel=SimpleNamespace(search=lambda w: None),
+        )
+        return carrier, seeded
+
+    def _new_card_carrier(self, search_text, new_card_ok=True):
+        seeded = []
+        carrier = SimpleNamespace(
+            flashcard_dock=SimpleNamespace(
+                show=lambda: None, setFloating=lambda value: None
+            ),
+            flashcard_panel=SimpleNamespace(
+                new_card=lambda force=False: new_card_ok,
+                autofill_headword=seeded.append,
+                autofill_book_example=lambda s, tag="": None,
+            ),
+            dictionary_panel=SimpleNamespace(
+                search_input=SimpleNamespace(text=lambda: search_text),
+                grab_pronunciation=lambda: None,
+            ),
+            book_panel=SimpleNamespace(current_match_sentence=lambda cb: cb("")),
+            book_tag="",
+        )
+        return carrier, seeded
+
+    def test_a_search_seeds_the_searched_phrase(self):
+        carrier, seeded = self._search_carrier()
+        TranslationTool.on_word_searched(carrier, "running")
+        self.assertEqual(seeded, ["running"])
+
+    def test_new_from_word_seeds_from_the_search_box(self):
+        carrier, seeded = self._new_card_carrier("running")
+        TranslationTool.new_flashcard(carrier)
+        self.assertEqual(seeded, ["running"])
+
+    def test_new_from_word_seeds_nothing_when_declined(self):
+        # The user kept an in-progress card, so nothing touches the editor.
+        carrier, seeded = self._new_card_carrier("running", new_card_ok=False)
+        TranslationTool.new_flashcard(carrier)
+        self.assertEqual(seeded, [])
+
+
 if __name__ == "__main__":
     unittest.main()
