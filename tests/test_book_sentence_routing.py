@@ -105,6 +105,34 @@ class NewFlashcardBookExampleTests(unittest.TestCase):
         self.assertEqual(captured.get("tag"), "book:dracula")
 
 
+class SourceBookTagTests(unittest.TestCase):
+    """The tag naming a card's source book comes from the Original edition, the
+    only one book search runs on. Driven as an unbound method against a
+    lightweight carrier (no WebEngine window)."""
+
+    def _carrier(self):
+        return SimpleNamespace(
+            config=SimpleNamespace(
+                original_path="/books/Dracula - Bram Stoker.epub",
+                translation_path="/books/Drakula - polskie wydanie.epub",
+            )
+        )
+
+    def test_tag_comes_from_the_original_edition(self):
+        # The two editions give different tags, so this fails if the derivation
+        # ever reads translation_path instead.
+        self.assertEqual(
+            TranslationTool._source_book_tag(self._carrier()),
+            "book:dracula - bram stoker",
+        )
+
+    def test_no_tag_without_a_configured_book(self):
+        carrier = SimpleNamespace(
+            config=SimpleNamespace(original_path="", translation_path="")
+        )
+        self.assertEqual(TranslationTool._source_book_tag(carrier), "")
+
+
 class WordSearchedClearsEditorTests(unittest.TestCase):
     """on_word_searched clears the flashcard editor before the search's page
     loads auto-fill it, so a new word starts from a blank card. Driven as an

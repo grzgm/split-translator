@@ -54,7 +54,7 @@ class TranslationTool(QMainWindow):
         # here because this window is the only component that knows the config,
         # and passing it with each fill (rather than handing it to the panel as
         # state) keeps the panel free of config entirely.
-        self.book_tag = book_tag(config.original_path)
+        self.book_tag = self._source_book_tag()
         self.flashcard_graph_window = None
         self.flashcard_print_window = None
 
@@ -62,6 +62,12 @@ class TranslationTool(QMainWindow):
         self.setup_menu()
         self.setup_shortcuts()
         self.connect_signals()
+
+    def _source_book_tag(self) -> str:
+        """The tag naming the book a card's example came from. Taken from the
+        Original edition because book search only ever runs on that one, so an
+        auto-filled sentence is always an Original sentence."""
+        return book_tag(self.config.original_path)
 
     def init_ui(self):
         self.setWindowTitle("Translation Tool")
