@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QIcon,
     QPainter,
+    QPalette,
     QPen,
     QPixmap,
     QPolygonF,
@@ -52,24 +53,31 @@ from .flashcard_editor_state import EditorState
 from .flashcard_tags import format_tags, normalise_tag, parse_tags
 from .flashcards import Card, FlashcardStore, Sense
 
-# A light-blue border shown on a fillable field while it is still empty, so it is
+# A light-blue fill shown on a fillable field while it is still empty, so it is
 # easy to see at a glance what remains to be filled. It clears back to the default
-# border the moment the field has any content.
-_EMPTY_BORDER = "2px solid #aaccfe"
+# background the moment the field has any content.
+_EMPTY_TINT = "#eaf2ff"
 
 
 def _mark_empty(field) -> None:
-    """Give a field the empty-field border when blank, default otherwise.
+    """Tint a field's background while it is blank, default it otherwise.
 
     Works for both ``QLineEdit`` (``text()``) and an editable ``QComboBox``
-    (``currentText()``); the stylesheet selector is keyed off the widget's class
-    so it targets the right control."""
+    (``currentText()``); the colour goes on the palette's Base role, which an
+    editable combo hands down to the line edit that draws its text.
+
+    The marker goes through the palette rather than a stylesheet on purpose. A
+    stylesheet ``border`` switches a widget out of the native style's box model
+    and so resizes it (a line edit loses 2px of height, the POS combo over half
+    its width), which made every field shift the moment it was filled. A palette
+    colour cannot affect geometry. Both states set only the Base role, leaving
+    the rest of the palette inherited, so the fields keep following the desktop
+    theme."""
     text = field.currentText() if isinstance(field, QComboBox) else field.text()
-    type_name = type(field).__name__
-    if text.strip():
-        field.setStyleSheet("")
-    else:
-        field.setStyleSheet(f"{type_name} {{ border: {_EMPTY_BORDER}; }}")
+    palette = QPalette()
+    if not text.strip():
+        palette.setColor(QPalette.ColorRole.Base, QColor(_EMPTY_TINT))
+    field.setPalette(palette)
 
 
 def _fill(field: QLineEdit, text: str) -> None:
