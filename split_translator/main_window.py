@@ -397,6 +397,14 @@ class TranslationTool(QMainWindow):
     def focus_search(self):
         self.dictionary_panel.focus_search()
 
+    def focus_own_notation(self):
+        # Ctrl+P: jump straight to the card's Own notation from anywhere,
+        # bringing the editor back on screen if it was hidden (like the capture
+        # shortcuts do). Where the editor lives is left alone: a floating editor
+        # stays floating, since docking belongs to Alt+D and Ctrl+Shift+F.
+        self.flashcard_dock.show()
+        self.flashcard_panel.focus_own_notation()
+
     def toggle_flashcard(self):
         if self.flashcard_dock.isVisible():
             self.flashcard_dock.hide()

@@ -50,6 +50,8 @@ SHORTCUTS = [
                   handler="new_flashcard"),
     ShortcutEntry("Ctrl+S", "Save card", "Flashcards",
                   handler="flashcard_panel.save_card"),
+    ShortcutEntry("Ctrl+P", "Focus Own notation", "Flashcards",
+                  handler="focus_own_notation"),
     ShortcutEntry("Alt+P", "Add selection to Polish (active sense)", "Flashcards",
                   handler="capture_to_polish"),
     ShortcutEntry("Alt+E", "Add selection to English (active sense)", "Flashcards",

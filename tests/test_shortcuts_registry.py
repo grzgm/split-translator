@@ -64,6 +64,13 @@ class ShortcutsRegistryTests(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry.handler, "show_shortcuts")
 
+    def test_ctrl_p_focuses_own_notation(self):
+        # One keystroke away from the display-only Ctrl+Shift+P, so pin both the
+        # sequence and that this one is a real binding.
+        entry = next((e for e in SHORTCUTS if e.keys == "Ctrl+P"), None)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.handler, "focus_own_notation")
+
     def test_view_menu_shortcuts_are_display_only(self):
         # Ctrl+Shift+F / Ctrl+Shift+A live on their View-menu QActions; they must
         # NOT get a QShortcut here, so their handler must be None.

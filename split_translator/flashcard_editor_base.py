@@ -1162,6 +1162,16 @@ class FlashcardEditorBase(QWidget):
     def focus_editor(self) -> None:
         self.headword_input.setFocus()
 
+    def focus_own_notation(self) -> None:
+        """Put the caret in Own notation, ready to type. The caret goes to the
+        end of whatever is there: a programmatic fill leaves it at the start (the
+        fields are scrolled to their beginning so long text reads from the left),
+        so without this a note would be typed in front of the existing one."""
+        self.own_notation_input.setFocus()
+        self.own_notation_input.setCursorPosition(
+            len(self.own_notation_input.text())
+        )
+
     def new_card(self, force: bool = False) -> bool:
         """Clear the editor for a fresh card. Returns False if the user declined
         to discard unsaved content. force skips the confirmation. The headword is

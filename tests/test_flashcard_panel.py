@@ -220,6 +220,26 @@ class FlashcardPanelTests(unittest.TestCase):
         QApplication.processEvents()
         self.assertFalse(panel.has_focus())
 
+    def test_focus_own_notation_focuses_the_field(self):
+        panel, _ = self._panel()
+        panel.show()
+        panel.focus_own_notation()
+        QApplication.processEvents()
+        self.assertTrue(panel.own_notation_input.hasFocus())
+        panel.hide()
+
+    def test_focus_own_notation_puts_the_caret_after_existing_text(self):
+        # A programmatic fill leaves the caret at 0 (see the scroll-to-start
+        # capture), so without an explicit move typing would prepend to the note.
+        panel, _ = self._panel()
+        panel.show()
+        panel.own_notation_input.setText("kat")
+        panel.own_notation_input.setCursorPosition(0)
+        panel.focus_own_notation()
+        QApplication.processEvents()
+        self.assertEqual(panel.own_notation_input.cursorPosition(), 3)
+        panel.hide()
+
     def test_play_audio_is_noop_without_url(self):
         panel, _ = self._panel()
         self.assertIsNone(panel.player)
