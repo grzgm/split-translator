@@ -228,16 +228,16 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.own_notation_input.hasFocus())
         panel.hide()
 
-    def test_focus_own_notation_puts_the_caret_after_existing_text(self):
-        # A programmatic fill leaves the caret at 0 (see the scroll-to-start
-        # capture), so without an explicit move typing would prepend to the note.
+    def test_focus_own_notation_selects_existing_text(self):
+        # Like Ctrl+L on the search box: typing straight after the shortcut
+        # replaces the note rather than editing around it.
         panel, _ = self._panel()
         panel.show()
         panel.own_notation_input.setText("kat")
         panel.own_notation_input.setCursorPosition(0)
         panel.focus_own_notation()
         QApplication.processEvents()
-        self.assertEqual(panel.own_notation_input.cursorPosition(), 3)
+        self.assertEqual(panel.own_notation_input.selectedText(), "kat")
         panel.hide()
 
     def test_play_audio_is_noop_without_url(self):
