@@ -96,6 +96,15 @@ class CardTests(unittest.TestCase):
         )
         self.assertEqual(card.tags, ["gothic"])
 
+    def test_tags_are_normalised_on_construction(self):
+        # Not just on the from_dict path: the saved-cards filter compares stored
+        # tags raw, so every card must carry them canonical however it was built.
+        card = Card(headword="dog", tags=[" Gothic ", "gothic", "PHRASAL  verb"])
+        self.assertEqual(card.tags, ["gothic", "phrasal verb"])
+
+    def test_a_malformed_tags_value_on_construction_gives_no_tags(self):
+        self.assertEqual(Card(headword="dog", tags="gothic").tags, [])
+
     def test_from_dict_tolerates_a_malformed_tags_value(self):
         card = Card.from_dict({"headword": "dog", "tags": "gothic"})
         self.assertEqual(card.tags, [])

@@ -95,6 +95,12 @@ class Card:
     created_at: str = ""
     updated_at: str = ""
 
+    def __post_init__(self):
+        # Tags are matching keys: the saved-cards filter compares them raw and
+        # assumes they are canonical. Cleaning here rather than at each caller
+        # makes that an invariant of the card, whichever way one is built.
+        self.tags = parse_tag_list(self.tags)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -129,7 +135,7 @@ class Card:
             senses=[Sense.from_dict(s) for s in data.get("senses", [])],
             starred=bool(data.get("starred", False)),
             printed=bool(data.get("printed", False)),
-            tags=parse_tag_list(data.get("tags", [])),
+            tags=data.get("tags", []),  # cleaned by __post_init__
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
         )
