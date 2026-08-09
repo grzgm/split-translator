@@ -9,8 +9,7 @@ content is clipped (the physical size is fixed) and flagged on screen only."""
 import html as _html
 from dataclasses import dataclass
 
-from .flashcards import Card, REDACTION_TOKEN
-
+from .flashcards import REDACTION_TOKEN, Card
 
 # The token rendered as a fixed-width fill-in blank on the printed back.
 _BLANK_HTML = '<span class="blank">_____</span>'

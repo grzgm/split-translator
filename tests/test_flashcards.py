@@ -6,7 +6,6 @@ from split_translator.flashcards import (
     Card,
     FlashcardStore,
     Sense,
-    REDACTION_TOKEN,
     headword_forms,
     load_cards,
     redact_card_definitions,

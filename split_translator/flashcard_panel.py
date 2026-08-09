@@ -8,8 +8,12 @@ shared editor (card fields, senses, saved list, lifecycle)."""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QWidget
 
-from .flashcard_editor_base import FlashcardEditorBase, SenseRow, _mark_empty
-from .flashcards import FlashcardStore, Link, LINK_TYPES
+from .flashcard_editor_base import (
+    FlashcardEditorBase,
+    SenseRow,
+    _mark_empty,  # noqa: F401  re-exported, see below
+)
+from .flashcards import LINK_TYPES, FlashcardStore, Link
 
 # Re-exported so existing imports keep working:
 # `from split_translator.flashcard_panel import SenseRow` (tests) and

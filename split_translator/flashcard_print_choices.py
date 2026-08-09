@@ -14,8 +14,8 @@ A choice is keyed by (sense index, example index) rather than by sentence text.
 That is safe because a choice is dropped the moment its card's examples change
 (see drop_stale), so an index can never come to mean a different sentence."""
 
-from .flashcards import Card
 from .flashcard_print_layout import example_sense_order
+from .flashcards import Card
 
 AUTO = "auto"
 MANUAL = "manual"

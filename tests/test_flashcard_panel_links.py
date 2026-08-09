@@ -253,7 +253,6 @@ class TickLinkingTests(unittest.TestCase):
             self.assertFalse(hasattr(panel, attr), f"{attr} should be removed")
 
     def test_loaded_row_is_bold_and_tinted(self):
-        from PySide6.QtGui import QColor
         panel, store = self._panel()
         panel.load_card(store.cards[0])  # big
         own = self._item(panel, "big")

@@ -18,7 +18,7 @@ from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
 from .book_loader import load_book
 from .book_sync import BookSync
 from .book_view import BookView
-from .config import Config, CONFIG_DIR
+from .config import CONFIG_DIR, Config
 
 
 class BookPanel(QFrame):

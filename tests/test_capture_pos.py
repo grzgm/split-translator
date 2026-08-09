@@ -20,8 +20,8 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineCore import QWebEngineProfile
+from PySide6.QtWidgets import QApplication
 
 from split_translator.dictionary_panel import DictionaryPanel
 from split_translator.flashcard_editor_base import SenseRow

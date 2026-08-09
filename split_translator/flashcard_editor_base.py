@@ -17,7 +17,6 @@ from PySide6.QtCore import QByteArray, QEvent, QPointF, QRectF, QSize, Qt, QUrl,
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QFont,
     QFontMetrics,
     QIcon,
     QPainter,
@@ -25,8 +24,8 @@ from PySide6.QtGui import (
     QPixmap,
     QPolygonF,
 )
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -51,7 +50,7 @@ from PySide6.QtWidgets import (
 
 from .flashcard_editor_state import EditorState
 from .flashcard_tags import format_tags, normalise_tag, parse_tags
-from .flashcards import Card, FlashcardStore, Link, LINK_TYPES, Sense
+from .flashcards import Card, FlashcardStore, Sense
 
 # A light-blue border shown on a fillable field while it is still empty, so it is
 # easy to see at a glance what remains to be filled. It clears back to the default

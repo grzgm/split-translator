@@ -1,11 +1,11 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineCore import QWebEngineProfile
+from PySide6.QtWidgets import QApplication
 
+from split_translator.anchor_click_bridge import AnchorClickBridge
 from split_translator.book_loader import BookDocument
 from split_translator.book_view import BookView
-from split_translator.anchor_click_bridge import AnchorClickBridge
 
 app = QApplication.instance() or QApplication([])
 
@@ -30,8 +30,8 @@ class TopmostBlockIdTests(unittest.TestCase):
 import tempfile
 from pathlib import Path
 
-from split_translator.anchor_store import AnchorStore
 from split_translator.anchor_editor import AnchorEditor
+from split_translator.anchor_store import AnchorStore
 from split_translator.book_sync import BookSync
 
 

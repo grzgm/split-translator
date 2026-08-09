@@ -2,15 +2,14 @@ import unittest
 
 from split_translator.flashcard_print_layout import (
     PAGE,
-    PageSpec,
     example_fill_order,
     example_sense_order,
     grid_dims,
     incompleteness,
-    sheets_of_paper,
     paginate,
     render_card_tile,
     render_html,
+    sheets_of_paper,
 )
 from split_translator.flashcards import Card, Sense
 

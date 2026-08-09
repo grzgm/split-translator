@@ -845,7 +845,6 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(rows["b"], False)
 
     def test_saved_row_carries_starred_role(self):
-        from PySide6.QtCore import Qt
         panel, store = self._panel()
         store.cards = [Card(headword="alpha", id="a", starred=True)]
         panel._refresh_saved_list()

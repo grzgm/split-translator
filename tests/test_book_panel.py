@@ -1,7 +1,7 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineCore import QWebEngineProfile
+from PySide6.QtWidgets import QApplication
 
 from split_translator.book_loader import BookDocument
 from split_translator.book_view import BookView
@@ -274,8 +274,8 @@ class BookViewNormaliseTests(unittest.TestCase):
 
 import tempfile
 
-from split_translator.config import Config
 from split_translator.book_panel import BookPanel
+from split_translator.config import Config
 from tests.fixtures.make_fixtures import make_epub
 
 
@@ -385,7 +385,7 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
             store_path = panel.anchor_store.filepath
             panel.close_doc()  # writes and shuts down
 
-            from split_translator.anchor_store import AnchorStore, READER_SURFACE
+            from split_translator.anchor_store import READER_SURFACE, AnchorStore
 
             reloaded = AnchorStore(store_path)
             self.addCleanup(reloaded.shutdown)
@@ -415,8 +415,8 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
             cfg = _config(d)
             # Prime the store file before the panel reads it.
             from split_translator.anchor_store import (
-                AnchorStore,
                 READER_SURFACE,
+                AnchorStore,
                 anchor_path_for,
             )
             from split_translator.config import CONFIG_DIR
@@ -808,8 +808,8 @@ class BookPanelNormaliseTests(unittest.TestCase):
             cfg = _config(d)
             profile = QWebEngineProfile()
             from split_translator.anchor_store import (
-                AnchorStore,
                 READER_SURFACE,
+                AnchorStore,
                 anchor_path_for,
             )
             from split_translator.config import CONFIG_DIR

@@ -6,8 +6,8 @@ altered the current card since it was last loaded, cleared or saved. No Qt
 import, so it unit-tests headless like page_mapper and graph_layout. The panel
 holds exactly one instance and every mode/altered decision reads it."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 
 @dataclass

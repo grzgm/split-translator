@@ -4,7 +4,7 @@ pure-logic graph_layout module; this file is the Qt presentation and the
 interactions (drag, click-to-activate, type filter, node search) and an
 incremental refresh that preserves manually arranged node positions."""
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,

@@ -3,12 +3,12 @@ import unittest
 from pathlib import Path
 
 from split_translator.flashcards import (
-    Card,
-    FlashcardStore,
-    Link,
     LINK_TYPES,
     LINKS_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    Card,
+    FlashcardStore,
+    Link,
     load_cards,
     load_links,
     serialise_cards,

@@ -1,7 +1,7 @@
 """Main application window wiring history, dictionary and PDF panels together."""
 
-from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
@@ -16,17 +16,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
-from .config import Config, CONFIG_DIR
+from .book_panel import BookPanel
+from .config import CONFIG_DIR, Config
 from .dictionary_panel import DictionaryPanel
-from .flashcard_panel import FlashcardPanel
 from .flashcard_graph import FlashcardGraphWindow
+from .flashcard_panel import FlashcardPanel
 from .flashcard_print_window import FlashcardPrintWindow
 from .flashcard_tags import book_tag
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
-from .book_panel import BookPanel
 from .shortcuts import SHORTCUTS
 from .shortcuts_dialog import ShortcutsDialog
 from .status_bar import StatusBar

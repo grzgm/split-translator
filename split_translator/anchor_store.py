@@ -17,7 +17,7 @@ def anchor_path_for(
 ) -> Path:
     """Return the per-book-pair anchor file path, keyed by the two book paths."""
     key = hashlib.sha1(
-        f"{original_path}\n{translation_path}".encode("utf-8")
+        f"{original_path}\n{translation_path}".encode()
     ).hexdigest()[:16]
     return root / f"anchors_{key}.json"
 

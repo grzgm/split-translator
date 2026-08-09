@@ -1,13 +1,12 @@
 import json
 import os
 import unittest
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from split_translator.book_view import BookView, _MATCH_SENTENCE_JS
+from split_translator.book_view import _MATCH_SENTENCE_JS, BookView
 
 app = QApplication.instance() or QApplication([])
 

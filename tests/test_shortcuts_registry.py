@@ -3,16 +3,16 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from split_translator.shortcuts import SHORTCUTS, GROUP_ORDER, ShortcutEntry
+from split_translator.shortcuts import GROUP_ORDER, SHORTCUTS
 
 
 # Map the first segment of a dotted handler to the class that owns the method,
 # so a handler name can be checked statically without building the (WebEngine)
 # main window. A bare handler (no dot) must be a TranslationTool method.
 def _resolve_handler(handler: str) -> bool:
-    from split_translator.main_window import TranslationTool
     from split_translator.book_panel import BookPanel
     from split_translator.flashcard_panel import FlashcardPanel
+    from split_translator.main_window import TranslationTool
 
     owners = {
         "book_panel": BookPanel,

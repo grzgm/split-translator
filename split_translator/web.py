@@ -12,7 +12,7 @@ post-load JavaScript. Instead it uses Qt's built-in mechanisms:
 
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, QUrl
+from PySide6.QtCore import QStandardPaths
 from PySide6.QtWebEngineCore import (
     QWebEngineProfile,
     QWebEngineScript,

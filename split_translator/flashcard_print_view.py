@@ -14,6 +14,7 @@ from dataclasses import replace
 from PySide6.QtCore import QFile, QIODevice, QMarginsF, QTimer, Signal
 from PySide6.QtGui import QPageLayout
 from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QDialogButtonBox,
     QRadioButton,
@@ -21,9 +22,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtWebEngineWidgets import QWebEngineView
 
-from .flashcard_print_layout import PAGE, render_body, render_html, _fmt_mm
+from .flashcard_print_layout import PAGE, _fmt_mm, render_body, render_html
 from .flashcards import Card
 from .print_tile_bridge import PrintTileBridge
 
