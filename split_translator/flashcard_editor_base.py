@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 
 from .field_marker import attach_empty_marker, mark_empty
 from .flashcard_editor_state import EditorState
+from .flashcard_fields import CARD_FIELDS
 from .flashcard_tags import format_tags, normalise_tag, parse_tags
 from .flashcards import Card, FlashcardStore, Sense
 
@@ -566,7 +567,48 @@ class FlashcardEditorBase(QWidget):
         with self._programmatic():
             self.set_printed(False)
 
+    # --- card fields (built and driven from the registry) -----------------
+
+    def _build_fields(self) -> None:
+        """Create a widget for every registered card field.
+
+        The registry owns identity, placeholder, tooltip and the Card mapping;
+        init_ui still arranges the widgets by hand, because the rows are
+        genuinely bespoke (the headword shares its row with the star and printed
+        toggles, and Spelling and IPA each pair two fields under one label)."""
+        for spec in CARD_FIELDS:
+            field = QLineEdit()
+            if spec.placeholder:
+                field.setPlaceholderText(spec.placeholder)
+            if spec.tooltip:
+                field.setToolTip(spec.tooltip)
+            setattr(self, spec.attr, field)
+
+    def _card_field_widgets(self) -> list:
+        """Every registered field as (spec, widget), in registry order. The one
+        place that turns the registry into live widgets, so wiring, reset, load
+        and save all walk the same list."""
+        return [(spec, getattr(self, spec.attr)) for spec in CARD_FIELDS]
+
+    def _wire_fields(self) -> None:
+        """Mark each field while it is empty and route typing into the right
+        handler.
+
+        A printed field's edits also clear the printed flag, because the paper
+        copy stops matching the card the moment its printed content changes; the
+        others only mark the card altered."""
+        for spec, field in self._card_field_widgets():
+            on_edit = (
+                self._on_printed_content_edit
+                if spec.printed
+                else self._on_user_edit
+            )
+            field.textChanged.connect(lambda _=None, f=field: mark_empty(f))
+            field.textChanged.connect(on_edit)
+            attach_empty_marker(field)
+
     def init_ui(self):
+        self._build_fields()
         outer = QVBoxLayout(self)
 
         editor_widget = QWidget()
@@ -585,10 +627,6 @@ class FlashcardEditorBase(QWidget):
         form.addRow("Id", self.id_input)
 
         headword_row = QHBoxLayout()
-        self.headword_input = QLineEdit()
-        self.headword_input.setToolTip(
-            "Ctrl+N: fill from the search box (New from word)"
-        )
         # Compact icon toggles: a filled glyph with a coloured background when
         # on, an outline glyph with no background when off.
         self._star_icon_on = QIcon(_star_pixmap(18, "#ffffff", filled=True))
@@ -615,16 +653,6 @@ class FlashcardEditorBase(QWidget):
         form.addRow("Headword", headword_row)
 
         spelling_row = QHBoxLayout()
-        self.spelling_uk_input = QLineEdit()
-        self.spelling_uk_input.setPlaceholderText("UK spelling")
-        self.spelling_uk_input.setToolTip(
-            "New from word: filled from the Cambridge page (when it differs UK/US)"
-        )
-        self.spelling_us_input = QLineEdit()
-        self.spelling_us_input.setPlaceholderText("US spelling")
-        self.spelling_us_input.setToolTip(
-            "New from word: filled from the Cambridge page (when it differs UK/US)"
-        )
         spelling_row.addWidget(self.spelling_uk_input)
         spelling_row.addWidget(self.spelling_us_input)
         form.addRow("Spelling", spelling_row)
@@ -634,18 +662,12 @@ class FlashcardEditorBase(QWidget):
         )
 
         ipa_row = QHBoxLayout()
-        self.ipa_uk_input = QLineEdit()
-        self.ipa_uk_input.setPlaceholderText("IPA UK")
-        self.ipa_uk_input.setToolTip("New from word: filled from the Cambridge page")
         self.play_uk_button = QPushButton()
         self.play_uk_button.setIcon(speaker_icon)
         self.play_uk_button.setMaximumWidth(32)
         self.play_uk_button.setToolTip("Play UK pronunciation")
         self.play_uk_button.clicked.connect(lambda: self.play_audio("uk"))
 
-        self.ipa_us_input = QLineEdit()
-        self.ipa_us_input.setPlaceholderText("IPA US")
-        self.ipa_us_input.setToolTip("New from word: filled from the Cambridge page")
         self.play_us_button = QPushButton()
         self.play_us_button.setIcon(speaker_icon)
         self.play_us_button.setMaximumWidth(32)
@@ -658,34 +680,10 @@ class FlashcardEditorBase(QWidget):
         ipa_row.addWidget(self.play_us_button)
         form.addRow("IPA", ipa_row)
 
-        self.own_notation_input = QLineEdit()
         form.addRow("Own notation", self.own_notation_input)
-
-        self.tags_input = QLineEdit()
-        self.tags_input.setPlaceholderText("comma separated")
-        self.tags_input.setToolTip(
-            "Free-form labels, comma separated. The book a card's example came "
-            "from is recorded here automatically."
-        )
         form.addRow("Tags", self.tags_input)
 
-        # Mark every fillable card field while empty; keep the marker in sync and
-        # route genuine user typing into an edit handler. The headword and the
-        # own notation are printed on the card, so editing them also clears the
-        # printed flag; the spellings, the IPA and the tags never reach paper, so
-        # they only mark the card altered.
-        for field, on_edit in (
-            (self.headword_input, self._on_printed_content_edit),
-            (self.spelling_uk_input, self._on_user_edit),
-            (self.spelling_us_input, self._on_user_edit),
-            (self.ipa_uk_input, self._on_user_edit),
-            (self.ipa_us_input, self._on_user_edit),
-            (self.own_notation_input, self._on_printed_content_edit),
-            (self.tags_input, self._on_user_edit),
-        ):
-            field.textChanged.connect(lambda _=None, f=field: mark_empty(f))
-            field.textChanged.connect(on_edit)
-            attach_empty_marker(field)
+        self._wire_fields()
 
         layout.addLayout(form)
 
