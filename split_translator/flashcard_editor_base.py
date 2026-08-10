@@ -20,7 +20,6 @@ from PySide6.QtGui import (
     QFontMetrics,
     QIcon,
     QPainter,
-    QPalette,
     QPen,
     QPixmap,
     QPolygonF,
@@ -49,36 +48,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .field_marker import attach_empty_marker, mark_empty
 from .flashcard_editor_state import EditorState
 from .flashcard_tags import format_tags, normalise_tag, parse_tags
 from .flashcards import Card, FlashcardStore, Sense
-
-# A light-blue fill shown on a fillable field while it is still empty, so it is
-# easy to see at a glance what remains to be filled. It clears back to the default
-# background the moment the field has any content.
-_EMPTY_TINT = "#eaf2ff"
-
-
-def _mark_empty(field) -> None:
-    """Tint a field's background while it is blank, default it otherwise.
-
-    Works for both ``QLineEdit`` (``text()``) and an editable ``QComboBox``
-    (``currentText()``); the colour goes on the palette's Base role, which an
-    editable combo hands down to the line edit that draws its text.
-
-    The marker goes through the palette rather than a stylesheet on purpose. A
-    stylesheet ``border`` switches a widget out of the native style's box model
-    and so resizes it (a line edit loses 2px of height, the POS combo over half
-    its width), which made every field shift the moment it was filled. A palette
-    colour cannot affect geometry. Both states set only the Base role, leaving
-    the rest of the palette inherited, so the fields keep following the desktop
-    theme."""
-    text = field.currentText() if isinstance(field, QComboBox) else field.text()
-    palette = QPalette()
-    if not text.strip():
-        palette.setColor(QPalette.ColorRole.Base, QColor(_EMPTY_TINT))
-    field.setPalette(palette)
-
 
 def _fill(field: QLineEdit, text: str) -> None:
     """Set a line edit's text programmatically and scroll it to the start.
@@ -191,6 +164,17 @@ class PosPopupView(QListView):
         return True
 
 
+# The sense row's border in both states. Set once per row; set_active flips the
+# activeRow property rather than replacing this sheet, because replacing it
+# re-polishes every child (see field_marker for what that used to break). The
+# inactive border is transparent rather than absent so the row is exactly the
+# same size active and inactive.
+_SENSE_ROW_STYLE = (
+    "#senseRow { border: 2px solid transparent; border-radius: 4px; }"
+    '#senseRow[activeRow="true"] { border-color: #0a84ff; }'
+)
+
+
 class SenseRow(QFrame):
     """One editable sense: POS combo, Polish field, English field, a remove button
     and a small list of usage examples beneath them."""
@@ -207,6 +191,7 @@ class SenseRow(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("senseRow")
+        self.setStyleSheet(_SENSE_ROW_STYLE)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(2, 2, 2, 2)
@@ -236,14 +221,14 @@ class SenseRow(QFrame):
         # Mark the POS dropdown and the Polish/English fields while empty and keep
         # each marker in sync as it is typed into or filled by capture.
         self.pos_combo.currentTextChanged.connect(
-            lambda _=None: _mark_empty(self.pos_combo)
+            lambda _=None: mark_empty(self.pos_combo)
         )
         self.pos_combo.currentTextChanged.connect(lambda _=None: self.edited.emit())
-        _mark_empty(self.pos_combo)
+        attach_empty_marker(self.pos_combo)
         for field in (self.polish_input, self.english_input):
-            field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
+            field.textChanged.connect(lambda _=None, f=field: mark_empty(f))
             field.textChanged.connect(lambda _=None: self.edited.emit())
-            _mark_empty(field)
+            attach_empty_marker(field)
 
         self.remove_button = QPushButton("x")
         self.remove_button.setMaximumWidth(28)
@@ -282,10 +267,16 @@ class SenseRow(QFrame):
         return super().eventFilter(obj, event)
 
     def set_active(self, active: bool):
-        color = "#0a84ff" if active else "transparent"
-        self.setStyleSheet(
-            f"#senseRow {{ border: 2px solid {color}; border-radius: 4px; }}"
-        )
+        """Show or hide the active-row highlight.
+
+        Only the property changes: the row's stylesheet is set once in __init__
+        and carries both states. Replacing the sheet here (as this used to do)
+        re-polished every child, and a re-polish restores the palette Qt cached
+        for that child when the row was built, which resurrected stale
+        empty-field markers on fields the user had already filled."""
+        self.setProperty("activeRow", "true" if active else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     # --- examples -------------------------------------------------------
 
@@ -314,10 +305,10 @@ class SenseRow(QFrame):
         _fill(field_input, text)
         # Mark the example field while it is empty (kept in sync as it is typed).
         field_input.textChanged.connect(
-            lambda _=None, f=field_input: _mark_empty(f)
+            lambda _=None, f=field_input: mark_empty(f)
         )
         field_input.textChanged.connect(lambda _=None: self.edited.emit())
-        _mark_empty(field_input)
+        attach_empty_marker(field_input)
         row.example_input = field_input
 
         remove = QPushButton("x")
@@ -692,9 +683,9 @@ class FlashcardEditorBase(QWidget):
             (self.own_notation_input, self._on_printed_content_edit),
             (self.tags_input, self._on_user_edit),
         ):
-            field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
+            field.textChanged.connect(lambda _=None, f=field: mark_empty(f))
             field.textChanged.connect(on_edit)
-            _mark_empty(field)
+            attach_empty_marker(field)
 
         layout.addLayout(form)
 

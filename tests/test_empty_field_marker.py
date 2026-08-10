@@ -1,19 +1,15 @@
-"""The empty-field marker must never change a field's geometry.
+"""The editor's use of the empty-field marker.
 
-Filling a field is not allowed to move anything: the marker that shows which
-fields are still blank has to be purely a colour change. That rules out a
-stylesheet ``border``, which switches a widget out of the native style's box
-model and resizes it (a line edit loses 2px of height, the POS combo over half
-its width), so every widget below and beside it would jump the moment the field
-was typed into. These tests pin the sizes across both states, on the real
-widgets a sense row builds."""
+Two rules, both of which the editor has broken before. Filling a field must
+never resize it, so nothing on the card moves as it is filled in. And a field's
+marker must depend on that field alone: activating a sense row or adding an
+example must not repaint a field the user already filled."""
 
 import os
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,70 +18,48 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from split_translator.flashcard_editor_base import (
-    _EMPTY_TINT,
-    SenseRow,
-    _mark_empty,
-)
+from split_translator.field_marker import attach_empty_marker, mark_empty
+from split_translator.flashcard_editor_base import SenseRow
 
 app = QApplication.instance() or QApplication([])
 
 
-def _base(field) -> str:
-    return field.palette().color(QPalette.ColorRole.Base).name()
+def _flag(field):
+    target = field.lineEdit() if isinstance(field, QComboBox) else field
+    return target.property("emptyField")
 
 
-def _default_base() -> str:
-    return QApplication.palette().color(QPalette.ColorRole.Base).name()
+def _filled_row():
+    """A sense row with every top field filled, so any marker that appears
+    afterwards is wrong."""
+    row = SenseRow()
+    row.pos_combo.setCurrentText("v")
+    row.polish_input.setText("biegac")
+    row.english_input.setText("to move fast")
+    return row
 
 
 class GeometryTests(unittest.TestCase):
-    """Empty and filled are the same size, for every marked widget type."""
-
-    def _sizes(self, field, fill):
-        _mark_empty(field)
-        empty = field.sizeHint()
-        fill(field)
-        _mark_empty(field)
-        return empty, field.sizeHint()
-
-    def test_a_line_edit_keeps_its_size_when_filled(self):
-        empty, filled = self._sizes(QLineEdit(), lambda f: f.setText("run"))
-        self.assertEqual(empty, filled)
-
-    def test_the_pos_combo_keeps_its_size_when_filled(self):
-        row = SenseRow()
-        empty, filled = self._sizes(
-            row.pos_combo, lambda f: f.setCurrentText("v")
-        )
-        self.assertEqual(empty, filled)
-
     def test_a_sense_row_field_keeps_its_size_when_filled(self):
         row = SenseRow()
         empty = row.polish_input.sizeHint()
         row.polish_input.setText("biegac")
         self.assertEqual(empty, row.polish_input.sizeHint())
 
-    def test_the_marker_never_uses_a_stylesheet(self):
-        # The mechanism, not just the symptom: a stylesheet on these controls is
-        # what resized them, so the marker must leave the stylesheet alone.
-        field = QLineEdit()
-        _mark_empty(field)
-        self.assertEqual(field.styleSheet(), "")
-        field.setText("run")
-        _mark_empty(field)
-        self.assertEqual(field.styleSheet(), "")
+    def test_the_pos_combo_keeps_its_size_when_filled(self):
+        row = SenseRow()
+        empty = row.pos_combo.sizeHint()
+        row.pos_combo.setCurrentText("v")
+        self.assertEqual(empty, row.pos_combo.sizeHint())
 
     def test_filling_one_row_does_not_move_the_rows_below(self):
-        # The user-visible requirement, end to end: type into the first field of
-        # a form and nothing else may move.
         host = QWidget()
         form = QFormLayout(host)
         fields = []
         for i in range(4):
             field = QLineEdit()
-            field.textChanged.connect(lambda _=None, f=field: _mark_empty(f))
-            _mark_empty(field)
+            field.textChanged.connect(lambda _=None, f=field: mark_empty(f))
+            attach_empty_marker(field)
             form.addRow(f"Row {i}", field)
             fields.append(field)
         host.resize(400, 300)
@@ -97,51 +71,88 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(before, [(f.x(), f.y(), f.size()) for f in fields])
 
 
-class TintTests(unittest.TestCase):
-    """The marker itself: tinted while blank, default background once filled."""
-
-    def test_an_empty_field_is_tinted(self):
-        field = QLineEdit()
-        _mark_empty(field)
-        self.assertEqual(_base(field), _EMPTY_TINT)
-
-    def test_a_filled_field_returns_to_the_default_background(self):
-        field = QLineEdit()
-        _mark_empty(field)
-        field.setText("run")
-        _mark_empty(field)
-        self.assertEqual(_base(field), _default_base())
-
-    def test_a_whitespace_only_field_counts_as_empty(self):
-        field = QLineEdit()
-        field.setText("   ")
-        _mark_empty(field)
-        self.assertEqual(_base(field), _EMPTY_TINT)
-
-    def test_an_editable_combo_passes_the_tint_to_its_editor(self):
-        # The text a combo shows is drawn by its internal line edit, so the tint
-        # is only visible if it reaches that child.
-        combo = QComboBox()
-        combo.setEditable(True)
-        combo.addItems(["n", "v"])
-        combo.setCurrentText("")
-        _mark_empty(combo)
-        self.assertEqual(_base(combo.lineEdit()), _EMPTY_TINT)
-
-    def test_a_filled_combo_returns_to_the_default_background(self):
+class MarkerFollowsTheFieldTests(unittest.TestCase):
+    def test_empty_sense_fields_are_marked(self):
         row = SenseRow()
-        row.pos_combo.setCurrentText("v")
-        self.assertEqual(_base(row.pos_combo), _default_base())
+        self.assertEqual(_flag(row.pos_combo), "true")
+        self.assertEqual(_flag(row.polish_input), "true")
+        self.assertEqual(_flag(row.english_input), "true")
 
-    def test_a_field_is_marked_as_it_is_typed_into_and_cleared(self):
-        # The editor wires textChanged to the marker; the round trip has to work
-        # in both directions, not just on the first fill.
-        row = SenseRow()
-        self.assertEqual(_base(row.english_input), _EMPTY_TINT)
-        row.english_input.setText("to move fast")
-        self.assertEqual(_base(row.english_input), _default_base())
+    def test_filled_sense_fields_are_not_marked(self):
+        row = _filled_row()
+        self.assertEqual(_flag(row.pos_combo), "false")
+        self.assertEqual(_flag(row.polish_input), "false")
+        self.assertEqual(_flag(row.english_input), "false")
+
+    def test_a_field_is_re_marked_when_it_is_cleared(self):
+        row = _filled_row()
         row.english_input.clear()
-        self.assertEqual(_base(row.english_input), _EMPTY_TINT)
+        self.assertEqual(_flag(row.english_input), "true")
+
+    def test_a_blank_example_is_marked_and_clears_when_typed(self):
+        row = SenseRow()
+        row.add_example()
+        field = row._example_rows()[0].example_input
+        self.assertEqual(_flag(field), "true")
+        field.setText("she ran")
+        self.assertEqual(_flag(field), "false")
+
+    def test_a_captured_example_is_not_marked(self):
+        row = SenseRow()
+        row.add_example("she ran")
+        field = row._example_rows()[0].example_input
+        self.assertEqual(_flag(field), "false")
+
+
+class ActivationTests(unittest.TestCase):
+    """The bug this fixes: the row's own styling used to repaint its children's
+    markers, so filled fields lit up when a row was activated or an example was
+    added."""
+
+    def test_activating_a_row_does_not_mark_filled_fields(self):
+        row = _filled_row()
+        row.set_active(True)
+        self.assertEqual(_flag(row.pos_combo), "false")
+        self.assertEqual(_flag(row.polish_input), "false")
+        self.assertEqual(_flag(row.english_input), "false")
+
+    def test_deactivating_a_row_does_not_mark_filled_fields(self):
+        row = _filled_row()
+        row.set_active(True)
+        row.set_active(False)
+        self.assertEqual(_flag(row.pos_combo), "false")
+        self.assertEqual(_flag(row.polish_input), "false")
+        self.assertEqual(_flag(row.english_input), "false")
+
+    def test_adding_an_example_does_not_mark_filled_fields(self):
+        row = _filled_row()
+        row.add_example()
+        self.assertEqual(_flag(row.pos_combo), "false")
+        self.assertEqual(_flag(row.polish_input), "false")
+        self.assertEqual(_flag(row.english_input), "false")
+
+    def test_activation_still_shows_and_hides_the_highlight(self):
+        row = SenseRow()
+        row.set_active(True)
+        self.assertEqual(row.property("activeRow"), "true")
+        row.set_active(False)
+        self.assertEqual(row.property("activeRow"), "false")
+
+    def test_the_row_keeps_one_stylesheet_carrying_both_states(self):
+        # Swapping the sheet per activation is what re-polished the children.
+        row = SenseRow()
+        sheet = row.styleSheet()
+        row.set_active(True)
+        self.assertEqual(row.styleSheet(), sheet)
+        self.assertIn("#0a84ff", sheet)
+        self.assertIn("transparent", sheet)
+
+    def test_the_row_is_the_same_size_active_and_inactive(self):
+        row = SenseRow()
+        row.set_active(False)
+        inactive = row.sizeHint()
+        row.set_active(True)
+        self.assertEqual(row.sizeHint(), inactive)
 
 
 if __name__ == "__main__":

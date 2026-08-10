@@ -6,11 +6,9 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QMessageBox
 
 from split_translator import flashcard_editor_base
-from split_translator.flashcard_editor_base import _EMPTY_TINT
 from split_translator.flashcard_panel import FlashcardPanel
 from split_translator.flashcards import Card, FlashcardStore, Link, Sense
 
@@ -1141,9 +1139,10 @@ class FlashcardPanelTests(unittest.TestCase):
 
     @staticmethod
     def _marked(field):
-        # The marker is a palette tint, not a stylesheet: see
-        # test_empty_field_marker for why it must never touch the box model.
-        return field.palette().color(QPalette.ColorRole.Base).name() == _EMPTY_TINT
+        # The marker is a dynamic property read by a style rule, not a palette
+        # or a stylesheet of its own: see test_field_marker for why.
+        target = field.lineEdit() if isinstance(field, QComboBox) else field
+        return target.property("emptyField") == "true"
 
     def _card_fields(self, panel):
         return (
