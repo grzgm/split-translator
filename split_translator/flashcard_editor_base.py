@@ -54,6 +54,7 @@ from .flashcard_fields import CARD_FIELDS
 from .flashcard_tags import format_tags, normalise_tag, parse_tags
 from .flashcards import Card, FlashcardStore, Sense
 
+
 def _fill(field: QLineEdit, text: str) -> None:
     """Set a line edit's text programmatically and scroll it to the start.
 
@@ -1061,15 +1062,9 @@ class FlashcardEditorBase(QWidget):
     # --- card lifecycle -------------------------------------------------
 
     def has_content(self) -> bool:
-        text_inputs = (
-            self.headword_input,
-            self.spelling_uk_input,
-            self.spelling_us_input,
-            self.ipa_uk_input,
-            self.ipa_us_input,
-            self.own_notation_input,
-        )
-        if any(widget.text().strip() for widget in text_inputs):
+        if any(
+            field.text().strip() for _spec, field in self._card_field_widgets()
+        ):
             return True
         if self._audio_uk_url or self._audio_us_url:
             return True
@@ -1082,19 +1077,17 @@ class FlashcardEditorBase(QWidget):
         senses = [row.to_sense() for row in self._rows()]
         senses = [sense for sense in senses if not sense.is_empty]
         now = datetime.now().isoformat(timespec="seconds")
+        values = {
+            spec.name: spec.to_card(field.text())
+            for spec, field in self._card_field_widgets()
+        }
         card = Card(
-            headword=headword,
-            spelling_uk=self.spelling_uk_input.text().strip() or None,
-            spelling_us=self.spelling_us_input.text().strip() or None,
-            ipa_uk=self.ipa_uk_input.text().strip() or None,
-            ipa_us=self.ipa_us_input.text().strip() or None,
-            own_notation=self.own_notation_input.text().strip() or None,
+            **values,
             audio_uk_url=self._audio_uk_url,
             audio_us_url=self._audio_us_url,
             senses=senses,
             starred=self.is_starred(),
             printed=self.is_printed(),
-            tags=parse_tags(self.tags_input.text()),
             created_at=self.state.loaded_created_at or now,
             updated_at=now,
         )
@@ -1233,16 +1226,8 @@ class FlashcardEditorBase(QWidget):
 
     def _reset_editor(self):
         with self._programmatic():
-            for widget in (
-                self.headword_input,
-                self.spelling_uk_input,
-                self.spelling_us_input,
-                self.ipa_uk_input,
-                self.ipa_us_input,
-                self.own_notation_input,
-                self.tags_input,
-            ):
-                widget.clear()
+            for _spec, field in self._card_field_widgets():
+                field.clear()
             self._audio_uk_url = None
             self._audio_us_url = None
             self._update_play_buttons()
@@ -1469,13 +1454,8 @@ class FlashcardEditorBase(QWidget):
             return False
         self._reset_editor()  # clears fields; sets state.to_new()
         with self._programmatic():
-            _fill(self.headword_input, card.headword)
-            _fill(self.spelling_uk_input, card.spelling_uk or "")
-            _fill(self.spelling_us_input, card.spelling_us or "")
-            _fill(self.ipa_uk_input, card.ipa_uk or "")
-            _fill(self.ipa_us_input, card.ipa_us or "")
-            _fill(self.own_notation_input, card.own_notation or "")
-            _fill(self.tags_input, format_tags(card.tags))
+            for spec, field in self._card_field_widgets():
+                _fill(field, spec.from_card(getattr(card, spec.name)))
             self._audio_uk_url = card.audio_uk_url
             self._audio_us_url = card.audio_us_url
             self._update_play_buttons()
