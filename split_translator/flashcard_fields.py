@@ -60,16 +60,14 @@ class CardField:
         return f"{self.name}_input"
 
 
-_SPELLING_TOOLTIP = (
-    "New from word: filled from the Cambridge page (when it differs UK/US)"
-)
-_IPA_TOOLTIP = "New from word: filled from the Cambridge page"
+_SPELLING_TOOLTIP = "New: filled from the Cambridge page (when it differs UK/US)"
+_IPA_TOOLTIP = "New: filled from the Cambridge page"
 
 #: Every card-level text field, in the order the editor shows them.
 CARD_FIELDS = (
     CardField(
         "headword",
-        tooltip="Ctrl+N: fill from the search box (New from word)",
+        tooltip="Ctrl+N: fill from the search box (the New button)",
         printed=True,
         to_card=_stripped,
     ),

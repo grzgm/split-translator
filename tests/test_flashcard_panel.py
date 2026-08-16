@@ -6,7 +6,14 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QToolButton,
+)
 
 from split_translator import flashcard_editor_base
 from split_translator.flashcard_panel import FlashcardPanel
@@ -27,7 +34,7 @@ class FlashcardPanelTests(unittest.TestCase):
     def test_starts_in_new_mode(self):
         panel, _ = self._panel()
         self.assertTrue(panel.state.is_new)
-        self.assertEqual(panel.save_button.text(), "Add card")
+        self.assertEqual(panel.save_button.text(), "Save card")
         self.assertEqual(panel.id_input.text(), "")
 
     def test_id_field_is_read_only_and_disabled(self):
@@ -52,7 +59,7 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.ctrl_held = lambda: True  # skip the discard prompt
         panel.clear_editor()
         self.assertTrue(panel.state.is_new)
-        self.assertEqual(panel.save_button.text(), "Add card")
+        self.assertEqual(panel.save_button.text(), "Save card")
         self.assertEqual(panel.id_input.text(), "")
 
     def test_save_stays_in_editing_mode(self):
@@ -1657,6 +1664,111 @@ class SavedCardDeleteTests(unittest.TestCase):
         self.assertTrue(panel.state.is_editing)
         self.assertEqual(panel.id_input.text(), "a")
         self.assertEqual(panel.headword_input.text(), "alpha")
+
+
+class ButtonBarTests(unittest.TestCase):
+    """Button labels, and where the sense button sits.
+
+    The sense button adds a row to the list it heads, so it belongs to the
+    Senses section and not to the card actions (New, Clear, Save) at the foot
+    of the editor. Sitting in the same row as those made it read as a fourth
+    card action."""
+
+    def _panel(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = FlashcardStore(Path(tmp.name) / "cards.json")
+        return FlashcardPanel(store)
+
+    @staticmethod
+    def _siblings(button):
+        """Every widget sharing a layout with this button."""
+        layout = button.parentWidget().layout()
+        found = []
+
+        def walk(item):
+            for i in range(item.count()):
+                child = item.itemAt(i)
+                widget = child.widget()
+                if widget is button:
+                    found.extend(
+                        item.itemAt(j).widget() for j in range(item.count())
+                    )
+                elif child.layout() is not None:
+                    walk(child.layout())
+
+        walk(layout)
+        return found
+
+    def test_the_new_button_is_labelled_new(self):
+        self.assertEqual(self._panel().new_button.text(), "New")
+
+    def test_the_new_button_carries_the_fill_empty_item(self):
+        panel = self._panel()
+        self.assertEqual(
+            [action.text() for action in panel.new_menu.actions()],
+            ["Fill empty fields"],
+        )
+
+    def test_the_dropdown_item_announces_the_request(self):
+        # The panel only announces it; the main window owns the sources.
+        panel = self._panel()
+        asked = []
+        panel.fill_empty_requested.connect(lambda: asked.append(True))
+        panel.fill_empty_action.trigger()
+        self.assertEqual(asked, [True])
+
+    def test_the_main_part_of_the_new_button_stays_a_plain_click(self):
+        # Clicking the wide part must not drop the menu down: that is what
+        # MenuButtonPopup buys over a plain button with a menu.
+        panel = self._panel()
+        self.assertEqual(
+            panel.new_button.popupMode(),
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup,
+        )
+
+    def test_the_sense_button_does_not_share_the_card_action_row(self):
+        panel = self._panel()
+        siblings = self._siblings(panel.save_button)
+        self.assertIn(panel.new_button, siblings)
+        self.assertIn(panel.clear_button, siblings)
+        self.assertNotIn(panel.add_sense_button, siblings)
+
+    def test_save_is_held_apart_from_the_buttons_that_discard(self):
+        # A misclick meant for Clear must not land on Save, so the row leaves a
+        # gap: New and Clear on the left, Save on its own at the right.
+        panel = self._panel()
+        panel.resize(420, 900)
+        panel.show()
+        QApplication.processEvents()
+        clear_right = (
+            panel.clear_button.geometry().x()
+            + panel.clear_button.geometry().width()
+        )
+        gap = panel.save_button.geometry().x() - clear_right
+        self.assertGreaterEqual(gap, panel._SAVE_GAP)
+
+    def test_the_gap_survives_a_narrow_panel(self):
+        # The stretch collapses when there is no room; the spacing must not.
+        panel = self._panel()
+        panel.resize(240, 900)
+        panel.show()
+        QApplication.processEvents()
+        clear_right = (
+            panel.clear_button.geometry().x()
+            + panel.clear_button.geometry().width()
+        )
+        gap = panel.save_button.geometry().x() - clear_right
+        self.assertGreaterEqual(gap, panel._SAVE_GAP)
+
+    def test_the_sense_button_heads_the_senses_section(self):
+        panel = self._panel()
+        labels = [
+            widget.text()
+            for widget in self._siblings(panel.add_sense_button)
+            if isinstance(widget, QLabel)
+        ]
+        self.assertIn("Senses", labels)
 
 
 if __name__ == "__main__":

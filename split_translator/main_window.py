@@ -31,6 +31,20 @@ from .shortcuts_dialog import ShortcutsDialog
 from .status_bar import StatusBar
 
 
+def _grab_headword(data, search_text: str) -> str | None:
+    """Which word a Cambridge grab should put in the Headword field.
+
+    Cambridge's own headword is preferred, because it is the canonical spelling
+    ("run" for a search of "running"); the raw search term is the fallback for a
+    page that has none. None when there is neither, which leaves the field as it
+    is. Both grabs, the passive one and the fill-empty one, read this, so the
+    two cannot drift apart."""
+    word = (data.get("headword") or "").strip()
+    if not word:
+        word = (search_text or "").strip()
+    return word or None
+
+
 class TranslationTool(QMainWindow):
     # The flashcard dock's title, and the marker appended to it while the card
     # in the editor has unsaved edits (a text editor's modified-file "*").
@@ -183,6 +197,9 @@ class TranslationTool(QMainWindow):
         # of the shortcut, not a deliberate skip).
         self.flashcard_panel.new_button.clicked.connect(
             lambda: self.new_flashcard(force=self.flashcard_panel.ctrl_held())
+        )
+        self.flashcard_panel.fill_empty_requested.connect(
+            self.fill_empty_flashcard
         )
         self.dictionary_panel.pronunciation_grabbed.connect(
             self.on_pronunciation_grabbed
@@ -492,6 +509,45 @@ class TranslationTool(QMainWindow):
             )
         )
 
+    def fill_empty_flashcard(self):
+        """The New button's dropdown item: same three sources as new_flashcard,
+        but nothing is cleared and nothing already filled is overwritten.
+
+        It is for the card you have half built, or an old card you have loaded
+        and looked up again: whatever is still blank is filled from the search
+        box, the Cambridge page on screen and the current book match, and the
+        rest is left exactly as it is. The grab is taken with its own callback
+        rather than through pronunciation_grabbed, so this one-shot fill reads
+        the page the user is looking at and no passive listener acts on it."""
+        self.flashcard_dock.setFloating(False)
+        self.flashcard_dock.show()
+        self.flashcard_panel.fill_empty_headword(
+            self.dictionary_panel.search_input.text()
+        )
+        self.dictionary_panel.grab_pronunciation(self.on_fill_empty_grabbed)
+        self.book_panel.current_match_sentence(
+            lambda sentence: self.flashcard_panel.fill_empty_book_example(
+                sentence, self.book_tag
+            )
+        )
+
+    def on_fill_empty_grabbed(self, data):
+        """The Cambridge page's answer to a fill-empty grab. Same headword rule
+        as on_pronunciation_grabbed; the panel then fills only its blanks."""
+        if not data or not any(data.values()):
+            return
+        self.flashcard_panel.fill_empty_pronunciation(
+            data.get("ipa_uk"),
+            data.get("ipa_us"),
+            data.get("audio_uk_url"),
+            data.get("audio_us_url"),
+            data.get("spelling_uk"),
+            data.get("spelling_us"),
+            word=_grab_headword(
+                data, self.dictionary_panel.search_input.text()
+            ),
+        )
+
     def capture_to_polish(self):
         text = self.dictionary_panel.focused_selection()
         if not text:
@@ -577,12 +633,6 @@ class TranslationTool(QMainWindow):
             return
         if not data or not any(data.values()):
             return
-        # Prefer Cambridge's own headword (its canonical spelling, e.g. "run"
-        # for a search of "running") and fall back to the raw search term only
-        # when the page has none.
-        word = (data.get("headword") or "").strip()
-        if not word:
-            word = self.dictionary_panel.search_input.text().strip()
         self.flashcard_panel.autofill_pronunciation(
             data.get("ipa_uk"),
             data.get("ipa_us"),
@@ -590,8 +640,11 @@ class TranslationTool(QMainWindow):
             data.get("audio_us_url"),
             data.get("spelling_uk"),
             data.get("spelling_us"),
-            word=word or None,
+            word=_grab_headword(
+                data, self.dictionary_panel.search_input.text()
+            ),
         )
+
 
     def closeEvent(self, event):
         self.history_panel.shutdown()

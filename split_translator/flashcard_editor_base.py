@@ -41,9 +41,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStyle,
     QStyledItemDelegate,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -350,6 +352,13 @@ class SenseRow(QFrame):
         # its end and reads as right-aligned next to the examples below it.
         _fill(rows[0].example_input, text)
 
+    def first_example_text(self) -> str:
+        """The first example row's text, or "" when the sense has no example row
+        yet. Lets a gap fill see whether the slot set_first_example writes into
+        is still free."""
+        rows = self._example_rows()
+        return rows[0].example_input.text().strip() if rows else ""
+
     def _remove_example(self, row) -> None:
         self.examples_container.removeWidget(row)
         row.deleteLater()
@@ -476,7 +485,9 @@ class FlashcardEditorBase(QWidget):
     printed on the card go through _on_printed_content_edit instead, which does
     that and also clears the printed flag. Three indicators, the Save button
     label, the read-only Id field and the loaded-row dot, are all refreshed by
-    _apply_state_to_ui so they can never disagree.
+    _apply_state_to_ui so they can never disagree. Whether Save is enabled
+    reads the same state (see _can_save) and additionally follows the headword,
+    so the button is live exactly when saving would write a card.
 
     Saved-list row behaviour that a subclass wants to add (for example
     tick-to-link checkboxes) is factored behind five hooks called at fixed
@@ -497,6 +508,14 @@ class FlashcardEditorBase(QWidget):
     # per keystroke. The main window shows it as a "*" on the dock title, the
     # way a text editor marks a modified file.
     altered_changed = Signal(bool)
+    # The New button's dropdown item was chosen. Like new_button.clicked, the
+    # panel only announces it: the main window owns the sources it fills from
+    # (the search box, the Cambridge page, the book match).
+    fill_empty_requested = Signal()
+
+    #: The smallest gap left between Clear and Save, in pixels. Wider whenever
+    #: the panel has room; never narrower, however narrow the panel gets.
+    _SAVE_GAP = 24
 
     _PRINTED_ROLE = Qt.ItemDataRole.UserRole + 1
     _STARRED_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -508,7 +527,7 @@ class FlashcardEditorBase(QWidget):
         self.state = EditorState()
         # The state is pure logic and holds no Qt; it announces an altered flip
         # through a plain callback, which becomes this widget's signal here.
-        self.state.on_altered_changed = self.altered_changed.emit
+        self.state.on_altered_changed = self._on_altered_changed
         self.active_row = None
         self._audio_uk_url = None
         self._audio_us_url = None
@@ -688,33 +707,78 @@ class FlashcardEditorBase(QWidget):
 
         layout.addLayout(form)
 
-        layout.addWidget(QLabel("Senses"))
+        # The sense button heads its own section rather than sitting with the
+        # card actions at the bottom. It acts on the list right below it, so it
+        # reads as part of that list and is never mistaken for a Clear or Save.
+        senses_header = QHBoxLayout()
+        senses_header.addWidget(QLabel("Senses"))
+        senses_header.addStretch()
+        self.add_sense_button = QPushButton("+ Add sense")
+        self.add_sense_button.setToolTip("Add another sense to this card")
+        self.add_sense_button.clicked.connect(self.add_sense)
+        senses_header.addWidget(self.add_sense_button)
+        layout.addLayout(senses_header)
+
         self.senses_container = QVBoxLayout()
         senses_widget = QWidget()
         senses_widget.setLayout(self.senses_container)
         layout.addWidget(senses_widget)
 
-        self.add_sense_button = QPushButton("+ Add sense")
-        self.add_sense_button.clicked.connect(self.add_sense)
-        layout.addWidget(self.add_sense_button)
-
         buttons = QHBoxLayout()
-        self.new_button = QPushButton("New from word")
+        # A split button: the wide part is New itself, the arrow beside it drops
+        # down the variant that fills the blanks instead of starting over. They
+        # share a button because they share a source (the page on screen) and
+        # differ only in what they are allowed to overwrite.
+        self.new_button = QToolButton()
+        self.new_button.setText("New")
+        self.new_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.new_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        )
+        # A tool button is compact by default; match the push buttons beside it
+        # so the row keeps one height and shares its width evenly.
+        self.new_button.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
+        )
         self.new_button.setToolTip(
             "Ctrl+N: start a card and fill headword, IPA, spelling and audio "
             "from the Cambridge page. Ctrl+click skips the discard confirmation."
         )
+        self.new_menu = QMenu(self.new_button)
+        self.fill_empty_action = self.new_menu.addAction("Fill empty fields")
+        self.fill_empty_action.setToolTip(
+            "Fill only the fields that are still blank from the page on screen, "
+            "keeping the card and everything already in it."
+        )
+        self.fill_empty_action.triggered.connect(self.fill_empty_requested)
+        self.new_button.setMenu(self.new_menu)
         self.clear_button = QPushButton("Clear")
         self.clear_button.setToolTip(
             "Empty the editor. Ctrl+click skips the discard confirmation."
         )
         self.clear_button.clicked.connect(self.clear_editor)
-        # The Save button label switches with the mode: "Add card" when new,
-        # "Save changes" when editing (set in _apply_state_to_ui).
-        self.save_button = QPushButton("Add card")
+        # The Save button label switches with the mode: "Save card" when new,
+        # "Save changes" when editing (set in _apply_state_to_ui). Whether it is
+        # enabled tracks the headword and the altered flag, so it is live only
+        # when saving would actually write a card (see _update_save_button).
+        self.save_button = QPushButton("Save card")
         self.save_button.clicked.connect(self.save_card)
+        self.headword_input.textChanged.connect(self._update_save_button)
+        # A tool button asks for less room than a push button, which would leave
+        # the row uneven and the dropdown arrow a cramped target. Match Clear in
+        # both directions instead.
+        self.new_button.setMinimumHeight(self.clear_button.sizeHint().height())
+        self.new_button.setMinimumWidth(self.clear_button.sizeHint().width())
+        # New and Clear are the two that throw work away, so they keep to the
+        # left and Save sits on its own at the right, out of reach of a misclick
+        # meant for Clear. The stretch opens the gap as wide as the panel allows
+        # and the spacing keeps a gap there even when the panel is narrow.
         buttons.addWidget(self.new_button)
         buttons.addWidget(self.clear_button)
+        buttons.addStretch()
+        buttons.addSpacing(self._SAVE_GAP)
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
         layout.addStretch()
@@ -795,8 +859,42 @@ class FlashcardEditorBase(QWidget):
             self.save_button.setText("Save changes")
             self.id_input.setText(self.state.loaded_card_id or "")
         else:
-            self.save_button.setText("Add card")
+            self.save_button.setText("Save card")
             self.id_input.setText("")
+        self._update_save_button()
+
+    def _on_altered_changed(self, altered: bool) -> None:
+        """The card's altered flag flipped. Announce it, and refresh the one
+        piece of the UI that depends on it: whether Save is live."""
+        self.altered_changed.emit(altered)
+        self._update_save_button()
+
+    def _can_save(self) -> bool:
+        """Whether pressing Save would actually write a card.
+
+        Both modes need a headword, because build_card refuses without one.
+        Editing additionally needs an edit: re-saving a card nobody has touched
+        would write the same card back. New mode has no such baseline, and the
+        Cambridge auto-fill deliberately leaves the card unaltered, so a card
+        filled entirely by a search is saveable the moment its headword
+        arrives."""
+        if not self.headword_input.text().strip():
+            return False
+        return self.state.is_new or self.state.altered
+
+    def _update_save_button(self) -> None:
+        """Enable or disable Save, and say in the tooltip why it is off.
+
+        Ctrl+S still reaches save_card while the button is disabled, and is
+        answered there with a status message, so nothing becomes unreachable."""
+        enabled = self._can_save()
+        self.save_button.setEnabled(enabled)
+        if enabled:
+            self.save_button.setToolTip("Ctrl+S: save this card")
+        elif not self.headword_input.text().strip():
+            self.save_button.setToolTip("A headword is needed before saving")
+        else:
+            self.save_button.setToolTip("No changes to save")
 
     # --- sense rows -----------------------------------------------------
 
@@ -880,11 +978,13 @@ class FlashcardEditorBase(QWidget):
     def add_book_tag(self, tag: str) -> None:
         """Record the book that has just filled something into this card.
 
-        Called only from autofill_book_example, so it only ever runs on an
-        unaltered card. A blank tag, or one the card already carries, does
-        nothing. Otherwise the field is rewritten with the tag appended, inside
-        the programmatic guard so this passive tagging never marks the card
-        altered (which would stop the next book match refilling it)."""
+        Called only from the two book-example fills, and only when one of them
+        actually took a sentence: the tag records where that sentence came from,
+        so a card that took nothing from the book is not tagged with it. A blank
+        tag, or one the card already carries, does nothing. Otherwise the field
+        is rewritten with the tag appended, inside the programmatic guard, so
+        the tagging never marks the card altered (which would stop the next book
+        match refilling it)."""
         tag = normalise_tag(tag)
         if not tag:
             return
@@ -970,6 +1070,103 @@ class FlashcardEditorBase(QWidget):
     def _update_play_buttons(self):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
         self.play_us_button.setEnabled(bool(self._audio_us_url))
+
+    # --- gap fill (deliberate, blank fields only) -------------------------
+    #
+    # Asked for by hand, unlike the autofills above, so it runs whatever the
+    # card's altered state; but it only ever writes into a field that is still
+    # blank, so nothing already on the card can be lost. It leaves the card's
+    # altered flag exactly as it found it: every write runs inside the
+    # programmatic guard and nothing marks the card afterwards. A blank new card
+    # therefore stays as open to the passive grabs as a freshly cleared one, a
+    # card the user was already editing stays altered, and a saved card stays
+    # unaltered.
+
+    def _fill_if_empty(self, field: QLineEdit, value) -> bool:
+        """Write a value into a field only while that field is blank, and say
+        whether it wrote.
+
+        The half of the gap fill that touches one field. It runs inside the
+        caller's programmatic guard, so it never marks the card altered."""
+        value = (value or "").strip()
+        if not value or field.text().strip():
+            return False
+        _fill(field, value)
+        return True
+
+    def _set_audio_if_empty(self, region: str, url) -> bool:
+        """The audio equivalent of _fill_if_empty. A region already holding a
+        clip keeps it."""
+        url = (url or "").strip()
+        if not url:
+            return False
+        if region == "uk" and not self._audio_uk_url:
+            self._audio_uk_url = url
+            return True
+        if region == "us" and not self._audio_us_url:
+            self._audio_us_url = url
+            return True
+        return False
+
+    def fill_empty_headword(self, word: str) -> bool:
+        """Gap fill of the headword from the search phrase.
+
+        The deliberate counterpart of autofill_headword: it runs whatever the
+        card's altered state, and it writes only into a blank field, so a card
+        already about something keeps its subject."""
+        with self._programmatic():
+            return self._fill_if_empty(self.headword_input, word)
+
+    def fill_empty_pronunciation(
+        self,
+        ipa_uk,
+        ipa_us,
+        audio_uk_url,
+        audio_us_url,
+        spelling_uk=None,
+        spelling_us=None,
+        word=None,
+    ) -> bool:
+        """Gap fill from a Cambridge page: fill every blank grab field and leave
+        every filled one alone.
+
+        The deliberate counterpart of autofill_pronunciation. That one is
+        passive: it runs only while the card is unaltered and then rewrites the
+        whole grab, blanks included, so a later page load can replace an earlier
+        one wholesale. This one is asked for by hand, so it runs at any time and
+        never overwrites: it is for topping up a half-filled or saved card from
+        the page now on screen."""
+        with self._programmatic():
+            filled = [
+                self._fill_if_empty(self.headword_input, word),
+                self._fill_if_empty(self.ipa_uk_input, ipa_uk),
+                self._fill_if_empty(self.ipa_us_input, ipa_us),
+                self._fill_if_empty(self.spelling_uk_input, spelling_uk),
+                self._fill_if_empty(self.spelling_us_input, spelling_us),
+                self._set_audio_if_empty("uk", audio_uk_url),
+                self._set_audio_if_empty("us", audio_us_url),
+            ]
+        self._update_play_buttons()
+        return any(filled)
+
+    def fill_empty_book_example(self, sentence: str, book_tag: str = "") -> bool:
+        """Gap fill of the book match sentence into the first sense's first
+        example, and of that book's tag with it.
+
+        The deliberate counterpart of autofill_book_example: any altered state,
+        but only into a first example that is still blank. A sense row that
+        already has an example keeps it, and is not tagged with the book
+        either, because nothing was taken from it."""
+        sentence = (sentence or "").strip()
+        if not sentence:
+            return False
+        row = self._rows()[0]
+        if row.first_example_text():
+            return False
+        with self._programmatic():
+            row.set_first_example(sentence)
+            self.add_book_tag(book_tag)
+        return True
 
     def set_audio(self, region: str, url: str) -> None:
         """Replace one region's pronunciation clip with one captured from the

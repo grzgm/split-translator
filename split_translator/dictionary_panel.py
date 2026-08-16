@@ -89,6 +89,18 @@ _DIKI_AUDIO_GATE_JS = r"""
 """
 
 
+def _parse_grab(result) -> dict:
+    """The pronunciation grab's return value as a dict.
+
+    runJavaScript hands back the JSON string _GRAB_JS builds (a bare object
+    would arrive empty, see _GRAB_JS). A page that returned nothing, or
+    anything unparseable, is an empty grab rather than an error."""
+    try:
+        return json.loads(result) if result else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
 class CaptureWebView(QWebEngineView):
     """A web view whose right-click menu keeps the browser defaults and adds the
     two flashcard capture actions below them."""
@@ -328,16 +340,28 @@ class DictionaryPanel(QWidget):
     })();
     """
 
-    def grab_pronunciation(self):
+    def grab_pronunciation(self, callback=None):
+        """Read the pronunciation block off the Cambridge English page.
+
+        With no callback the result goes out on pronunciation_grabbed, the
+        passive path taken on every app search. With one, the data is handed to
+        that caller alone and the signal stays quiet, so a deliberate one-shot
+        grab is answered by the page the user is looking at and cannot be
+        confused with an unrelated page load, and no passive listener acts on a
+        grab it did not ask for. Same callback shape as
+        BookPanel.current_match_sentence."""
         js = self._GRAB_JS.replace("__BLOCK_PRON_JS__", _BLOCK_PRON_JS)
-        self.cambridge_en_view.page().runJavaScript(js, self._on_pronunciation)
+        if callback is None:
+            self.cambridge_en_view.page().runJavaScript(
+                js, self._on_pronunciation
+            )
+            return
+        self.cambridge_en_view.page().runJavaScript(
+            js, lambda result: callback(_parse_grab(result))
+        )
 
     def _on_pronunciation(self, result):
-        try:
-            data = json.loads(result) if result else {}
-        except (json.JSONDecodeError, TypeError):
-            data = {}
-        self.pronunciation_grabbed.emit(data)
+        self.pronunciation_grabbed.emit(_parse_grab(result))
 
     # Detect whether Cambridge marks the headword as plural-only. Grammar notes
     # live in span.gram.dgram blocks rendered like "[ plural ]". The word is
