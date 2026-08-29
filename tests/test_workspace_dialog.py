@@ -163,6 +163,29 @@ class DialogRenameTests(unittest.TestCase):
             self.assertEqual(dialog.chosen, "lalka-prus")
             self.assertIsNone(dialog.rename)
 
+    def test_renaming_the_open_workspace_back_again_cancels_the_move(self):
+        # The deferred move is recorded on the first rename. Editing the name
+        # back to what it was leaves the slug already correct, so the move must
+        # be dropped: performing it would move the folder to a name the user
+        # abandoned.
+        with _Root() as root:
+            current = root.workspace("Lalka")
+            other = root.workspace("Other")
+            dialog = WorkspaceDialog(current.slug)
+            dialog.select_slug(current.slug)
+            dialog.name_input.setText("Lalka Prus")
+            dialog.on_edited()
+            dialog.select_slug(other.slug)
+            self.assertEqual(dialog.rename, (current.slug, "lalka-prus"))
+            dialog.select_slug(current.slug)
+            dialog.name_input.setText("Lalka")
+            dialog.on_edited()
+            dialog.accept()
+            self.assertIsNone(dialog.rename)
+            self.assertEqual(dialog.chosen, current.slug)
+            self.assertTrue(current.dir.is_dir())
+            self.assertFalse((root.path / "lalka-prus").exists())
+
     def test_renaming_the_open_workspace_defers_the_folder_move(self):
         # Its stores still hold paths into this folder, so the move has to wait
         # until closeEvent has flushed them.

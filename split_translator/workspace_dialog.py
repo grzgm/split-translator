@@ -317,6 +317,11 @@ class WorkspaceDialog(QDialog):
             return workspace
         desired = slugify(workspace.name, taken_slugs() - {workspace.slug})
         if desired == workspace.slug:
+            # The slug already matches, so nothing moves. Drop any deferred move
+            # recorded earlier in this dialog: a name edited away and then back
+            # again would otherwise still move the folder to the abandoned name.
+            if workspace.slug == self.current_slug:
+                self.rename = None
             return workspace
         if workspace.slug == self.current_slug:
             # Deferred: this workspace's stores still hold paths into the

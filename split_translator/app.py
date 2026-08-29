@@ -27,6 +27,7 @@ from .workspace import (
     rename_workspace_folder,
     set_last_workspace,
     startup_slug,
+    workspace_dir,
 )
 from .workspace_dialog import WorkspaceDialog
 
@@ -75,7 +76,11 @@ def apply_pending_rename(
             f"'{old_slug}':\n\n{exc}\n\n"
             "The workspace still opens normally.",
         )
-        if next_slug == new_slug:
+        # Fall back to the folder that still exists, but only when the target
+        # really is absent. A different workspace may have claimed that slug
+        # since the move was recorded, which is what made the move fail; opening
+        # the old folder then would open the wrong workspace.
+        if next_slug == new_slug and not workspace_dir(new_slug).is_dir():
             return old_slug
     return next_slug
 

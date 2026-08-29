@@ -57,3 +57,35 @@ class PendingRenameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PendingRenameCollisionTests(unittest.TestCase):
+    """A failed move must not send the loop to the wrong workspace.
+
+    The fallback to the old folder is only right when the target folder is not
+    there. If another workspace claimed that slug after the move was recorded,
+    which is exactly what makes the move fail, the slug the user chose is a real
+    workspace and opening the old folder would open the wrong one.
+    """
+
+    def test_falls_back_to_the_old_slug_when_the_target_is_absent(self):
+        with patch(
+            "split_translator.app.rename_workspace_folder",
+            side_effect=OSError("read-only"),
+        ), patch("split_translator.app.QMessageBox"), patch(
+            "split_translator.app.workspace_dir"
+        ) as target:
+            target.return_value.is_dir.return_value = False
+            slug = apply_pending_rename(("lalka", "lalka-prus"), "lalka-prus")
+        self.assertEqual(slug, "lalka")
+
+    def test_keeps_the_chosen_slug_when_another_workspace_holds_it(self):
+        with patch(
+            "split_translator.app.rename_workspace_folder",
+            side_effect=OSError("target exists"),
+        ), patch("split_translator.app.QMessageBox"), patch(
+            "split_translator.app.workspace_dir"
+        ) as target:
+            target.return_value.is_dir.return_value = True
+            slug = apply_pending_rename(("lalka", "lalka-prus"), "lalka-prus")
+        self.assertEqual(slug, "lalka-prus")
