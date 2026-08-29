@@ -11,7 +11,7 @@ pip install -r requirements.txt
 On first launch the app opens the workspace picker, because there are no
 workspaces yet. Create one, give it a name, and point it at the original book
 and its translation. Everything that workspace collects (its search history,
-flashcard deck and page anchors) is stored in its own folder, so a second
+flashcard deck and content anchors) is stored in its own folder, so a second
 workspace for a different book starts empty.
 
 Switch workspace, or change a workspace's book paths, from *View* then
