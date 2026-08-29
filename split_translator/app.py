@@ -51,6 +51,35 @@ def choose_startup_workspace() -> str | None:
     return pick_workspace()
 
 
+def apply_pending_rename(
+    pending: tuple[str, str] | None, next_slug: str | None
+) -> str | None:
+    """Perform the deferred folder move, and report the slug to open next.
+
+    The move waits until here because it cannot run while the window's stores
+    hold paths into that folder. A failure is reported and not rolled back, as
+    the spec asks: the new name is already in the workspace's config.json and
+    the workspace still loads from its old folder. That folder is then the one
+    to open, because the slug the dialog allocated was never created.
+    """
+    if pending is None:
+        return next_slug
+    old_slug, new_slug = pending
+    try:
+        rename_workspace_folder(old_slug, new_slug)
+    except OSError as exc:
+        QMessageBox.warning(
+            None,
+            "Could not rename the workspace folder",
+            f"The new name is saved, but the folder is still named "
+            f"'{old_slug}':\n\n{exc}\n\n"
+            "The workspace still opens normally.",
+        )
+        if next_slug == new_slug:
+            return old_slug
+    return next_slug
+
+
 def main() -> int:
     # Set the application name before creating QApplication so QStandardPaths resolves
     # the profile directory to ~/.local/share/split-translator (and the right place on
@@ -89,12 +118,11 @@ def main() -> int:
         app.exec()
         # The folder move is deferred to here because it cannot run while the
         # window's stores hold paths into that folder. The dialog already
-        # allocated the new slug and set next_workspace to it, so nothing is
-        # discovered here. settings.json needs no repair either: the next
-        # iteration records the new slug when it opens the workspace.
-        if window.pending_rename is not None:
-            rename_workspace_folder(*window.pending_rename)
-        slug = window.next_workspace
+        # allocated the new slug and set next_workspace to it, so no slug is
+        # discovered here; only a failed move changes which one is opened.
+        # settings.json needs no repair either: the next iteration records the
+        # slug it opens the workspace with.
+        slug = apply_pending_rename(window.pending_rename, window.next_workspace)
         window.deleteLater()
 
     return 0

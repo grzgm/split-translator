@@ -233,6 +233,29 @@ class DialogRenameTests(unittest.TestCase):
             self.assertEqual(dialog.chosen, other.slug)
             self.assertEqual(dialog.rename, (current.slug, "aaa-renamed"))
 
+    def test_a_failed_folder_move_is_reported_and_the_workspace_still_opens(self):
+        # The spec keeps the new name in config.json and the folder where it is:
+        # the workspace still loads, only the listing is less tidy.
+        with _Root() as root:
+            other = root.workspace("Other")
+            target = root.workspace("Lalka")
+            dialog = WorkspaceDialog(other.slug)
+            dialog.select_slug(target.slug)
+            dialog.name_input.setText("Lalka Prus")
+            dialog.on_edited()
+            with patch(
+                "split_translator.workspace_dialog.rename_workspace_folder",
+                side_effect=OSError("read-only file system"),
+            ), patch(
+                "split_translator.workspace_dialog.QMessageBox.warning"
+            ) as warning:
+                dialog.accept()
+            self.assertEqual(warning.call_count, 1)
+            self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.chosen, target.slug)
+            self.assertTrue(target.dir.exists())
+            self.assertEqual(read_workspace(target.dir).name, "Lalka Prus")
+
     def test_opening_without_renaming_never_moves_the_folder(self):
         # A workspace whose slug no longer matches its name (an old collision
         # suffix, say) must not be quietly moved just by being opened.

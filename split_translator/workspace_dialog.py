@@ -324,7 +324,21 @@ class WorkspaceDialog(QDialog):
             # has not moved, so the slug and dir here stay as they are.
             self.rename = (workspace.slug, desired)
             return workspace
-        rename_workspace_folder(workspace.slug, desired)
+        try:
+            rename_workspace_folder(workspace.slug, desired)
+        except OSError as exc:
+            # The new name is already in config.json and the workspace still
+            # loads from its old folder, so the failure is reported and the work
+            # carries on. Rolling back would need a second move that can fail
+            # the same way.
+            QMessageBox.warning(
+                self,
+                "Could not rename the workspace folder",
+                f"'{workspace.name}' is saved, but its folder is still named "
+                f"'{workspace.slug}':\n\n{exc}\n\n"
+                "The workspace still opens normally.",
+            )
+            return workspace
         return replace(
             workspace, slug=desired, dir=workspace.dir.parent / desired
         )
