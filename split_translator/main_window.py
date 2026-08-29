@@ -6,6 +6,7 @@ from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QHBoxLayout,
     QLabel,
@@ -29,6 +30,8 @@ from .history import HistoryPanel
 from .shortcuts import SHORTCUTS
 from .shortcuts_dialog import ShortcutsDialog
 from .status_bar import StatusBar
+from .workspace import read_workspace
+from .workspace_dialog import WorkspaceDialog
 
 
 def _grab_headword(data, search_text: str) -> str | None:
@@ -73,6 +76,13 @@ class TranslationTool(QMainWindow):
         self.flashcard_graph_window = None
         self.flashcard_print_window = None
 
+        # Set when the user picks a different workspace (or renames the open
+        # one, which moves its folder). app.main reads both after this window
+        # closes: the window is rebuilt rather than re-pointed, because every
+        # store's path is fixed at construction.
+        self.next_workspace: str | None = None
+        self.pending_rename: tuple[str, str] | None = None
+
         self.init_ui()
         self.setup_menu()
         self.setup_shortcuts()
@@ -85,7 +95,9 @@ class TranslationTool(QMainWindow):
         return book_tag(self.config.original_path)
 
     def init_ui(self):
-        self.setWindowTitle("Translation Tool")
+        # The workspace name is in the title because the panels look identical
+        # from one workspace to the next.
+        self.setWindowTitle(f"Translation Tool - {self.config.name}")
         self.setGeometry(100, 100, 1800, 900)
 
         central_widget = QWidget()
@@ -157,11 +169,18 @@ class TranslationTool(QMainWindow):
         print_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
         print_action.triggered.connect(self.open_flashcard_print)
 
+        workspace_action = QAction("Workspaces...", self)
+        workspace_action.triggered.connect(self.open_workspaces)
+
         view_menu = QMenu("View", self)
         view_menu.addAction(flashcard_action)
         view_menu.addAction(anchor_action)
         view_menu.addAction(graph_action)
         view_menu.addAction(print_action)
+        # Separated because this one is not a view: it changes which data the
+        # whole window is showing.
+        view_menu.addSeparator()
+        view_menu.addAction(workspace_action)
 
         view_button = QToolButton()
         view_button.setText("View")
@@ -468,6 +487,47 @@ class TranslationTool(QMainWindow):
         self.flashcard_print_window.raise_()
         self.flashcard_print_window.activateWindow()
 
+    def open_workspaces(self):
+        """Show the workspace picker.
+
+        Choosing a different workspace, renaming the open one, or changing its
+        book paths all close this window; app.main then builds a fresh one.
+        Nothing is swapped in place: every store's path is fixed when it is
+        constructed, and closeEvent is the only code that flushes them.
+        """
+        current = self.config.dir.name
+        dialog = WorkspaceDialog(current, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.chosen is None:
+            return
+        if dialog.chosen == current and dialog.rename is None:
+            # Same workspace and same folder, so a rebuild is only needed if the
+            # books changed underneath us.
+            reloaded = read_workspace(self.config.dir)
+            if (
+                reloaded is not None
+                and reloaded.original_path == self.config.original_path
+                and reloaded.translation_path == self.config.translation_path
+            ):
+                return
+        self.next_workspace = dialog.chosen
+        self.pending_rename = dialog.rename
+        self.close()
+
+    def close_child_windows(self):
+        """Close the flashcard graph and print windows.
+
+        Both are created with no parent, so they are independent top-level
+        windows. Two things follow: app.exec() does not return while one is
+        still visible, which would hang a workspace switch, and each holds this
+        workspace's flashcard store, so a survivor would sit there showing the
+        previous workspace's deck.
+        """
+        for window in (self.flashcard_graph_window, self.flashcard_print_window):
+            if window is not None:
+                window.close()
+
     def refresh_flashcard_graph(self):
         window = self.flashcard_graph_window
         if window is not None and window.isVisible():
@@ -649,6 +709,7 @@ class TranslationTool(QMainWindow):
 
 
     def closeEvent(self, event):
+        self.close_child_windows()
         self.history_panel.shutdown()
         self.flashcard_store.shutdown()
         self.book_panel.close_doc()
