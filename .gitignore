@@ -184,3 +184,5 @@ todo.md
 
 # Personal config and storage (book paths, history, flashcards, anchors)
 .config/
+# Subagent-driven development scratch (ledger, briefs, review packages)
+.superpowers/
