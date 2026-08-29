@@ -14,8 +14,14 @@ CONFIG_PATH = CONFIG_DIR / "config.json"
 
 @dataclass(frozen=True)
 class Config:
-    """Resolved application configuration."""
+    """Resolved configuration for one workspace."""
 
+    # The workspace's display name, shown in the window title.
+    name: str
+    # The folder this config was loaded from. Every store writes its file here,
+    # which is what makes one config file per workspace enough to keep the
+    # workspaces apart.
+    dir: Path
     original_path: str
     translation_path: str
     page_anchors: list[tuple[int, int]]
@@ -47,6 +53,10 @@ def load_config(config_path: Path = CONFIG_PATH) -> Config:
         # per-book-pair anchor store, so a config without it loads fine.
         page_anchors = [tuple(anchor) for anchor in raw.get("page_anchors", [])]
         return Config(
+            # The folder name is the fallback, so a config.json written by hand
+            # without a name still titles the window with something useful.
+            name=str(raw.get("name") or config_path.parent.name),
+            dir=config_path.parent,
             original_path=raw["original_path"],
             translation_path=raw["translation_path"],
             page_anchors=page_anchors,

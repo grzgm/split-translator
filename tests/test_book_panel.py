@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import QApplication
@@ -282,6 +283,8 @@ from tests.fixtures.make_fixtures import make_epub
 def _config(d):
     epub = make_epub(d)
     return Config(
+        name="Test",
+        dir=Path(d),
         original_path=epub,
         translation_path=epub,
         page_anchors=[],
@@ -419,10 +422,8 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
                 AnchorStore,
                 anchor_path_for,
             )
-            from split_translator.config import CONFIG_DIR
-
             path = anchor_path_for(
-                cfg.original_path, cfg.translation_path, CONFIG_DIR
+                cfg.original_path, cfg.translation_path, cfg.dir
             )
             seed = AnchorStore(path)
             seed.set_scroll(READER_SURFACE, ("b1", 0.0), ("b1", 0.0))
@@ -812,10 +813,8 @@ class BookPanelNormaliseTests(unittest.TestCase):
                 AnchorStore,
                 anchor_path_for,
             )
-            from split_translator.config import CONFIG_DIR
-
             path = anchor_path_for(
-                cfg.original_path, cfg.translation_path, CONFIG_DIR
+                cfg.original_path, cfg.translation_path, cfg.dir
             )
             seed = AnchorStore(path)
             seed.set_normalise(READER_SURFACE, False)

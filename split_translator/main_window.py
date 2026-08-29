@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .book_panel import BookPanel
-from .config import CONFIG_DIR, Config
+from .config import Config
 from .dictionary_panel import DictionaryPanel
 from .flashcard_graph import FlashcardGraphWindow
 from .flashcard_panel import FlashcardPanel
@@ -56,11 +56,13 @@ class TranslationTool(QMainWindow):
         self.config = config
         self.profile = profile
 
-        history_file = CONFIG_DIR / "history.json"
+        # Every store writes into the open workspace's own folder, which is what
+        # keeps one workspace's deck and history out of another's.
+        history_file = self.config.dir / "history.json"
         self.history_panel = HistoryPanel(history_file)
 
-        flashcards_file = CONFIG_DIR / "flashcards.json"
-        flashcard_links_file = CONFIG_DIR / "flashcard_links.json"
+        flashcards_file = self.config.dir / "flashcards.json"
+        flashcard_links_file = self.config.dir / "flashcard_links.json"
         self.flashcard_store = FlashcardStore(flashcards_file, flashcard_links_file)
         self.flashcard_panel = FlashcardPanel(self.flashcard_store)
         # The tag recording which book a card's example came from. Computed once

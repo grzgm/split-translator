@@ -37,3 +37,39 @@ class ConfigTests(unittest.TestCase):
             )
             config = load_config(path)
             self.assertEqual(config.page_anchors, [(0, 0), (10, 8)])
+
+    def test_exposes_the_folder_it_was_loaded_from(self):
+        # Every store reads its file from here, which is what makes one config
+        # file per workspace enough to isolate a workspace's data.
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(
+                d,
+                {
+                    "original_path": "/books/a.epub",
+                    "translation_path": "/books/b.epub",
+                },
+            )
+            self.assertEqual(load_config(path).dir, Path(d))
+
+    def test_reads_the_workspace_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(
+                d,
+                {
+                    "name": "Pan Tadeusz",
+                    "original_path": "/books/a.epub",
+                    "translation_path": "/books/b.epub",
+                },
+            )
+            self.assertEqual(load_config(path).name, "Pan Tadeusz")
+
+    def test_falls_back_to_the_folder_name_when_unnamed(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(
+                d,
+                {
+                    "original_path": "/books/a.epub",
+                    "translation_path": "/books/b.epub",
+                },
+            )
+            self.assertEqual(load_config(path).name, Path(d).name)
