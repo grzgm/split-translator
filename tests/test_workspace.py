@@ -5,6 +5,7 @@ from pathlib import Path
 
 from split_translator.workspace import (
     Workspace,
+    both_books_resolve,
     create_workspace,
     delete_workspace,
     duplicate_workspace,
@@ -17,6 +18,7 @@ from split_translator.workspace import (
     save_workspace,
     set_last_workspace,
     slugify,
+    startup_slug,
     taken_slugs,
 )
 
@@ -270,3 +272,88 @@ class RenameWorkspaceFolderTests(unittest.TestCase):
                 sorted(ws.slug for ws in list_workspaces(Path(d))),
                 ["lalka", "solaris"],
             )
+
+
+class BothBooksResolveTests(unittest.TestCase):
+    def _workspace(self, original, translation):
+        return Workspace(
+            slug="w",
+            name="W",
+            dir=Path("/nowhere"),
+            original_path=original,
+            translation_path=translation,
+        )
+
+    def test_true_when_both_files_exist(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = Path(d) / "a.epub"
+            b = Path(d) / "b.epub"
+            a.write_text("", encoding="utf-8")
+            b.write_text("", encoding="utf-8")
+            self.assertTrue(both_books_resolve(self._workspace(str(a), str(b))))
+
+    def test_false_when_a_path_is_blank(self):
+        self.assertFalse(both_books_resolve(self._workspace("", "")))
+
+    def test_false_when_a_book_has_moved(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = Path(d) / "a.epub"
+            a.write_text("", encoding="utf-8")
+            gone = str(Path(d) / "gone.epub")
+            self.assertFalse(both_books_resolve(self._workspace(str(a), gone)))
+
+    def test_false_when_a_path_is_a_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = Path(d) / "a.epub"
+            a.write_text("", encoding="utf-8")
+            self.assertFalse(both_books_resolve(self._workspace(str(a), d)))
+
+
+class StartupSlugTests(unittest.TestCase):
+    def _books(self, d):
+        a = Path(d) / "a.epub"
+        b = Path(d) / "b.epub"
+        a.write_text("", encoding="utf-8")
+        b.write_text("", encoding="utf-8")
+        return str(a), str(b)
+
+    def test_none_when_nothing_is_recorded(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "workspaces"
+            root.mkdir()
+            self.assertIsNone(startup_slug(root, Path(d) / "settings.json"))
+
+    def test_none_when_the_recorded_workspace_is_gone(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "workspaces"
+            root.mkdir()
+            settings = Path(d) / "settings.json"
+            set_last_workspace("vanished", settings)
+            self.assertIsNone(startup_slug(root, settings))
+
+    def test_none_when_a_book_cannot_be_read(self):
+        # load_book raises ValueError on an unreadable file, which would crash
+        # BookPanel's constructor, so this case must reach the picker instead.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "workspaces"
+            root.mkdir()
+            _write_workspace(
+                root, "lalka", name="Lalka", original="/gone/a.epub",
+                translation="/gone/b.epub",
+            )
+            settings = Path(d) / "settings.json"
+            set_last_workspace("lalka", settings)
+            self.assertIsNone(startup_slug(root, settings))
+
+    def test_returns_the_slug_when_everything_resolves(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "workspaces"
+            root.mkdir()
+            original, translation = self._books(d)
+            _write_workspace(
+                root, "lalka", name="Lalka",
+                original=original, translation=translation,
+            )
+            settings = Path(d) / "settings.json"
+            set_last_workspace("lalka", settings)
+            self.assertEqual(startup_slug(root, settings), "lalka")

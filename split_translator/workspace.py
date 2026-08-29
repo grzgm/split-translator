@@ -267,3 +267,36 @@ def rename_workspace_folder(
         return
     root = root or WORKSPACES_DIR
     (root / old_slug).rename(root / new_slug)
+
+
+def both_books_resolve(workspace: Workspace) -> bool:
+    """Whether both of a workspace's book paths point at a file that exists.
+
+    One rule with one implementation, used by the picker to enable Open and by
+    app.main to decide whether a workspace can be launched into. It matters
+    because book_loader.load_book raises ValueError on an unreadable file, which
+    would crash BookPanel's constructor before anything could offer a repair.
+    """
+    return bool(
+        workspace.original_path
+        and workspace.translation_path
+        and Path(workspace.original_path).is_file()
+        and Path(workspace.translation_path).is_file()
+    )
+
+
+def startup_slug(
+    root: Path | None = None, settings_path: Path | None = None
+) -> str | None:
+    """The workspace to open without asking, or None when the picker is needed.
+
+    None when nothing is recorded, when the recorded workspace is no longer on
+    disk, or when its books cannot be read.
+    """
+    slug = last_workspace(settings_path)
+    if not slug:
+        return None
+    workspace = read_workspace((root or WORKSPACES_DIR) / slug)
+    if workspace is None or not both_books_resolve(workspace):
+        return None
+    return slug
