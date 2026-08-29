@@ -12,6 +12,7 @@ perform once closeEvent has flushed them.
 """
 
 import json
+from dataclasses import replace
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -182,10 +183,7 @@ class WorkspaceDialog(QDialog):
         self._loading = True
         self.list_widget.clear()
         for workspace in self._workspaces:
-            label = workspace.name
-            if workspace.slug == self.current_slug:
-                label = f"{label}   (open)"
-            self.list_widget.addItem(label)
+            self.list_widget.addItem(self.label_for(workspace))
         self._loading = False
 
         if not self._workspaces:
@@ -198,6 +196,12 @@ class WorkspaceDialog(QDialog):
             if select in slugs:
                 row = slugs.index(select)
         self.list_widget.setCurrentRow(row)
+
+    def label_for(self, workspace: Workspace) -> str:
+        """The list row for a workspace, marking the one that is open."""
+        if workspace.slug == self.current_slug:
+            return f"{workspace.name}   (open)"
+        return workspace.name
 
     def select_slug(self, slug: str):
         """Select a workspace by slug. Used by the tests and after New."""
@@ -279,15 +283,51 @@ class WorkspaceDialog(QDialog):
             field.setText(path)
 
     def flush(self):
-        """Write the form back into the selected workspace's config.json."""
+        """Write the form back into the selected workspace's config.json.
+
+        Every path that saves edits goes through here, pressing Open and picking
+        another row alike, so this is also where a name change moves the folder.
+        Deciding that in accept() instead would leave a workspace renamed by
+        selecting away from it with a folder name that no longer matches, and no
+        way to catch up short of renaming it a second time.
+        """
         if self._selected is None or not self._dirty:
             return
+        index = self._workspaces.index(self._selected)
         workspace = self.form_workspace()
         save_workspace(workspace)
-        index = self._workspaces.index(self._selected)
+        workspace = self.apply_rename(workspace)
         self._workspaces[index] = workspace
         self._selected = workspace
+        self._loaded_name = workspace.name
         self._dirty = False
+        item = self.list_widget.item(index)
+        if item is not None:
+            item.setText(self.label_for(workspace))
+
+    def apply_rename(self, workspace: Workspace) -> Workspace:
+        """Move a just-saved workspace's folder to match its new name.
+
+        Returns the workspace as it now stands on disk, so the list and the
+        selection never drift from it. A move is only ever considered when the
+        name changed in this dialog, so merely opening a workspace whose slug no
+        longer matches its name (an old collision suffix) never moves it.
+        """
+        if workspace.name == self._loaded_name:
+            return workspace
+        desired = slugify(workspace.name, taken_slugs() - {workspace.slug})
+        if desired == workspace.slug:
+            return workspace
+        if workspace.slug == self.current_slug:
+            # Deferred: this workspace's stores still hold paths into the
+            # folder, so the move waits for closeEvent to flush them. The folder
+            # has not moved, so the slug and dir here stay as they are.
+            self.rename = (workspace.slug, desired)
+            return workspace
+        rename_workspace_folder(workspace.slug, desired)
+        return replace(
+            workspace, slug=desired, dir=workspace.dir.parent / desired
+        )
 
     def _ask_name(self, title: str, default: str = "") -> str | None:
         """Prompt for a workspace name. Split out so tests can drive it."""
@@ -362,24 +402,20 @@ class WorkspaceDialog(QDialog):
         self.reload(select=self.current_slug)
 
     def accept(self):
-        """Write pending edits, work out the folder move, and report the slug."""
+        """Write pending edits and report the slug to open.
+
+        The folder move itself belongs to flush(); all this adds is that the
+        deferred move of the open workspace has already allocated the slug that
+        folder is about to take, so that is the slug to open.
+        """
         self.flush()
         workspace = self._selected
         if workspace is None:
             return
-        slug = workspace.slug
-        # A folder move is only considered when the name actually changed here.
-        if workspace.name != self._loaded_name:
-            desired = slugify(workspace.name, taken_slugs() - {workspace.slug})
-            if desired != workspace.slug:
-                if workspace.slug == self.current_slug:
-                    # Deferred: this workspace's stores still hold paths into
-                    # the folder, so the move waits for closeEvent to flush.
-                    self.rename = (workspace.slug, desired)
-                else:
-                    rename_workspace_folder(workspace.slug, desired)
-                slug = desired
-        self.chosen = slug
+        if self.rename is not None and self.rename[0] == workspace.slug:
+            self.chosen = self.rename[1]
+        else:
+            self.chosen = workspace.slug
         super().accept()
 
     def reject(self):

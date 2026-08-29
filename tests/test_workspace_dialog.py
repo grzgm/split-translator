@@ -176,6 +176,63 @@ class DialogRenameTests(unittest.TestCase):
             self.assertEqual(dialog.rename, (current.slug, "lalka-prus"))
             self.assertEqual(dialog.chosen, "lalka-prus")
 
+    def test_a_rename_applied_by_changing_rows_moves_the_folder(self):
+        # The folder move must not depend on the user pressing Open: selecting
+        # another row saves the new name too, and the folder has to follow it.
+        with _Root() as root:
+            target = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(target.slug)
+            dialog.name_input.setText("Aaa renamed")
+            dialog.on_edited()
+            dialog.list_widget.setCurrentRow(1)
+            self.assertFalse(target.dir.exists())
+            moved = root.path / "aaa-renamed"
+            self.assertEqual(read_workspace(moved).name, "Aaa renamed")
+
+    def test_a_rename_by_row_change_keeps_the_list_and_selection_in_step(self):
+        with _Root() as root:
+            target = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(target.slug)
+            dialog.name_input.setText("Aaa renamed")
+            dialog.on_edited()
+            dialog.list_widget.setCurrentRow(1)
+            self.assertEqual(dialog.list_widget.item(0).text(), "Aaa renamed")
+            dialog.select_slug("aaa-renamed")
+            self.assertEqual(dialog.selected().dir, root.path / "aaa-renamed")
+
+    def test_a_row_change_defers_the_open_workspace_folder_move(self):
+        with _Root() as root:
+            current = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(current.slug)
+            dialog.select_slug(current.slug)
+            dialog.name_input.setText("Aaa renamed")
+            dialog.on_edited()
+            dialog.list_widget.setCurrentRow(1)
+            self.assertTrue(current.dir.exists())
+            self.assertEqual(dialog.rename, (current.slug, "aaa-renamed"))
+            dialog.select_slug(current.slug)
+            self.assertEqual(dialog.selected().dir, current.dir)
+
+    def test_a_deferred_rename_is_still_reported_when_another_row_is_opened(self):
+        # The open workspace's folder move is still owed even though the slug
+        # being opened is a different workspace.
+        with _Root() as root:
+            current = root.workspace("Aaa")
+            other = root.workspace("Bbb")
+            dialog = WorkspaceDialog(current.slug)
+            dialog.select_slug(current.slug)
+            dialog.name_input.setText("Aaa renamed")
+            dialog.on_edited()
+            dialog.select_slug(other.slug)
+            dialog.accept()
+            self.assertEqual(dialog.chosen, other.slug)
+            self.assertEqual(dialog.rename, (current.slug, "aaa-renamed"))
+
     def test_opening_without_renaming_never_moves_the_folder(self):
         # A workspace whose slug no longer matches its name (an old collision
         # suffix, say) must not be quietly moved just by being opened.
