@@ -503,10 +503,14 @@ class TranslationTool(QMainWindow):
             return
         if dialog.chosen == current and dialog.rename is None:
             # Same workspace and same folder, so a rebuild is only needed if the
-            # books changed underneath us.
+            # books or the name changed underneath us. The name counts because a
+            # rename whose slug is unchanged ("Lalka" to "Lalka!") moves no
+            # folder, and without it the title bar would keep the old name until
+            # the next launch.
             reloaded = read_workspace(self.config.dir)
             if (
                 reloaded is not None
+                and reloaded.name == self.config.name
                 and reloaded.original_path == self.config.original_path
                 and reloaded.translation_path == self.config.translation_path
             ):
