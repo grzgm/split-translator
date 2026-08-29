@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QWidget
 

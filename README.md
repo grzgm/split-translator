@@ -6,10 +6,18 @@ A PySide6 desktop app for reading a book and its translation side by side. The o
 
 ```
 pip install -r requirements.txt
-cp config.sample.json config.json
 ```
 
-Edit *config.json* with your book paths and page anchors, then run the app with either:
+On first launch the app opens the workspace picker, because there are no
+workspaces yet. Create one, give it a name, and point it at the original book
+and its translation. Everything that workspace collects (its search history,
+flashcard deck and page anchors) is stored in its own folder, so a second
+workspace for a different book starts empty.
+
+Switch workspace, or change a workspace's book paths, from *View* then
+*Workspaces...*.
+
+Then run the app with either:
 
 ```
 python translation_tool.py
@@ -23,7 +31,9 @@ The app is split into a package for easier maintenance:
 | Module | Responsibility |
 | --- | --- |
 | [split_translator/app.py](split_translator/app.py) | Bootstrap: Qt setup, web profile, runs the window |
-| [split_translator/config.py](split_translator/config.py) | Loads *config.json* (book paths, page anchors) |
+| [split_translator/config.py](split_translator/config.py) | Loads one workspace's *config.json* (name, book paths) |
+| [split_translator/workspace.py](split_translator/workspace.py) | Finds, creates, renames and deletes workspaces |
+| [split_translator/workspace_dialog.py](split_translator/workspace_dialog.py) | The workspace picker dialog |
 | [split_translator/page_mapper.py](split_translator/page_mapper.py) | Maps page numbers between editions via interpolated anchors |
 | [split_translator/pdf_viewer.py](split_translator/pdf_viewer.py) | Single-PDF viewer with lazy rendering and search worker |
 | [split_translator/pdf_panel.py](split_translator/pdf_panel.py) | Tabbed original/translation viewer with synced scrolling |
@@ -43,4 +53,4 @@ The dictionary views use a single persistent [QWebEngineProfile](split_translato
 | `Ctrl+L` / `F6` | Focus the search box |
 | `F3` / `Ctrl+F` | Next PDF match (or focus search if not focused) |
 | `Shift+F3` | Previous PDF match |
-| `Alt+1` … `Alt+9` | Play the matching Cambridge audio clip |
+| `Alt+1` ... `Alt+9` | Play the matching Cambridge audio clip |

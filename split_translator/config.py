@@ -38,8 +38,8 @@ def load_config(config_path: Path = CONFIG_PATH) -> Config:
     if not config_path.exists():
         sys.exit(
             f"Config file not found: {config_path}\n"
-            "Copy config.sample.json to .config/config.json and fill in your "
-            "book paths."
+            "This workspace's config.json is missing. Recreate the workspace "
+            "from the workspace picker."
         )
 
     try:
