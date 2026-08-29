@@ -5,13 +5,19 @@ from pathlib import Path
 
 from split_translator.workspace import (
     Workspace,
+    create_workspace,
+    delete_workspace,
+    duplicate_workspace,
     last_workspace,
     list_workspaces,
     load_settings,
     read_workspace,
+    rename_workspace_folder,
     save_settings,
+    save_workspace,
     set_last_workspace,
     slugify,
+    taken_slugs,
 )
 
 
@@ -146,3 +152,121 @@ class SettingsTests(unittest.TestCase):
             settings = load_settings(path)
             self.assertEqual(settings["last_workspace"], "lalka")
             self.assertEqual(settings["other"], 7)
+
+
+class TakenSlugsTests(unittest.TestCase):
+    def test_missing_root_gives_an_empty_set(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(taken_slugs(Path(d) / "absent"), set())
+
+    def test_counts_folders_that_are_not_valid_workspaces(self):
+        # The name is taken on disk whether or not the folder is a workspace, so
+        # a new workspace must not be allocated that slug.
+        with tempfile.TemporaryDirectory() as d:
+            _write_workspace(d, "real", name="Real")
+            (Path(d) / "junk").mkdir()
+            self.assertEqual(taken_slugs(Path(d)), {"real", "junk"})
+
+
+class CreateWorkspaceTests(unittest.TestCase):
+    def test_creates_the_folder_and_config_with_no_book_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            workspace = create_workspace("Pan Tadeusz", Path(d))
+            self.assertEqual(workspace.slug, "pan-tadeusz")
+            self.assertEqual(workspace.name, "Pan Tadeusz")
+            self.assertEqual(workspace.original_path, "")
+            self.assertEqual(read_workspace(workspace.dir), workspace)
+
+    def test_suffixes_a_slug_already_on_disk(self):
+        with tempfile.TemporaryDirectory() as d:
+            create_workspace("Lalka", Path(d))
+            second = create_workspace("Lalka", Path(d))
+            self.assertEqual(second.slug, "lalka-2")
+            self.assertEqual(second.name, "Lalka")
+
+
+class SaveWorkspaceTests(unittest.TestCase):
+    def test_writes_edited_fields_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            workspace = create_workspace("Lalka", Path(d))
+            edited = Workspace(
+                slug=workspace.slug,
+                name="Lalka (Prus)",
+                dir=workspace.dir,
+                original_path="/b/a.epub",
+                translation_path="/b/b.epub",
+            )
+            save_workspace(edited)
+            self.assertEqual(read_workspace(workspace.dir), edited)
+
+
+class DeleteWorkspaceTests(unittest.TestCase):
+    def test_removes_the_folder_and_its_contents(self):
+        with tempfile.TemporaryDirectory() as d:
+            workspace = create_workspace("Lalka", Path(d))
+            (workspace.dir / "flashcards.json").write_text("{}", encoding="utf-8")
+            delete_workspace(workspace.slug, Path(d))
+            self.assertFalse(workspace.dir.exists())
+            self.assertEqual(list_workspaces(Path(d)), [])
+
+
+class DuplicateWorkspaceTests(unittest.TestCase):
+    def test_copies_every_file_under_a_new_slug_and_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            source = create_workspace("Lalka", Path(d))
+            save_workspace(
+                Workspace(
+                    slug=source.slug,
+                    name=source.name,
+                    dir=source.dir,
+                    original_path="/b/a.epub",
+                    translation_path="/b/b.epub",
+                )
+            )
+            (source.dir / "flashcards.json").write_text(
+                '{"cards": []}', encoding="utf-8"
+            )
+            copy = duplicate_workspace(source.slug, "Lalka copy", Path(d))
+            self.assertEqual(copy.slug, "lalka-copy")
+            self.assertEqual(copy.name, "Lalka copy")
+            # The book paths travel with the copy, and so do the data files.
+            self.assertEqual(copy.original_path, "/b/a.epub")
+            self.assertTrue((copy.dir / "flashcards.json").exists())
+            # The source is untouched.
+            self.assertEqual(read_workspace(source.dir).name, "Lalka")
+
+    def test_rejects_a_folder_that_is_not_a_workspace(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "junk").mkdir()
+            with self.assertRaises(ValueError):
+                duplicate_workspace("junk", "Copy", Path(d))
+
+
+class RenameWorkspaceFolderTests(unittest.TestCase):
+    def test_moves_the_folder_with_its_contents(self):
+        with tempfile.TemporaryDirectory() as d:
+            workspace = create_workspace("Lalka", Path(d))
+            (workspace.dir / "history.json").write_text("[]", encoding="utf-8")
+            rename_workspace_folder("lalka", "lalka-prus", Path(d))
+            moved = Path(d) / "lalka-prus"
+            self.assertFalse(workspace.dir.exists())
+            self.assertTrue((moved / "history.json").exists())
+            self.assertEqual(read_workspace(moved).slug, "lalka-prus")
+
+    def test_is_a_no_op_when_the_slug_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as d:
+            workspace = create_workspace("Lalka", Path(d))
+            rename_workspace_folder("lalka", "lalka", Path(d))
+            self.assertTrue(workspace.dir.exists())
+
+    def test_raises_rather_than_clobbering_an_existing_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            create_workspace("Lalka", Path(d))
+            create_workspace("Solaris", Path(d))
+            with self.assertRaises(OSError):
+                rename_workspace_folder("lalka", "solaris", Path(d))
+            # Neither workspace is lost.
+            self.assertEqual(
+                sorted(ws.slug for ws in list_workspaces(Path(d))),
+                ["lalka", "solaris"],
+            )

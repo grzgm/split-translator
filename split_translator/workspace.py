@@ -20,6 +20,7 @@ that omits the argument.
 
 import json
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -173,3 +174,96 @@ def set_last_workspace(slug: str, path: Path | None = None) -> None:
     settings = load_settings(path)
     settings["last_workspace"] = slug
     save_settings(settings, path)
+
+
+def taken_slugs(root: Path | None = None) -> set[str]:
+    """Every folder name already used under the workspaces root.
+
+    Includes folders that are not valid workspaces, because a name is taken on
+    disk whether or not the app understands what is in it.
+    """
+    root = root or WORKSPACES_DIR
+    if not root.is_dir():
+        return set()
+    return {entry.name for entry in root.iterdir() if entry.is_dir()}
+
+
+def save_workspace(workspace: Workspace) -> None:
+    """Write a workspace's config.json, creating the folder if it is missing, so
+    a freshly created workspace and an edited one take the same path."""
+    workspace.dir.mkdir(parents=True, exist_ok=True)
+    data = {
+        "name": workspace.name,
+        "original_path": workspace.original_path,
+        "translation_path": workspace.translation_path,
+    }
+    with open(workspace.dir / "config.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def create_workspace(name: str, root: Path | None = None) -> Workspace:
+    """Create a workspace with no book paths set.
+
+    The deck, history and anchor files are simply absent, which every store
+    already reads as empty, so there is nothing to seed.
+    """
+    root = root or WORKSPACES_DIR
+    slug = slugify(name, taken_slugs(root))
+    workspace = Workspace(
+        slug=slug,
+        name=name,
+        dir=root / slug,
+        original_path="",
+        translation_path="",
+    )
+    save_workspace(workspace)
+    return workspace
+
+
+def delete_workspace(slug: str, root: Path | None = None) -> None:
+    """Remove a workspace folder and everything in it, permanently."""
+    shutil.rmtree((root or WORKSPACES_DIR) / slug)
+
+
+def duplicate_workspace(
+    slug: str, name: str, root: Path | None = None
+) -> Workspace:
+    """Copy a workspace's whole folder under a new slug and name.
+
+    The deck, history and every anchor file travel with it; only the name in the
+    copy's config.json differs.
+    """
+    root = root or WORKSPACES_DIR
+    source = read_workspace(root / slug)
+    if source is None:
+        raise ValueError(f"Not a workspace: {slug}")
+    new_slug = slugify(name, taken_slugs(root))
+    shutil.copytree(root / slug, root / new_slug)
+    copy = Workspace(
+        slug=new_slug,
+        name=name,
+        dir=root / new_slug,
+        original_path=source.original_path,
+        translation_path=source.translation_path,
+    )
+    save_workspace(copy)
+    return copy
+
+
+def rename_workspace_folder(
+    old_slug: str, new_slug: str, root: Path | None = None
+) -> None:
+    """Move a workspace folder so it matches its display name.
+
+    The caller allocates new_slug with slugify(name, taken_slugs(root) minus the
+    workspace's own slug), never this function: the caller needs the resulting
+    slug in order to reopen the workspace afterwards, so discovering it here
+    would leave the caller guessing.
+
+    Path.rename refuses a non-empty existing target, which is the behaviour to
+    want: a clash raises rather than destroying the other workspace.
+    """
+    if old_slug == new_slug:
+        return
+    root = root or WORKSPACES_DIR
+    (root / old_slug).rename(root / new_slug)
