@@ -262,9 +262,7 @@ class WorkspaceDialog(QDialog):
         resolves = workspace is not None and both_books_resolve(workspace)
         self.open_button.setEnabled(resolves)
         self.duplicate_button.setEnabled(self._selected is not None)
-        self.delete_button.setEnabled(
-            self._selected is not None and len(self._workspaces) > 1
-        )
+        self.delete_button.setEnabled(self.can_delete())
         if workspace is None or resolves:
             self.problem_label.setText("")
         elif not workspace.original_path or not workspace.translation_path:
@@ -333,9 +331,27 @@ class WorkspaceDialog(QDialog):
         copy = duplicate_workspace(self._selected.slug, name)
         self.reload(select=copy.slug)
 
+    def can_delete(self) -> bool:
+        """Whether the selected workspace may be deleted.
+
+        Two refusals. The last remaining workspace, so there is always one to
+        fall back to, and the workspace that is currently open: its history,
+        flashcard and anchor stores hold absolute paths into that folder and
+        recreate it on their next write, so removing it would lose the deck the
+        user asked to keep and leave behind a folder with no config.json that
+        the picker can never show again.
+        """
+        return (
+            self._selected is not None
+            and len(self._workspaces) > 1
+            and self._selected.slug != self.current_slug
+        )
+
     def delete_selected(self):
         """Delete the selected workspace after confirmation."""
-        if self._selected is None or len(self._workspaces) <= 1:
+        # Guarded here as well as on the button, so the rule holds even when
+        # this is called directly.
+        if not self.can_delete():
             return
         workspace = self._selected
         if not self._confirm_delete(workspace):
@@ -343,8 +359,7 @@ class WorkspaceDialog(QDialog):
         # Nothing to write back for a workspace about to be destroyed.
         self._dirty = False
         delete_workspace(workspace.slug)
-        select = self.current_slug if self.current_slug != workspace.slug else None
-        self.reload(select=select)
+        self.reload(select=self.current_slug)
 
     def accept(self):
         """Write pending edits, work out the folder move, and report the slug."""

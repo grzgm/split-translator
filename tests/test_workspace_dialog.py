@@ -198,6 +198,29 @@ class DialogDeleteTests(unittest.TestCase):
             dialog = WorkspaceDialog(None)
             self.assertFalse(dialog.delete_button.isEnabled())
 
+    def test_delete_is_refused_for_the_currently_open_workspace(self):
+        # Its stores hold paths into that folder and recreate it on their next
+        # write, so deleting it would lose the deck and leave a zombie folder.
+        with _Root() as root:
+            current = root.workspace("Open one")
+            other = root.workspace("Other")
+            dialog = WorkspaceDialog(current.slug)
+            dialog.select_slug(current.slug)
+            self.assertFalse(dialog.delete_button.isEnabled())
+            dialog.select_slug(other.slug)
+            self.assertTrue(dialog.delete_button.isEnabled())
+
+    def test_delete_selected_refuses_the_open_workspace_when_called_directly(self):
+        with _Root() as root:
+            current = root.workspace("Open one")
+            root.workspace("Other")
+            dialog = WorkspaceDialog(current.slug)
+            dialog.select_slug(current.slug)
+            with patch.object(WorkspaceDialog, "_confirm_delete", return_value=True):
+                dialog.delete_selected()
+            self.assertTrue(current.dir.exists())
+            self.assertEqual(dialog.list_widget.count(), 2)
+
     def test_delete_removes_the_selected_workspace(self):
         with _Root() as root:
             first = root.workspace("Aaa")
