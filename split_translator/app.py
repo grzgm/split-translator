@@ -13,6 +13,7 @@
 # For QWebEngineView dev tools, launch with QTWEBENGINE_REMOTE_DEBUGGING=9222 set
 # and open http://localhost:9222
 
+import os
 import sys
 
 from PySide6.QtCore import QCoreApplication
@@ -90,6 +91,18 @@ def main() -> int:
     # the profile directory to ~/.local/share/split-translator (and the right place on
     # other OSes). The organization name is left unset so the path is not nested twice.
     QCoreApplication.setApplicationName(APP_NAME)
+
+    # Ask for the desktop portal's file dialogs instead of Qt's own plain ones.
+    # Qt only offers a native dialog when a platform theme plugin supplies one,
+    # and it looks for those plugins in PySide6's bundled directory, which holds
+    # the portal and GTK themes but not KDEPlasmaPlatformTheme6.so. That one
+    # lives in the system Qt plugin directory PySide6 never searches, which is
+    # why the file chooser is the plain Qt widget dialog. Pointing at the system
+    # directory instead would mix system Qt libraries into a PySide6 process and
+    # break the moment the two versions diverge, whereas the portal plugin is
+    # already bundled here and talks to whichever backend the desktop provides.
+    # setdefault so the choice can still be overridden from the shell.
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
 
     app = QApplication(sys.argv)
     # setApplicationDisplayName lives on QGuiApplication and needs the instance to exist.
