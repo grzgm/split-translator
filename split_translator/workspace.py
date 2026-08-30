@@ -285,6 +285,20 @@ def both_books_resolve(workspace: Workspace) -> bool:
     )
 
 
+def can_open(workspace: Workspace) -> bool:
+    """Whether a workspace can be opened at all.
+
+    Either it has no books yet, which opens with the book side showing a
+    placeholder so a workspace can be built up before its books are chosen, or
+    both of its books resolve. A workspace with only one path set, or with a
+    path that no longer resolves, cannot be opened: that is a broken setup to
+    repair in the picker, not a state to launch into.
+    """
+    if not workspace.original_path and not workspace.translation_path:
+        return True
+    return both_books_resolve(workspace)
+
+
 def startup_slug(
     root: Path | None = None, settings_path: Path | None = None
 ) -> str | None:
@@ -297,6 +311,6 @@ def startup_slug(
     if not slug:
         return None
     workspace = read_workspace((root or WORKSPACES_DIR) / slug)
-    if workspace is None or not both_books_resolve(workspace):
+    if workspace is None or not can_open(workspace):
         return None
     return slug

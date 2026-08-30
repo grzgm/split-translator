@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from .flashcards import load_cards
 from .workspace import (
     Workspace,
-    both_books_resolve,
+    can_open,
     create_workspace,
     delete_workspace,
     duplicate_workspace,
@@ -263,14 +263,18 @@ class WorkspaceDialog(QDialog):
     def update_buttons(self):
         """Open needs both books; Delete refuses to empty the list."""
         workspace = self.form_workspace()
-        resolves = workspace is not None and both_books_resolve(workspace)
-        self.open_button.setEnabled(resolves)
+        openable = workspace is not None and can_open(workspace)
+        self.open_button.setEnabled(openable)
         self.duplicate_button.setEnabled(self._selected is not None)
         self.delete_button.setEnabled(self.can_delete())
-        if workspace is None or resolves:
+        if workspace is None or openable:
+            # No books at all is a workspace waiting for them, not a problem:
+            # it opens with a placeholder where the book view would be.
             self.problem_label.setText("")
         elif not workspace.original_path or not workspace.translation_path:
-            self.problem_label.setText("Set both book paths to open this workspace.")
+            self.problem_label.setText(
+                "Set both book paths, or clear both to open without books."
+            )
         else:
             self.problem_label.setText("A book file is missing. Fix the path above.")
 

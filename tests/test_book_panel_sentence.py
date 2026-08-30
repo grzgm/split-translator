@@ -88,6 +88,9 @@ class CurrentMatchSentenceTests(unittest.TestCase):
     def _panel(self, active_is_original, current_match, sentence="A sentence."):
         panel = BookPanel.__new__(BookPanel)
         QFrame.__init__(panel)
+        # These tests are about a panel that has books; a bookless one calls
+        # back with "" without reading a view at all.
+        panel.has_books = True
         panel.search_term = "dog"
         panel.current_match = current_match
 

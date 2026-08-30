@@ -101,10 +101,23 @@ class DialogListTests(unittest.TestCase):
 
 
 class DialogOpenGuardTests(unittest.TestCase):
-    def test_open_is_disabled_while_a_book_path_does_not_resolve(self):
+    def test_open_is_enabled_for_a_workspace_with_no_books_yet(self):
+        # A workspace can be built up before its books are chosen; the book side
+        # then shows a placeholder.
         with _Root() as root:
             root.workspace("Nowhere", with_books=False)
             dialog = WorkspaceDialog(None)
+            self.assertTrue(dialog.open_button.isEnabled())
+
+    def test_open_is_disabled_while_only_one_book_is_set(self):
+        # Half configured is a broken setup to repair here, not an empty
+        # workspace: opening it would load one edition and not the other.
+        with _Root() as root:
+            root.workspace("Half", with_books=False)
+            dialog = WorkspaceDialog(None)
+            original, _translation = root.books()
+            dialog.original_input.setText(original)
+            dialog.on_edited()
             self.assertFalse(dialog.open_button.isEnabled())
 
     def test_open_is_enabled_once_both_books_resolve(self):
@@ -344,5 +357,6 @@ class DialogNewTests(unittest.TestCase):
             with patch.object(WorkspaceDialog, "_ask_name", return_value="Fresh"):
                 dialog.new_workspace()
             self.assertEqual(dialog.selected().name, "Fresh")
-            # No books yet, so it cannot be opened.
-            self.assertFalse(dialog.open_button.isEnabled())
+            # It has no books, which is allowed: it opens with a placeholder
+            # where the book view would be.
+            self.assertTrue(dialog.open_button.isEnabled())

@@ -37,28 +37,44 @@ class BookPanel(QFrame):
         self.current_match = 0
         self.sync_enabled = True
 
-        self.original_document = load_book(config.original_path)
-        self.translation_document = load_book(config.translation_path)
+        # A workspace can be opened before its books are chosen, so this panel
+        # has an empty state. Everything below that reads a document, an anchor
+        # store or a view is skipped, and init_ui puts a placeholder where the
+        # tabs would go. Only the both-blank case reaches here: a path that is
+        # set but unreadable is caught in app.main, which returns to the picker.
+        self.has_books = bool(config.original_path and config.translation_path)
 
-        self.anchor_store = AnchorStore(
-            anchor_path_for(
+        if self.has_books:
+            self.original_document = load_book(config.original_path)
+            self.translation_document = load_book(config.translation_path)
+
+            self.anchor_store = AnchorStore(
+                anchor_path_for(
+                    config.original_path,
+                    config.translation_path,
+                    config.dir,
+                ),
                 config.original_path,
                 config.translation_path,
-                config.dir,
-            ),
-            config.original_path,
-            config.translation_path,
-        )
-        self.book_sync = BookSync(
-            len(self.original_document.block_ids),
-            len(self.translation_document.block_ids),
-        )
-        self.book_sync.set_anchors(
-            self.anchor_store.resolve(
-                self.original_document.block_ids,
-                self.translation_document.block_ids,
             )
-        )
+            self.book_sync = BookSync(
+                len(self.original_document.block_ids),
+                len(self.translation_document.block_ids),
+            )
+            self.book_sync.set_anchors(
+                self.anchor_store.resolve(
+                    self.original_document.block_ids,
+                    self.translation_document.block_ids,
+                )
+            )
+        else:
+            # No anchor store either: its file is keyed on a hash of the two
+            # book paths, so building one here would leave a junk file keyed on
+            # the empty pair.
+            self.original_document = None
+            self.translation_document = None
+            self.anchor_store = None
+            self.book_sync = None
 
         self.anchor_editor = None
 
@@ -66,14 +82,19 @@ class BookPanel(QFrame):
         # written on close so the next launch reopens where reading stopped.
         # Seeded from the store so an unchanged session re-saves the same spot.
         # The reader and the anchor editor track their positions separately.
-        self._original_scroll, self._translation_scroll = (
-            self.anchor_store.get_scroll(READER_SURFACE)
-        )
+        if self.has_books:
+            self._original_scroll, self._translation_scroll = (
+                self.anchor_store.get_scroll(READER_SURFACE)
+            )
+        else:
+            self._original_scroll, self._translation_scroll = None, None
 
         # Paragraph-spacing normalisation for the reader, persisted per book pair
         # (default ON). Seeded here so the views can be built with it already
         # applied, avoiding a flash of the book's raw spacing on open.
-        self._normalise = self.anchor_store.get_normalise(READER_SURFACE)
+        self._normalise = (
+            self.anchor_store.get_normalise(READER_SURFACE) if self.has_books else True
+        )
 
         # The anchor-mapped target the hidden tab SHOULD be at, set when a scroll
         # on the active tab is mirrored. This is the source of truth for the
@@ -122,6 +143,28 @@ class BookPanel(QFrame):
         nav_layout.addWidget(self.sync_checkbox)
         nav_layout.addWidget(self.position_label)
         layout.addLayout(nav_layout)
+
+        if not self.has_books:
+            # No books yet. The nav row above is built and disabled rather than
+            # hidden, so every widget the rest of this class refers to exists.
+            self.original_view = None
+            self.translation_view = None
+            self.tabs = None
+            for widget in (
+                self.prev_button,
+                self.next_button,
+                self.sync_checkbox,
+                self.normalise_checkbox,
+            ):
+                widget.setEnabled(False)
+            placeholder = QLabel(
+                "No books set for this workspace.\n\n"
+                "Choose them from View, then Workspaces..."
+            )
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder.setWordWrap(True)
+            layout.addWidget(placeholder)
+            return
 
         self.tabs = QTabWidget()
         self.original_view = BookView(
@@ -254,12 +297,16 @@ class BookPanel(QFrame):
         # so the scroll position is kept) and persist the choice for this book
         # pair. The hidden tab picks up the same flag; its style toggle is
         # layout-independent, so it is correct when the user switches to it.
+        if not self.has_books:
+            return
         self._normalise = state == Qt.CheckState.Checked.value
         self.original_view.set_normalise(self._normalise)
         self.translation_view.set_normalise(self._normalise)
         self.anchor_store.set_normalise(READER_SURFACE, self._normalise)
 
-    def current_view(self) -> BookView:
+    def current_view(self) -> BookView | None:
+        if not self.has_books:
+            return None
         if self.tabs.currentIndex() == 0:
             return self.original_view
         return self.translation_view
@@ -280,6 +327,8 @@ class BookPanel(QFrame):
             self.tabs.setCurrentIndex(0)
 
     def search(self, term: str) -> None:
+        if not self.has_books:
+            return
         self.search_term = term.strip()
         if not self.search_term:
             # Clearing the term clears the section marks in both editions.
@@ -317,6 +366,9 @@ class BookPanel(QFrame):
         no current match. Used by the Ctrl+T contextual-translation prompt. The
         active tab is not consulted: the user may have switched to Translation to
         read after searching, but the match still belongs to the Original."""
+        if not self.has_books:
+            callback("")
+            return
         if self.current_match:
             self.original_view.match_sentence(
                 self.search_term, self.current_match, callback
@@ -400,6 +452,8 @@ class BookPanel(QFrame):
         )
 
     def open_anchor_editor(self) -> None:
+        if not self.has_books:
+            return
         if self.anchor_editor is None:
             self.anchor_editor = AnchorEditor(
                 self.original_document,
@@ -415,6 +469,8 @@ class BookPanel(QFrame):
         self.anchor_editor.raise_()
 
     def close_doc(self) -> None:
+        if not self.has_books:
+            return
         # Web views own no file handles to close; clear any active find so the
         # native highlight does not linger.
         self.original_view.find("", True, lambda _a, _c: None)
