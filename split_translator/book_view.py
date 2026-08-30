@@ -183,6 +183,24 @@ _MARK_BLOCK_JS = """
 # Anchors are unaffected: block ids are still assigned to every block element, so
 # saved anchors (which may name a wrapper) keep resolving. This narrows what is
 # *counted for search*, not what exists.
+# Folds typographic quotes and apostrophes to their ASCII forms, so a term typed
+# on a keyboard matches a book that was typeset with curly ones. Chromium's own
+# find-in-page does this, which is why a search for "brother's body" highlights
+# the phrase in a book that actually contains "brother\\u2019s body". Counting the
+# same match here with a plain indexOf found nothing, so the section mark was
+# cleared while the phrase stayed highlighted.
+#
+# Every mapping is one character to one character, so offsets into the folded
+# text still address the original string. _MATCH_SENTENCE_JS depends on that: it
+# locates the match in the folded text but slices the raw text, which keeps the
+# book's real typography in the extracted sentence.
+_FOLD_JS = """
+    function __fold(s) {
+        return s.replace(/[\\u2018\\u2019\\u201A\\u201B\\u02BC\\u2032]/g, "'")
+                .replace(/[\\u201C\\u201D\\u201E\\u201F\\u2033]/g, '"');
+    }
+"""
+
 _LEAF_BLOCKS_JS = """
     var blocks = Array.prototype.slice.call(
         document.querySelectorAll('[data-stid]')).filter(function(b) {
@@ -202,12 +220,13 @@ _LEAF_BLOCKS_JS = """
 _MATCH_BLOCK_JS = """
 (function(term, index) {
     if (!term || index < 1) return "";
-    term = term.toLowerCase();
+    __FOLD__
+    term = __fold(term.toLowerCase());
     __LEAF_BLOCKS__
     var seen = 0;
     for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
-        var text = (b.textContent || "").toLowerCase();
+        var text = __fold((b.textContent || "").toLowerCase());
         if (!text) continue;
         var from = 0;
         var hit = text.indexOf(term, from);
@@ -220,7 +239,7 @@ _MATCH_BLOCK_JS = """
     }
     return "";
 })(%(term)s, %(index)s);
-""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS)
+""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS).replace("__FOLD__", _FOLD_JS)
 
 # Extracts the sentence containing the Nth find match (1-based activeMatch).
 # Locates the match the same way as _MATCH_BLOCK_JS (findText leaves no DOM
@@ -236,12 +255,15 @@ _MATCH_BLOCK_JS = """
 _MATCH_SENTENCE_JS = """
 (function(term, index) {
     if (!term || index < 1) return JSON.stringify({sentence: ""});
-    var needle = term.toLowerCase();
+    __FOLD__
+    var needle = __fold(term.toLowerCase());
     __LEAF_BLOCKS__
     var seen = 0;
     for (var i = 0; i < blocks.length; i++) {
         var raw = blocks[i].textContent || "";
-        var text = raw.toLowerCase();
+        // Folded for locating the match; raw is what gets sliced, so the
+        // extracted sentence keeps the book's own quotes and apostrophes.
+        var text = __fold(raw.toLowerCase());
         if (!text) continue;
         var from = 0;
         var hit = text.indexOf(needle, from);
@@ -277,7 +299,7 @@ _MATCH_SENTENCE_JS = """
     }
     return JSON.stringify({sentence: ""});
 })(%(term)s, %(index)s);
-""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS)
+""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS).replace("__FOLD__", _FOLD_JS)
 
 
 class BookView(QWebEngineView):

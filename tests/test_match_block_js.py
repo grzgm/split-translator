@@ -214,5 +214,56 @@ class FlatBlockMatchTests(unittest.TestCase):
         )
 
 
+
+# Typeset with curly apostrophes and quotes, as real EPUBs are. The user types
+# the ASCII forms, because that is what a keyboard produces.
+CURLY_BODY = """
+<div class="chapter">
+  <p>Nothing to find in the opening line.</p>
+  <p>She had built it upon her brother\u2019s body, and left.</p>
+  <p>He called it the \u201csietch above the sand\u201d that day.</p>
+</div>
+"""
+
+
+class TypographicFoldTests(unittest.TestCase):
+    """A term typed with ASCII quotes must match a book typeset with curly ones.
+
+    Chromium's find-in-page folds these, so it highlights the phrase. Counting
+    the same match here with a plain indexOf found nothing, so the section mark
+    was cleared while the phrase stayed highlighted: the phrase lit up and the
+    section did not.
+    """
+
+    def setUp(self):
+        self.page = _Page(CURLY_BODY)
+        self.addCleanup(self.page.close)
+
+    def test_ascii_apostrophe_matches_a_curly_one(self):
+        self.assertEqual(self.page.block_for_match("brother's body", 1), "b2")
+
+    def test_curly_apostrophe_still_matches(self):
+        self.assertEqual(
+            self.page.block_for_match("brother\u2019s body", 1), "b2"
+        )
+
+    def test_ascii_quotes_match_curly_ones(self):
+        self.assertEqual(
+            self.page.block_for_match('"sietch above the sand"', 1), "b3"
+        )
+
+    def test_the_extracted_sentence_keeps_the_book_typography(self):
+        # The match is located in the folded text but the sentence is sliced
+        # from the raw text, so the flashcard example reads as the book prints
+        # it rather than in flattened ASCII.
+        sentence = self.page.sentence_for_match("brother's body", 1)
+        self.assertIn("brother\u2019s body", sentence)
+        self.assertNotIn("brother's body", sentence)
+
+    def test_a_term_with_no_special_characters_is_unaffected(self):
+        self.assertEqual(self.page.block_for_match("opening line", 1), "b1")
+
+
 if __name__ == "__main__":
     unittest.main()
+
