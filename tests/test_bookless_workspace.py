@@ -110,6 +110,24 @@ class BooklessBookPanelTests(unittest.TestCase):
             panel.open_anchor_editor()
             self.assertIsNone(panel.anchor_editor)
 
+    def test_the_navigation_row_stays_at_the_top(self):
+        """The placeholder must take the spare height, not the nav row.
+
+        The nav row holds two QLabels, whose vertical policy is Preferred, so
+        they grow. With books the tab widget's Expanding policy outranks that
+        and soaks up the spare height; with no tabs the labels took it instead,
+        leaving the buttons floating about a quarter of the way down the panel.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(d)
+            panel.resize(600, 800)
+            panel.show()
+            QApplication.processEvents()
+            top = panel.prev_button.mapTo(panel, panel.prev_button.rect().topLeft())
+            self.assertLess(top.y(), 40, "navigation row is not at the top")
+            # The labels must be at their natural height, not stretched.
+            self.assertLess(panel.match_label.height(), 60)
+
     def test_the_navigation_controls_are_disabled(self):
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(d)

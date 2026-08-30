@@ -163,7 +163,11 @@ class BookPanel(QFrame):
             )
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             placeholder.setWordWrap(True)
-            layout.addWidget(placeholder)
+            # The placeholder takes every spare pixel, the way the tab widget
+            # does when there are books. Without the stretch the nav row above
+            # absorbs it instead, because its two QLabels grow vertically, and
+            # the buttons end up floating a quarter of the way down the panel.
+            layout.addWidget(placeholder, 1)
             return
 
         self.tabs = QTabWidget()
