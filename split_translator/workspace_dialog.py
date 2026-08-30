@@ -121,6 +121,10 @@ class WorkspaceDialog(QDialog):
             )
         )
 
+        # Which folder on disk this workspace is, so two workspaces sharing a
+        # display name can still be told apart, and so the folder a rename will
+        # move is visible before it happens.
+        self.folder_label = QLabel("")
         self.summary_label = QLabel(_NO_SELECTION)
         # Reports a book that has moved, which is the main thing this screen is
         # here to repair, so it is shown rather than blocking the dialog.
@@ -135,10 +139,12 @@ class WorkspaceDialog(QDialog):
         form.addWidget(QLabel("Translation:"), 2, 0)
         form.addWidget(self.translation_input, 2, 1)
         form.addWidget(translation_browse, 2, 2)
-        form.addWidget(self.summary_label, 3, 1, 1, 2)
-        form.addWidget(self.problem_label, 4, 1, 1, 2)
+        form.addWidget(QLabel("Folder:"), 3, 0)
+        form.addWidget(self.folder_label, 3, 1, 1, 2)
+        form.addWidget(self.summary_label, 4, 1, 1, 2)
+        form.addWidget(self.problem_label, 5, 1, 1, 2)
         form.setColumnStretch(1, 1)
-        form.setRowStretch(5, 1)
+        form.setRowStretch(6, 1)
 
         detail = QWidget()
         detail.setLayout(form)
@@ -228,12 +234,16 @@ class WorkspaceDialog(QDialog):
             self.name_input.clear()
             self.original_input.clear()
             self.translation_input.clear()
+            self.folder_label.setText("")
             self.summary_label.setText(_NO_SELECTION)
             self._loaded_name = ""
         else:
             self.name_input.setText(workspace.name)
             self.original_input.setText(workspace.original_path)
             self.translation_input.setText(workspace.translation_path)
+            # The folder as it stands now, not the one a pending rename would
+            # move it to: that slug is only allocated when the move happens.
+            self.folder_label.setText(workspace.slug)
             cards, searches = workspace_counts(workspace)
             self.summary_label.setText(f"{cards} cards, {searches} searches")
             self._loaded_name = workspace.name
@@ -247,14 +257,56 @@ class WorkspaceDialog(QDialog):
         self._dirty = True
         self.update_buttons()
 
+    def _typed_name(self) -> str:
+        """The name currently in the field, as it would be saved."""
+        return self.name_input.text().strip()
+
+    def _name_taken(self, name: str, excluding_slug: str | None = None) -> bool:
+        """Whether another workspace already uses this display name.
+
+        Compared case insensitively and ignoring surrounding space, because
+        "Lalka" and " lalka " are the same name to a reader, and two rows that
+        read alike cannot be told apart in the list.
+        """
+        wanted = name.strip().casefold()
+        if not wanted:
+            return False
+        return any(
+            workspace.name.strip().casefold() == wanted
+            and workspace.slug != excluding_slug
+            for workspace in self._workspaces
+        )
+
+    def _name_conflict(self) -> bool:
+        """Whether the name being typed would duplicate another workspace's.
+
+        Only a name the user is actually changing counts. A workspace that
+        already shares its name with another, from before this rule or from a
+        hand-edited config file, still opens: refusing it would strand the user
+        with two workspaces neither of which can be opened.
+        """
+        if self._selected is None:
+            return False
+        typed = self._typed_name()
+        if typed.casefold() == self._selected.name.strip().casefold():
+            return False
+        return self._name_taken(typed, excluding_slug=self._selected.slug)
+
     def form_workspace(self) -> Workspace | None:
         """The selected workspace with the form's current values applied."""
         if self._selected is None:
             return None
         return Workspace(
             slug=self._selected.slug,
-            # A blank name would give a nameless row, so the slug stands in.
-            name=self.name_input.text().strip() or self._selected.slug,
+            # A blank name would give a nameless row, so the slug stands in. A
+            # name that collides with another workspace is not applied either:
+            # Open is disabled while it does, and a row change discards it
+            # rather than saving two rows that read alike.
+            name=(
+                self._selected.name
+                if self._name_conflict()
+                else self._typed_name() or self._selected.slug
+            ),
             dir=self._selected.dir,
             original_path=self.original_input.text().strip(),
             translation_path=self.translation_input.text().strip(),
@@ -263,11 +315,16 @@ class WorkspaceDialog(QDialog):
     def update_buttons(self):
         """Open needs both books; Delete refuses to empty the list."""
         workspace = self.form_workspace()
-        openable = workspace is not None and can_open(workspace)
+        conflict = self._name_conflict()
+        openable = workspace is not None and can_open(workspace) and not conflict
         self.open_button.setEnabled(openable)
         self.duplicate_button.setEnabled(self._selected is not None)
         self.delete_button.setEnabled(self.can_delete())
-        if workspace is None or openable:
+        if conflict:
+            self.problem_label.setText(
+                "Another workspace is already called that. Choose a different name."
+            )
+        elif workspace is None or openable:
             # No books at all is a workspace waiting for them, not a problem:
             # it opens with a placeholder where the book view would be.
             self.problem_label.setText("")
@@ -372,10 +429,29 @@ class WorkspaceDialog(QDialog):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _reject_taken_name(self, name: str) -> bool:
+        """Warn and refuse when a new workspace would reuse an existing name.
+
+        Two workspaces reading alike in the list cannot be told apart, so the
+        name is refused at the point it would be created rather than allowed and
+        disambiguated afterwards.
+        """
+        if not self._name_taken(name):
+            return False
+        QMessageBox.warning(
+            self,
+            "Name already used",
+            f"Another workspace is already called '{name}'.\n\n"
+            "Choose a different name.",
+        )
+        return True
+
     def new_workspace(self):
         """Create an empty workspace and select it."""
         name = self._ask_name("New workspace")
         if name is None:
+            return
+        if self._reject_taken_name(name):
             return
         self.flush()
         created = create_workspace(name)
@@ -390,6 +466,8 @@ class WorkspaceDialog(QDialog):
             "Duplicate workspace", f"{self._selected.name} copy"
         )
         if name is None:
+            return
+        if self._reject_taken_name(name):
             return
         copy = duplicate_workspace(self._selected.slug, name)
         self.reload(select=copy.slug)

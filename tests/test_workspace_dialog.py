@@ -100,6 +100,112 @@ class DialogListTests(unittest.TestCase):
             self.assertIn("Lalka", dialog.list_widget.currentItem().text())
 
 
+class DialogFolderLabelTests(unittest.TestCase):
+    """The detail pane names the folder, so two workspaces sharing a display
+    name can be told apart, and so the folder a rename will move is visible."""
+
+    def test_it_shows_the_selected_workspace_folder(self):
+        with _Root() as root:
+            created = root.workspace("Lalka")
+            dialog = WorkspaceDialog(None)
+            self.assertEqual(dialog.folder_label.text(), created.slug)
+
+    def test_same_named_workspaces_show_different_folders(self):
+        with _Root() as root:
+            first = root.workspace("Lalka")
+            second = root.workspace("Lalka")
+            self.assertNotEqual(first.slug, second.slug)
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(first.slug)
+            self.assertEqual(dialog.folder_label.text(), first.slug)
+            dialog.select_slug(second.slug)
+            self.assertEqual(dialog.folder_label.text(), second.slug)
+
+
+class DialogDuplicateNameTests(unittest.TestCase):
+    """Two workspaces may not share a display name: two rows reading alike
+    cannot be told apart in the list."""
+
+    def test_open_is_disabled_while_the_name_matches_another(self):
+        with _Root() as root:
+            root.workspace("Lalka")
+            target = root.workspace("Solaris")
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(target.slug)
+            dialog.name_input.setText("Lalka")
+            dialog.on_edited()
+            self.assertFalse(dialog.open_button.isEnabled())
+            self.assertIn("already called that", dialog.problem_label.text())
+
+    def test_the_check_ignores_case_and_surrounding_space(self):
+        with _Root() as root:
+            root.workspace("Lalka")
+            target = root.workspace("Solaris")
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(target.slug)
+            dialog.name_input.setText("  lALKA  ")
+            dialog.on_edited()
+            self.assertFalse(dialog.open_button.isEnabled())
+
+    def test_a_workspace_keeping_its_own_name_is_not_a_conflict(self):
+        with _Root() as root:
+            root.workspace("Lalka")
+            dialog = WorkspaceDialog(None)
+            dialog.name_input.setText("Lalka")
+            dialog.on_edited()
+            self.assertTrue(dialog.open_button.isEnabled())
+
+    def test_workspaces_that_already_share_a_name_still_open(self):
+        # Created outside the dialog, as a pre-rule or hand-edited config would
+        # be. Refusing these would strand the user with two workspaces neither
+        # of which can be opened.
+        with _Root() as root:
+            first = root.workspace("Lalka")
+            second = root.workspace("Lalka")
+            self.assertNotEqual(first.slug, second.slug)
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(first.slug)
+            self.assertTrue(dialog.open_button.isEnabled())
+            dialog.select_slug(second.slug)
+            self.assertTrue(dialog.open_button.isEnabled())
+
+    def test_a_colliding_name_is_never_saved_on_a_row_change(self):
+        # flush runs on a row change, so without a guard there the rejected name
+        # would reach disk by the back door.
+        with _Root() as root:
+            root.workspace("Lalka")
+            target = root.workspace("Solaris")
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(target.slug)
+            dialog.name_input.setText("Lalka")
+            dialog.on_edited()
+            dialog.select_slug("lalka")
+            self.assertEqual(read_workspace(target.dir).name, "Solaris")
+            self.assertFalse((root.path / "lalka-2").exists())
+
+    def test_new_refuses_a_name_already_used(self):
+        with _Root() as root:
+            root.workspace("Lalka")
+            dialog = WorkspaceDialog(None)
+            with patch.object(WorkspaceDialog, "_ask_name", return_value="Lalka"), \
+                 patch("split_translator.workspace_dialog.QMessageBox") as box:
+                dialog.new_workspace()
+            box.warning.assert_called_once()
+            self.assertEqual(dialog.list_widget.count(), 1)
+
+    def test_duplicate_refuses_a_name_already_used(self):
+        with _Root() as root:
+            source = root.workspace("Lalka")
+            root.workspace("Solaris")
+            dialog = WorkspaceDialog(None)
+            dialog.select_slug(source.slug)
+            with patch.object(WorkspaceDialog, "_ask_name", return_value="Solaris"), \
+                 patch("split_translator.workspace_dialog.QMessageBox") as box:
+                dialog.duplicate_selected()
+            box.warning.assert_called_once()
+            self.assertEqual(dialog.list_widget.count(), 2)
+
+
 class DialogOpenGuardTests(unittest.TestCase):
     def test_open_is_enabled_for_a_workspace_with_no_books_yet(self):
         # A workspace can be built up before its books are chosen; the book side

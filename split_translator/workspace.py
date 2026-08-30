@@ -124,6 +124,12 @@ def list_workspaces(root: Path | None = None) -> list[Workspace]:
 
     Alphabetical rather than most-recently-opened: that would need a timestamp
     written into every workspace on open, and the picker shows no such time.
+
+    The slug breaks ties, so two workspaces sharing a display name still have a
+    defined order. Sorting on the name alone left them in whatever order the
+    filesystem happened to return, which can change as folders are added and
+    removed, so the same row could point at a different workspace from one run
+    to the next.
     """
     root = root or WORKSPACES_DIR
     if not root.is_dir():
@@ -135,7 +141,7 @@ def list_workspaces(root: Path | None = None) -> list[Workspace]:
         workspace = read_workspace(entry)
         if workspace is not None:
             found.append(workspace)
-    return sorted(found, key=lambda workspace: workspace.name.lower())
+    return sorted(found, key=lambda workspace: (workspace.name.lower(), workspace.slug))
 
 
 def load_settings(path: Path | None = None) -> dict:

@@ -112,6 +112,17 @@ class ListWorkspacesTests(unittest.TestCase):
             names = [ws.name for ws in list_workspaces(Path(d))]
             self.assertEqual(names, ["apple", "Banana"])
 
+    def test_same_named_workspaces_are_ordered_by_slug(self):
+        # Sorting on the name alone left ties in filesystem order, which can
+        # change as folders come and go, so the same row could point at a
+        # different workspace from one run to the next.
+        with tempfile.TemporaryDirectory() as d:
+            _write_workspace(d, "lalka-2", name="Lalka")
+            _write_workspace(d, "lalka", name="Lalka")
+            _write_workspace(d, "zzz", name="Lalka")
+            slugs = [ws.slug for ws in list_workspaces(Path(d))]
+            self.assertEqual(slugs, ["lalka", "lalka-2", "zzz"])
+
     def test_skips_folders_that_are_not_workspaces_and_loose_files(self):
         with tempfile.TemporaryDirectory() as d:
             _write_workspace(d, "real", name="Real")
