@@ -12,8 +12,13 @@ runs ahead of Chromium's, the target index is reached early, and the mark lands
 on the wrapper, which starts higher up the page than the paragraph that matched.
 That is the "highlights the previous paragraph" bug.
 
+The mirror bug is a block that holds text of its own AND a nested block. Counting
+only the leaf blocks skips that text, so the match is highlighted with nothing
+marked and every later match shifts one place forward onto the wrong paragraph.
+
 These tests run the real JS in a real page (the counting logic cannot be checked
-against a stub) and pin that only leaf blocks are counted."""
+against a stub) and pin that every piece of text is counted exactly once, in the
+innermost block that owns it."""
 
 import json
 import os
@@ -267,3 +272,67 @@ class TypographicFoldTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+# The shape that breaks leaf-only counting: a block holding text of its own AND
+# a nested block. This is real Children of Dune markup, where a paragraph div
+# ends with a nested div carrying the song that follows it. Counting only leaf
+# blocks skips the wrapper's own text entirely, so a term living there is
+# invisible to the count while Chromium still finds and highlights it.
+WRAPPER_TEXT_BODY = """
+<div class="chapter">
+  <p>A quiet opening line.</p>
+  <div class="passage">His fingers elicited a faltering tune.
+    <div class="song">A voice elicited from the dark.</div>
+  </div>
+  <p>They elicited nothing more.</p>
+</div>
+"""
+
+
+class WrapperOwnTextTests(unittest.TestCase):
+    """Text sitting directly inside a block that also has a nested block must be
+    counted, and counted in that block.
+
+    Leaf-only counting drops it. That is not merely a missing mark: every later
+    match shifts down by one, so the marks that do appear land on the wrong
+    paragraph while Chromium highlights the right one."""
+
+    def setUp(self):
+        self.page = _Page(WRAPPER_TEXT_BODY)
+        self.addCleanup(self.page.close)
+        # b0 chapter, b1 first p, b2 the passage div (own text + nested block),
+        # b3 the song div nested inside it, b4 the closing p.
+        self.assertEqual(self.page.ids, ["b0", "b1", "b2", "b3", "b4"])
+
+    def test_the_wrapper_owns_its_own_text(self):
+        # The reported bug: this match is highlighted but nothing is marked,
+        # because b2's own text is in no leaf block.
+        self.assertEqual(self.page.block_for_match("elicited", 1), "b2")
+
+    def test_later_matches_are_not_shifted_by_the_skipped_one(self):
+        # The silent half of the same defect. Skipping match 1 pulls every
+        # later match one place forward, so these two marked the wrong block.
+        self.assertEqual(self.page.block_for_match("elicited", 2), "b3")
+        self.assertEqual(self.page.block_for_match("elicited", 3), "b4")
+
+    def test_the_count_matches_the_number_of_occurrences(self):
+        # Three occurrences, so a fourth index marks nothing. Under leaf-only
+        # counting the total was 2 and index 3 already came back empty.
+        self.assertEqual(self.page.block_for_match("elicited", 4), "")
+
+    def test_the_sentence_stops_at_the_nested_block(self):
+        # The wrapper's textContent runs its own text straight into the nested
+        # block's, so a sentence read from it would splice the song onto the
+        # paragraph. The match's own text run must end where the nested block
+        # begins.
+        self.assertEqual(
+            self.page.sentence_for_match("elicited", 1),
+            "His fingers elicited a faltering tune.",
+        )
+
+    def test_the_nested_block_keeps_its_own_sentence(self):
+        self.assertEqual(
+            self.page.sentence_for_match("elicited", 2),
+            "A voice elicited from the dark.",
+        )

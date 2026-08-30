@@ -169,16 +169,34 @@ _MARK_BLOCK_JS = """
 })(%(id)s);
 """
 
-# The blocks a search match can be counted in: the *leaf* blocks, i.e. those
-# holding no other tagged block. Book markup nests block elements (a chapter
-# <div> around the paragraphs, a <blockquote> or <li> around a <p>), and the
-# loader tags every block element, nested or not (see book_loader.BLOCK_TAGS).
-# A wrapper's textContent already contains its children's, so walking every
-# [data-stid] counts a nested match once per ancestor as well as in its own
-# paragraph. The running count then overtakes Chromium's activeMatch, reaches
-# the target index early, and returns the wrapper, whose highlight starts higher
-# up the page than the paragraph that actually matched. Counting leaves only
-# keeps one match to one block, so the count tracks Chromium's again.
+# The text a search match can be counted in, split into *runs*. A run is a
+# stretch of text belonging to one tagged block: it starts where that block's
+# text starts and ends where a nested block interrupts it. Every character of
+# the page belongs to exactly one run, the run of its nearest tagged ancestor.
+#
+# That one-character-one-run property is the whole point, because the running
+# count has to track Chromium's activeMatch. Book markup nests block elements (a
+# chapter <div> around the paragraphs, a <blockquote> or <li> around a <p>) and
+# the loader tags every block element, nested or not (see
+# book_loader.BLOCK_TAGS), so a block's textContent already contains its
+# children's. Two earlier rules each broke the property in one direction:
+#
+#   - Walking every [data-stid] and reading textContent counted a nested match
+#     once per ancestor as well as in its own paragraph. The count overtook
+#     Chromium's, reached the target index early, and returned a wrapper whose
+#     highlight starts higher up the page than the paragraph that matched.
+#   - Counting only the leaf blocks fixed that and opened the mirror hole. A
+#     block can hold text of its own *and* a nested block (Children of Dune ends
+#     a paragraph div with a nested div carrying the song that follows it), and
+#     that own text sits in no leaf. Chromium still found it, so the match was
+#     highlighted with nothing marked, and every later match was pulled one
+#     place forward onto the wrong paragraph.
+#
+# Text nodes are visited in document order and consecutive nodes with the same
+# owning block join, so a leaf block still yields exactly its textContent and
+# nothing about the common case changes. SCRIPT and STYLE text is skipped:
+# Chromium's find does not match it, and counting it would put the count out of
+# step again.
 #
 # Anchors are unaffected: block ids are still assigned to every block element, so
 # saved anchors (which may name a wrapper) keep resolving. This narrows what is
@@ -201,18 +219,39 @@ _FOLD_JS = """
     }
 """
 
-_LEAF_BLOCKS_JS = """
-    var blocks = Array.prototype.slice.call(
-        document.querySelectorAll('[data-stid]')).filter(function(b) {
-            return b.querySelector('[data-stid]') === null;
-        });
+_TEXT_RUNS_JS = """
+    var runs = [];
+    var walker = document.createTreeWalker(
+        document.body, NodeFilter.SHOW_TEXT, null);
+    for (var node = walker.nextNode(); node; node = walker.nextNode()) {
+        var parent = node.parentNode;
+        if (!parent) continue;
+        var tag = parent.nodeName;
+        if (tag === 'SCRIPT' || tag === 'STYLE') continue;
+        // The nearest tagged ancestor owns this text. Untagged inline elements
+        // (a <span>, an <i>) are walked straight through, which is what keeps a
+        // leaf block's runs identical to its textContent.
+        var owner = parent;
+        while (owner && (!owner.getAttribute
+                         || owner.getAttribute('data-stid') === null)) {
+            owner = owner.parentNode;
+        }
+        var id = owner ? owner.getAttribute('data-stid') : "";
+        var last = runs.length ? runs[runs.length - 1] : null;
+        if (last && last.id === id) {
+            last.text += node.nodeValue;
+        } else {
+            runs.push({id: id, text: node.nodeValue});
+        }
+    }
 """
 
 # Finds the block holding the Nth find match (1-based, the find result's
 # activeMatch). findText does not update window.getSelection (Chromium highlights
 # via the find controller, not the DOM selection), so the match block is located
-# by counting term occurrences across leaf blocks in document order and returning
-# the block whose running count first reaches the target index. This is
+# by counting term occurrences across the text runs in document order and
+# returning the owner of the run whose running count first reaches the target
+# index. This is
 # independent of the live scroll position: on a wrap-around the findText callback
 # fires while the scroll is still at the old place, so a scrollY-based guess would
 # pick the wrong block (and miss the first occurrence entirely). %(term)s is a
@@ -222,33 +261,32 @@ _MATCH_BLOCK_JS = """
     if (!term || index < 1) return "";
     __FOLD__
     term = __fold(term.toLowerCase());
-    __LEAF_BLOCKS__
+    __TEXT_RUNS__
     var seen = 0;
-    for (var i = 0; i < blocks.length; i++) {
-        var b = blocks[i];
-        var text = __fold((b.textContent || "").toLowerCase());
+    for (var i = 0; i < runs.length; i++) {
+        var text = __fold(runs[i].text.toLowerCase());
         if (!text) continue;
         var from = 0;
         var hit = text.indexOf(term, from);
         while (hit !== -1) {
             seen++;
-            if (seen === index) return b.getAttribute("data-stid");
+            if (seen === index) return runs[i].id;
             from = hit + term.length;
             hit = text.indexOf(term, from);
         }
     }
     return "";
 })(%(term)s, %(index)s);
-""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS).replace("__FOLD__", _FOLD_JS)
+""".replace("__TEXT_RUNS__", _TEXT_RUNS_JS).replace("__FOLD__", _FOLD_JS)
 
 # Extracts the sentence containing the Nth find match (1-based activeMatch).
 # Locates the match the same way as _MATCH_BLOCK_JS (findText leaves no DOM
-# selection to read, so occurrences are counted across leaf blocks in document
-# order until the running count reaches the target index), then within that block
+# selection to read, so occurrences are counted across the text runs in document
+# order until the running count reaches the target index), then within that run
 # expands from the match offset to the surrounding sentence boundaries. A boundary
-# is a '.', '!' or '?' followed by whitespace; if none is found on a side the
-# block edge is used. Counting leaves matters twice over here: a wrapper's
-# textContent runs its paragraphs together, so expanding to a sentence inside one
+# is a '.', '!' or '?' followed by whitespace; if none is found on a side the run
+# edge is used. Runs matter twice over here: a block's textContent runs its own
+# text straight into any nested block's, so expanding to a sentence inside it
 # would splice text across a paragraph break. Returns a JSON string (a bare object
 # arrives empty from runJavaScript). %(term)s is a JSON-quoted search string;
 # %(index)s is the 1-based match index.
@@ -257,10 +295,10 @@ _MATCH_SENTENCE_JS = """
     if (!term || index < 1) return JSON.stringify({sentence: ""});
     __FOLD__
     var needle = __fold(term.toLowerCase());
-    __LEAF_BLOCKS__
+    __TEXT_RUNS__
     var seen = 0;
-    for (var i = 0; i < blocks.length; i++) {
-        var raw = blocks[i].textContent || "";
+    for (var i = 0; i < runs.length; i++) {
+        var raw = runs[i].text;
         // Folded for locating the match; raw is what gets sliced, so the
         // extracted sentence keeps the book's own quotes and apostrophes.
         var text = __fold(raw.toLowerCase());
@@ -299,7 +337,7 @@ _MATCH_SENTENCE_JS = """
     }
     return JSON.stringify({sentence: ""});
 })(%(term)s, %(index)s);
-""".replace("__LEAF_BLOCKS__", _LEAF_BLOCKS_JS).replace("__FOLD__", _FOLD_JS)
+""".replace("__TEXT_RUNS__", _TEXT_RUNS_JS).replace("__FOLD__", _FOLD_JS)
 
 
 class BookView(QWebEngineView):
