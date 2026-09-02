@@ -9,8 +9,9 @@ pip install -r requirements.txt
 ```
 
 On first launch the app opens the workspace picker, because there are no
-workspaces yet. Create one, give it a name, and point it at the original book
-and its translation. Everything that workspace collects (its search history,
+workspaces yet. Create one, give it a name, point it at the original book and
+its translation, and press *Save*: the name and the two paths are written only
+when you do. Everything that workspace collects (its search history,
 flashcard deck and content anchors) is stored in its own folder, so a second
 workspace for a different book starts empty.
 

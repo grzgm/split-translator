@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from split_translator import workspace as workspace_module
 from split_translator.workspace import Workspace, create_workspace, read_workspace
@@ -58,6 +58,29 @@ class _Root:
         )
         workspace_module.save_workspace(edited)
         return edited
+
+
+_SAVE = QMessageBox.StandardButton.Save
+_DISCARD = QMessageBox.StandardButton.Discard
+_CANCEL = QMessageBox.StandardButton.Cancel
+
+
+def _leaving(answer):
+    """Stub the unsaved-changes prompt with a fixed answer."""
+    return patch.object(WorkspaceDialog, "_ask_leaving", return_value=answer)
+
+
+class _AlwaysSaves:
+    """Mixin for tests about what a save does, not about being asked to save.
+
+    Leaving a workspace with unsaved edits prompts, so without this every one of
+    these tests would block on a modal.
+    """
+
+    def setUp(self):
+        patcher = _leaving(_SAVE)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 class WorkspaceCountsTests(unittest.TestCase):
@@ -170,8 +193,8 @@ class DialogDuplicateNameTests(unittest.TestCase):
             self.assertTrue(dialog.open_button.isEnabled())
 
     def test_a_colliding_name_is_never_saved_on_a_row_change(self):
-        # flush runs on a row change, so without a guard there the rejected name
-        # would reach disk by the back door.
+        # A row change offers to save, so without a guard on the save itself the
+        # rejected name would reach disk by the back door.
         with _Root() as root:
             root.workspace("Lalka")
             target = root.workspace("Solaris")
@@ -179,9 +202,15 @@ class DialogDuplicateNameTests(unittest.TestCase):
             dialog.select_slug(target.slug)
             dialog.name_input.setText("Lalka")
             dialog.on_edited()
-            dialog.select_slug("lalka")
+            with _leaving(_SAVE), patch(
+                "split_translator.workspace_dialog.QMessageBox.warning"
+            ) as warning:
+                dialog.select_slug("lalka")
+            warning.assert_called_once()
             self.assertEqual(read_workspace(target.dir).name, "Solaris")
             self.assertFalse((root.path / "lalka-2").exists())
+            # The refusal leaves the user on the row, with the name to fix.
+            self.assertEqual(dialog.selected().slug, target.slug)
 
     def test_new_refuses_a_name_already_used(self):
         with _Root() as root:
@@ -241,7 +270,7 @@ class DialogOpenGuardTests(unittest.TestCase):
             self.assertFalse(dialog.open_button.isEnabled())
 
 
-class DialogEditTests(unittest.TestCase):
+class DialogEditTests(_AlwaysSaves, unittest.TestCase):
     def test_edits_are_written_when_the_selection_changes(self):
         with _Root() as root:
             first = root.workspace("Aaa")
@@ -266,7 +295,7 @@ class DialogEditTests(unittest.TestCase):
             )
 
 
-class DialogRenameTests(unittest.TestCase):
+class DialogRenameTests(_AlwaysSaves, unittest.TestCase):
     def test_renaming_a_workspace_that_is_not_open_moves_its_folder_now(self):
         with _Root() as root:
             other = root.workspace("Other")
@@ -466,3 +495,107 @@ class DialogNewTests(unittest.TestCase):
             # It has no books, which is allowed: it opens with a placeholder
             # where the book view would be.
             self.assertTrue(dialog.open_button.isEnabled())
+
+
+class DialogSaveButtonTests(unittest.TestCase):
+    """Edits to the detail form are written only by pressing Save."""
+
+    def test_save_is_disabled_until_something_is_edited(self):
+        with _Root() as root:
+            created = root.workspace("Lalka")
+            dialog = WorkspaceDialog(created.slug)
+            self.assertFalse(dialog.save_button.isEnabled())
+            dialog.name_input.setText("Lalka renamed")
+            self.assertTrue(dialog.save_button.isEnabled())
+
+    def test_save_writes_the_form_and_goes_quiet_again(self):
+        with _Root() as root:
+            created = root.workspace("Lalka")
+            dialog = WorkspaceDialog(created.slug)
+            dialog.name_input.setText("Lalka renamed")
+            dialog.save_selected()
+            self.assertEqual(read_workspace(created.dir).name, "Lalka renamed")
+            self.assertFalse(dialog.save_button.isEnabled())
+
+    def test_a_rename_is_not_written_until_save_is_pressed(self):
+        # The point of the button: typing a new name changes nothing on disk.
+        with _Root() as root:
+            created = root.workspace("Lalka")
+            dialog = WorkspaceDialog(created.slug)
+            dialog.name_input.setText("Lalka renamed")
+            self.assertEqual(read_workspace(created.dir).name, "Lalka")
+
+    def test_a_book_path_is_not_written_until_save_is_pressed(self):
+        # Save governs the whole detail form, not the name alone.
+        with _Root() as root:
+            created = root.workspace("Lalka")
+            dialog = WorkspaceDialog(created.slug)
+            dialog.original_input.setText(created.translation_path)
+            self.assertEqual(
+                read_workspace(created.dir).original_path, created.original_path
+            )
+
+    def test_save_refuses_a_name_another_workspace_already_uses(self):
+        with _Root() as root:
+            first = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(first.slug)
+            dialog.name_input.setText("Bbb")
+            self.assertFalse(dialog.save_button.isEnabled())
+            with patch.object(WorkspaceDialog, "_reject_taken_name",
+                              return_value=True) as warned:
+                self.assertFalse(dialog.save_selected())
+            self.assertTrue(warned.called)
+            self.assertEqual(read_workspace(first.dir).name, "Aaa")
+
+
+class DialogLeavingUnsavedTests(unittest.TestCase):
+    """Leaving a workspace with unsaved edits asks what to do with them."""
+
+    def test_a_row_change_with_no_edits_asks_nothing(self):
+        with _Root() as root:
+            first = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(first.slug)
+            with patch.object(WorkspaceDialog, "_ask_leaving") as asked:
+                dialog.list_widget.setCurrentRow(1)
+            self.assertFalse(asked.called)
+
+    def test_discarding_from_the_prompt_reverts_the_form(self):
+        with _Root() as root:
+            first = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(first.slug)
+            dialog.name_input.setText("Aaa renamed")
+            with _leaving(_DISCARD):
+                dialog.list_widget.setCurrentRow(1)
+            self.assertEqual(read_workspace(first.dir).name, "Aaa")
+            self.assertEqual(dialog.selected().name, "Bbb")
+            # Coming back shows the workspace as it still is on disk.
+            with _leaving(_DISCARD):
+                dialog.list_widget.setCurrentRow(0)
+            self.assertEqual(dialog.name_input.text(), "Aaa")
+
+    def test_cancelling_keeps_the_row_and_the_edits(self):
+        with _Root() as root:
+            first = root.workspace("Aaa")
+            root.workspace("Bbb")
+            dialog = WorkspaceDialog(first.slug)
+            dialog.name_input.setText("Aaa renamed")
+            with _leaving(_CANCEL):
+                dialog.list_widget.setCurrentRow(1)
+            # Still on the workspace being edited, with the typing intact.
+            self.assertEqual(dialog.selected().slug, first.slug)
+            self.assertEqual(dialog.list_widget.currentRow(), 0)
+            self.assertEqual(dialog.name_input.text(), "Aaa renamed")
+            self.assertTrue(dialog.save_button.isEnabled())
+
+    def test_cancelling_the_prompt_keeps_the_dialog_open(self):
+        with _Root() as root:
+            created = root.workspace("Lalka")
+            dialog = WorkspaceDialog(created.slug)
+            dialog.name_input.setText("Lalka renamed")
+            with _leaving(_CANCEL):
+                dialog.accept()
+            self.assertEqual(dialog.result(), 0)
+            self.assertEqual(read_workspace(created.dir).name, "Lalka")

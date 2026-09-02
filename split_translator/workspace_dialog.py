@@ -4,6 +4,12 @@ selected one's name and book paths.
 Like every panel in the app this widget knows nothing about the others. It talks
 only to workspace.py, and the main window reads its result and acts on it.
 
+Edits to the detail form are written only by pressing Save. Leaving a workspace
+with unsaved edits, by picking another row or by pressing Open, asks whether to
+save them, discard them or stay put. Renaming moves the workspace's folder, so
+it waits for that explicit press rather than happening as a side effect of
+clicking elsewhere.
+
 It writes every config.json it changes itself. The one thing it cannot do is
 move the folder of the workspace that is currently open, because that
 workspace's stores hold absolute paths into it and their save workers may have a
@@ -144,10 +150,27 @@ class WorkspaceDialog(QDialog):
         form.addWidget(self.summary_label, 4, 1, 1, 2)
         form.addWidget(self.problem_label, 5, 1, 1, 2)
         form.setColumnStretch(1, 1)
-        form.setRowStretch(6, 1)
+
+        # Save governs the whole detail form, so it sits with the form rather
+        # than in the dialog's own button row, where it would read as saving the
+        # dialog. It is live only while there is something to write.
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self.save_selected)
+        save_row = QHBoxLayout()
+        save_row.addStretch()
+        save_row.addWidget(self.save_button)
+
+        detail_layout = QVBoxLayout()
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.addLayout(form)
+        detail_layout.addLayout(save_row)
+        # Keeps the form and its Save button together at the top. The grid used
+        # to hold a stretch row of its own for this; the stretch belongs out
+        # here now, below the button, or the button would float to the bottom.
+        detail_layout.addStretch()
 
         detail = QWidget()
-        detail.setLayout(form)
+        detail.setLayout(detail_layout)
 
         columns = QHBoxLayout()
         columns.addWidget(self.list_widget, 1)
@@ -216,10 +239,12 @@ class WorkspaceDialog(QDialog):
             self.list_widget.setCurrentRow(slugs.index(slug))
 
     def on_row_changed(self, row: int):
-        """Flush the outgoing workspace's edits, then show the incoming one."""
+        """Settle the outgoing workspace's edits, then show the incoming one."""
         if self._loading:
             return
-        self.flush()
+        if not self.leave_selected():
+            self._restore_row()
+            return
         if 0 <= row < len(self._workspaces):
             self.show_workspace(self._workspaces[row])
         else:
@@ -300,8 +325,8 @@ class WorkspaceDialog(QDialog):
             slug=self._selected.slug,
             # A blank name would give a nameless row, so the slug stands in. A
             # name that collides with another workspace is not applied either:
-            # Open is disabled while it does, and a row change discards it
-            # rather than saving two rows that read alike.
+            # Save and Open are both disabled while it does, rather than letting
+            # two rows that read alike be written.
             name=(
                 self._selected.name
                 if self._name_conflict()
@@ -318,6 +343,9 @@ class WorkspaceDialog(QDialog):
         conflict = self._name_conflict()
         openable = workspace is not None and can_open(workspace) and not conflict
         self.open_button.setEnabled(openable)
+        self.save_button.setEnabled(
+            self._dirty and self._selected is not None and not conflict
+        )
         self.duplicate_button.setEnabled(self._selected is not None)
         self.delete_button.setEnabled(self.can_delete())
         if conflict:
@@ -343,17 +371,26 @@ class WorkspaceDialog(QDialog):
         if path:
             field.setText(path)
 
-    def flush(self):
+    def save_selected(self) -> bool:
         """Write the form back into the selected workspace's config.json.
 
-        Every path that saves edits goes through here, pressing Open and picking
-        another row alike, so this is also where a name change moves the folder.
-        Deciding that in accept() instead would leave a workspace renamed by
-        selecting away from it with a folder name that no longer matches, and no
-        way to catch up short of renaming it a second time.
+        The Save button, and the Save answer to the unsaved-edits prompt. Every
+        path that writes edits goes through here, so this is also where a name
+        change moves the folder: doing that in accept() instead would leave a
+        workspace renamed from the list with a folder name that no longer
+        matches, and no way to catch up short of renaming it a second time.
+
+        Returns whether the workspace now matches the form, so a caller on its
+        way elsewhere knows whether it may carry on. Nothing to write counts as
+        success; a name another workspace already uses does not, and is refused
+        here as well as on the button, so the prompt's Save cannot slip one
+        through.
         """
         if self._selected is None or not self._dirty:
-            return
+            return True
+        if self._name_conflict():
+            self._reject_taken_name(self._typed_name())
+            return False
         index = self._workspaces.index(self._selected)
         workspace = self.form_workspace()
         save_workspace(workspace)
@@ -365,6 +402,53 @@ class WorkspaceDialog(QDialog):
         item = self.list_widget.item(index)
         if item is not None:
             item.setText(self.label_for(workspace))
+        self.update_buttons()
+        return True
+
+    def _ask_leaving(self, name: str):
+        """Ask what to do with unsaved edits. Split out so tests can drive it."""
+        return QMessageBox.question(
+            self,
+            "Unsaved changes",
+            f"'{name}' has unsaved changes.\n\nSave them before leaving?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+
+    def leave_selected(self) -> bool:
+        """Settle unsaved edits before the form stops showing this workspace.
+
+        Returns False when the user cancelled, or when saving was refused, in
+        which case the caller must stay where it is. Named for what it guards
+        rather than what it asks, because the common case asks nothing: with no
+        edits pending there is no prompt.
+        """
+        if self._selected is None or not self._dirty:
+            return True
+        answer = self._ask_leaving(self._loaded_name)
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save_selected()
+        if answer == QMessageBox.StandardButton.Discard:
+            # Repopulating from the workspace as it stands drops the edits and
+            # clears the dirty flag, so nothing is carried to the next row.
+            self.show_workspace(self._selected)
+            return True
+        return False
+
+    def _restore_row(self):
+        """Put the list selection back on the workspace the form is showing.
+
+        The list has already moved by the time currentRowChanged reaches us, so
+        cancelling means moving it back. Guarded, or this would re-enter
+        on_row_changed and ask about the same edits again.
+        """
+        if self._selected is None:
+            return
+        self._loading = True
+        self.list_widget.setCurrentRow(self._workspaces.index(self._selected))
+        self._loading = False
 
     def apply_rename(self, workspace: Workspace) -> Workspace:
         """Move a just-saved workspace's folder to match its new name.
@@ -453,7 +537,8 @@ class WorkspaceDialog(QDialog):
             return
         if self._reject_taken_name(name):
             return
-        self.flush()
+        if not self.leave_selected():
+            return
         created = create_workspace(name)
         self.reload(select=created.slug)
 
@@ -461,7 +546,8 @@ class WorkspaceDialog(QDialog):
         """Copy the selected workspace, deck, history, anchors and all."""
         if self._selected is None:
             return
-        self.flush()
+        if not self.leave_selected():
+            return
         name = self._ask_name(
             "Duplicate workspace", f"{self._selected.name} copy"
         )
@@ -503,13 +589,14 @@ class WorkspaceDialog(QDialog):
         self.reload(select=self.current_slug)
 
     def accept(self):
-        """Write pending edits and report the slug to open.
+        """Settle pending edits and report the slug to open.
 
-        The folder move itself belongs to flush(); all this adds is that the
-        deferred move of the open workspace has already allocated the slug that
-        folder is about to take, so that is the slug to open.
+        The folder move itself belongs to save_selected(); all this adds is that
+        the deferred move of the open workspace has already allocated the slug
+        that folder is about to take, so that is the slug to open.
         """
-        self.flush()
+        if not self.leave_selected():
+            return
         workspace = self._selected
         if workspace is None:
             return
