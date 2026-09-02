@@ -1,7 +1,7 @@
-"""The New button's "Fill empty fields" action, wiring side.
+"""The Fill button, wiring side.
 
-The panel only announces the request (fill_empty_requested); the main window
-owns the three sources it fills from. The grab is taken with its own callback
+The panel only announces the click; the main window owns the three sources it
+fills from. The grab is taken with its own callback
 rather than through pronunciation_grabbed, so this one-shot fill is answered by
 the page on screen and no passive listener acts on it. The window methods are
 driven as unbound functions against a lightweight carrier, avoiding the

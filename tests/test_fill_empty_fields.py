@@ -1,4 +1,4 @@
-"""The New button's "Fill empty fields" action, panel side.
+"""The Fill button, panel side.
 
 The gap fill is the deliberate counterpart of the passive auto-grabs: it runs
 whatever state the card is in, but it writes only where the card is still

@@ -508,10 +508,10 @@ class FlashcardEditorBase(QWidget):
     # per keystroke. The main window shows it as a "*" on the dock title, the
     # way a text editor marks a modified file.
     altered_changed = Signal(bool)
-    # The New button's dropdown item was chosen. Like new_button.clicked, the
-    # panel only announces it: the main window owns the sources it fills from
+    # The Fill button's dropdown item was chosen. Like fill_button.clicked, the
+    # panel only announces it: the main window owns the sources New fills from
     # (the search box, the Cambridge page, the book match).
-    fill_empty_requested = Signal()
+    new_requested = Signal()
 
     #: The smallest gap left between Clear and Save, in pixels. Wider whenever
     #: the panel has room; never narrower, however narrow the panel gets.
@@ -725,35 +725,39 @@ class FlashcardEditorBase(QWidget):
         layout.addWidget(senses_widget)
 
         buttons = QHBoxLayout()
-        # A split button: the wide part is New itself, the arrow beside it drops
-        # down the variant that fills the blanks instead of starting over. They
-        # share a button because they share a source (the page on screen) and
-        # differ only in what they are allowed to overwrite.
-        self.new_button = QToolButton()
-        self.new_button.setText("New")
-        self.new_button.setToolButtonStyle(
+        # A split button: the wide part is Fill, the arrow beside it drops down
+        # New. They share a button because they share a source (the page on
+        # screen) and differ only in what they are allowed to overwrite: Fill
+        # writes into blank fields only, New starts the card over.
+        #
+        # Fill is the wide part because it is the everyday one and it cannot
+        # lose work. New replaces the card that is open, so it sits behind the
+        # arrow where a misclick meant for Fill cannot reach it.
+        self.fill_button = QToolButton()
+        self.fill_button.setText("Fill")
+        self.fill_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextOnly
         )
-        self.new_button.setPopupMode(
+        self.fill_button.setPopupMode(
             QToolButton.ToolButtonPopupMode.MenuButtonPopup
         )
         # A tool button is compact by default; match the push buttons beside it
         # so the row keeps one height and shares its width evenly.
-        self.new_button.setSizePolicy(
+        self.fill_button.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
         )
-        self.new_button.setToolTip(
-            "Ctrl+N: start a card and fill headword, IPA, spelling and audio "
-            "from the Cambridge page. Ctrl+click skips the discard confirmation."
-        )
-        self.new_menu = QMenu(self.new_button)
-        self.fill_empty_action = self.new_menu.addAction("Fill empty fields")
-        self.fill_empty_action.setToolTip(
+        self.fill_button.setToolTip(
             "Fill only the fields that are still blank from the page on screen, "
             "keeping the card and everything already in it."
         )
-        self.fill_empty_action.triggered.connect(self.fill_empty_requested)
-        self.new_button.setMenu(self.new_menu)
+        self.new_menu = QMenu(self.fill_button)
+        self.new_action = self.new_menu.addAction("New")
+        self.new_action.setToolTip(
+            "Ctrl+N: start a card and fill headword, IPA, spelling and audio "
+            "from the Cambridge page. Ctrl+click skips the discard confirmation."
+        )
+        self.new_action.triggered.connect(self.new_requested)
+        self.fill_button.setMenu(self.new_menu)
         self.clear_button = QPushButton("Clear")
         self.clear_button.setToolTip(
             "Empty the editor. Ctrl+click skips the discard confirmation."
@@ -769,13 +773,13 @@ class FlashcardEditorBase(QWidget):
         # A tool button asks for less room than a push button, which would leave
         # the row uneven and the dropdown arrow a cramped target. Match Clear in
         # both directions instead.
-        self.new_button.setMinimumHeight(self.clear_button.sizeHint().height())
-        self.new_button.setMinimumWidth(self.clear_button.sizeHint().width())
-        # New and Clear are the two that throw work away, so they keep to the
-        # left and Save sits on its own at the right, out of reach of a misclick
-        # meant for Clear. The stretch opens the gap as wide as the panel allows
-        # and the spacing keeps a gap there even when the panel is narrow.
-        buttons.addWidget(self.new_button)
+        self.fill_button.setMinimumHeight(self.clear_button.sizeHint().height())
+        self.fill_button.setMinimumWidth(self.clear_button.sizeHint().width())
+        # Clear throws work away, so it keeps to the left with Fill and Save
+        # sits on its own at the right, out of reach of a misclick meant for
+        # Clear. The stretch opens the gap as wide as the panel allows and the
+        # spacing keeps a gap there even when the panel is narrow.
+        buttons.addWidget(self.fill_button)
         buttons.addWidget(self.clear_button)
         buttons.addStretch()
         buttons.addSpacing(self._SAVE_GAP)

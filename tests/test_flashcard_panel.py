@@ -1700,43 +1700,46 @@ class ButtonBarTests(unittest.TestCase):
         walk(layout)
         return found
 
-    def test_the_new_button_is_labelled_new(self):
-        self.assertEqual(self._panel().new_button.text(), "New")
+    def test_the_button_is_labelled_fill(self):
+        # Fill is the everyday action, so it is the wide part of the button.
+        self.assertEqual(self._panel().fill_button.text(), "Fill")
 
-    def test_the_new_button_carries_the_fill_empty_item(self):
+    def test_the_fill_button_carries_the_new_item(self):
+        # Starting a card over is the rarer, destructive one, so it sits in the
+        # dropdown where it cannot be hit by a misclick meant for Fill.
         panel = self._panel()
         self.assertEqual(
             [action.text() for action in panel.new_menu.actions()],
-            ["Fill empty fields"],
+            ["New"],
         )
 
     def test_the_dropdown_item_announces_the_request(self):
         # The panel only announces it; the main window owns the sources.
         panel = self._panel()
         asked = []
-        panel.fill_empty_requested.connect(lambda: asked.append(True))
-        panel.fill_empty_action.trigger()
+        panel.new_requested.connect(lambda: asked.append(True))
+        panel.new_action.trigger()
         self.assertEqual(asked, [True])
 
-    def test_the_main_part_of_the_new_button_stays_a_plain_click(self):
+    def test_the_main_part_of_the_fill_button_stays_a_plain_click(self):
         # Clicking the wide part must not drop the menu down: that is what
         # MenuButtonPopup buys over a plain button with a menu.
         panel = self._panel()
         self.assertEqual(
-            panel.new_button.popupMode(),
+            panel.fill_button.popupMode(),
             QToolButton.ToolButtonPopupMode.MenuButtonPopup,
         )
 
     def test_the_sense_button_does_not_share_the_card_action_row(self):
         panel = self._panel()
         siblings = self._siblings(panel.save_button)
-        self.assertIn(panel.new_button, siblings)
+        self.assertIn(panel.fill_button, siblings)
         self.assertIn(panel.clear_button, siblings)
         self.assertNotIn(panel.add_sense_button, siblings)
 
     def test_save_is_held_apart_from_the_buttons_that_discard(self):
         # A misclick meant for Clear must not land on Save, so the row leaves a
-        # gap: New and Clear on the left, Save on its own at the right.
+        # gap: Fill and Clear on the left, Save on its own at the right.
         panel = self._panel()
         panel.resize(420, 900)
         panel.show()

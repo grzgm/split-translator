@@ -216,11 +216,11 @@ class TranslationTool(QMainWindow):
         # Flashcard editor wiring. A Ctrl+click on the button skips the discard
         # confirmation; the Ctrl+N shortcut keeps the confirmation (Ctrl is part
         # of the shortcut, not a deliberate skip).
-        self.flashcard_panel.new_button.clicked.connect(
-            lambda: self.new_flashcard(force=self.flashcard_panel.ctrl_held())
-        )
-        self.flashcard_panel.fill_empty_requested.connect(
+        self.flashcard_panel.fill_button.clicked.connect(
             self.fill_empty_flashcard
+        )
+        self.flashcard_panel.new_requested.connect(
+            lambda: self.new_flashcard(force=self.flashcard_panel.ctrl_held())
         )
         self.dictionary_panel.pronunciation_grabbed.connect(
             self.on_pronunciation_grabbed
@@ -576,7 +576,7 @@ class TranslationTool(QMainWindow):
         )
 
     def fill_empty_flashcard(self):
-        """The New button's dropdown item: same three sources as new_flashcard,
+        """The Fill button: same three sources as new_flashcard,
         but nothing is cleared and nothing already filled is overwritten.
 
         It is for the card you have half built, or an old card you have loaded
