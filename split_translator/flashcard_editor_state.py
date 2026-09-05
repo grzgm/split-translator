@@ -1,13 +1,18 @@
 """Pure-logic editor state for the flashcard panel.
 
-One small object answers two questions the editor keeps asking: which mode is
-the editor in (building a new card, or editing a saved one) and has the user
-altered the current card since it was last loaded, cleared or saved. No Qt
-import, so it unit-tests headless like page_mapper and graph_layout. The panel
-holds exactly one instance and every mode/altered decision reads it."""
+One small object answers the questions the editor keeps asking: which mode is
+the editor in (building a new card, or editing a saved one), has the user
+altered the current card since it was last loaded, cleared or saved, and which
+of the passive fills' targets are still free to write. The last of those lives
+in its own AutofillRound (see flashcard_autofill), held here because a round
+begins exactly where the altered baseline is reset. No Qt import, so it
+unit-tests headless like page_mapper and graph_layout. The panel holds exactly
+one instance and every mode/altered decision reads it."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+
+from .flashcard_autofill import AutofillRound
 
 
 @dataclass
@@ -31,7 +36,14 @@ class EditorState:
     same baseline. It is needed because editing anything that appears on the
     printed card clears the flag by itself (the paper copy stops matching the
     card the moment it changes), and that automatic clear must not undo a
-    deliberate choice."""
+    deliberate choice.
+
+    autofill is altered a third time, one level finer: which individual fill
+    targets the user has taken over, rather than whether they have touched
+    anything at all. altered still says "this card has unsaved edits" for the
+    dock title and the discard prompts; the round says which passive fills may
+    still write, which is what lets the pages keep filling around what is being
+    typed while they load."""
 
     mode: str = "new"
     loaded_card_id: str | None = None
@@ -44,6 +56,10 @@ class EditorState:
     #: rather than a Qt signal so this module keeps its no-Qt, headless-testable
     #: character; the panel adapts it to a signal.
     on_altered_changed: Callable[[bool], None] | None = None
+    #: The passive fills' permission to write. Restarted by to_new and
+    #: to_editing, so every load, clear and save opens a fresh round with every
+    #: target free, exactly like altered and printed_flag_altered.
+    autofill: AutofillRound = field(default_factory=AutofillRound)
     _altered: bool = field(default=False, repr=False)
 
     @property
@@ -74,6 +90,7 @@ class EditorState:
         self.loaded_created_at = None
         self.altered = False
         self.printed_flag_altered = False
+        self.autofill.restart()
 
     def to_editing(self, card_id: str, created_at: str | None) -> None:
         """Enter editing a saved card. A freshly loaded card is a clean
@@ -83,10 +100,31 @@ class EditorState:
         self.loaded_created_at = created_at
         self.altered = False
         self.printed_flag_altered = False
+        self.autofill.restart()
 
-    def mark_altered(self) -> None:
-        """Record a genuine user edit."""
+    def begin_autofill(self) -> bool:
+        """Open a round of passive fills, and say whether it opened.
+
+        A search or a New card starts one. It opens only on a card with no
+        unsaved edits: a card already being edited is left out of the round
+        entirely, so a search made mid-edit never writes into it. Within an
+        open round each target fills until the user takes it over, which is
+        what lets the fields be typed while the pages are still loading."""
+        if self.altered:
+            self.autofill.close()
+            return False
+        self.autofill.restart()
+        return True
+
+    def mark_altered(self, target: str = "") -> None:
+        """Record a genuine user edit.
+
+        target names the fill target the edit landed on, where the caller knows
+        it, so later passive fills skip that one and keep filling the rest. An
+        edit with no target (a staged link, the printed toggle) still alters the
+        card but leaves every fill free."""
         self.altered = True
+        self.autofill.take(target)
 
     def mark_printed_flag_altered(self) -> None:
         """Record that the user set the printed flag by hand."""

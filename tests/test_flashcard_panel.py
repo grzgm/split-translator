@@ -519,9 +519,27 @@ class FlashcardPanelTests(unittest.TestCase):
             panel.tags_input.text(), "book:dracula, book:pan tadeusz"
         )
 
-    def test_no_book_tag_once_the_card_is_altered(self):
+    def test_a_typed_headword_does_not_stop_the_book_tag(self):
+        # Only the example slot decides whether the book fills. A headword the
+        # user typed while the book search was running is a different target.
         panel, _ = self._panel()
-        panel.headword_input.setText("dog")  # a genuine edit
+        panel.headword_input.setText("dog")
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "book:dracula")
+
+    def test_no_book_tag_once_the_example_is_the_users_own(self):
+        # Nothing was taken from the book, so there is no source to record.
+        panel, _ = self._panel()
+        panel._rows()[0].add_example("my own sentence")
+        panel.autofill_book_example("She saw the dog run.", "book:dracula")
+        self.assertEqual(panel.tags_input.text(), "")
+
+    def test_no_book_tag_once_the_round_is_shut(self):
+        # A search made while the card was being edited leaves the card out of
+        # the round entirely, tag included.
+        panel, _ = self._panel()
+        panel.headword_input.setText("dog")
+        panel.prepare_for_new_search()
         panel.autofill_book_example("She saw the dog run.", "book:dracula")
         self.assertEqual(panel.tags_input.text(), "")
 
@@ -708,11 +726,26 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.spelling_us_input.text(), "")
         self.assertIsNone(panel._audio_us_url)
 
-    def test_grab_blocked_after_user_edits_a_field(self):
-        # Once the user has altered the card, a passive grab does nothing.
+    def test_grab_keeps_a_typed_field_and_fills_the_rest(self):
+        # The point of the round: a headword typed while the page was loading is
+        # the user's, and everything they did not touch still fills.
         panel, _ = self._panel()
         panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
         panel.headword_input.setText("my own word")  # user edit -> altered
+        panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
+        self.assertEqual(panel.headword_input.text(), "my own word")
+        self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
+        self.assertEqual(panel.spelling_uk_input.text(), "uk2")
+        self.assertEqual(panel._audio_uk_url, "c.mp3")
+
+    def test_grab_blocked_by_a_search_made_mid_edit(self):
+        # The whole-card rule survives where it belongs: a search that lands on
+        # a card already carrying edits shuts the round, so the page that
+        # follows writes nothing at all.
+        panel, _ = self._panel()
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.headword_input.setText("my own word")  # user edit -> altered
+        panel.prepare_for_new_search()
         panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
         self.assertEqual(panel.headword_input.text(), "my own word")
         self.assertEqual(panel.ipa_uk_input.text(), "/aa/")  # unchanged
@@ -729,11 +762,23 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "walk")
         self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
 
-    def test_grab_leaves_an_altered_loaded_card_alone(self):
+    def test_grab_keeps_a_typed_headword_on_a_loaded_card(self):
+        # Same rule on a loaded card: the retyped headword is the user's, the
+        # notation they left alone is refilled from the page.
         panel, _ = self._panel()
         card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
         panel.load_card(card)
         panel.headword_input.setText("touched")  # user edit -> altered
+        panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
+        self.assertEqual(panel.headword_input.text(), "touched")
+        self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
+
+    def test_grab_leaves_a_loaded_card_alone_after_a_mid_edit_search(self):
+        panel, _ = self._panel()
+        card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
+        panel.load_card(card)
+        panel.headword_input.setText("touched")  # user edit -> altered
+        panel.prepare_for_new_search()
         panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
         self.assertEqual(panel.headword_input.text(), "touched")
         self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
@@ -1062,13 +1107,16 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.set_audio("uk", "https://example/new-uk.mp3")
         self.assertTrue(panel.state.altered)
 
-    def test_set_audio_blocks_a_later_passive_grab(self):
+    def test_set_audio_blocks_a_later_passive_grab_of_that_clip(self):
+        # A captured clip is the user's choice for that region only: the other
+        # region and the text fields still refill from the next page.
         panel, _ = self._panel()
-        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
+        panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", "b.mp3", "uk", "us", word="run")
         panel.set_audio("uk", "https://example/replaced.mp3")
-        panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
-        self.assertEqual(panel.headword_input.text(), "run")
+        panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", "d.mp3", "uk2", "us2", word="walk")
         self.assertEqual(panel._audio_uk_url, "https://example/replaced.mp3")
+        self.assertEqual(panel._audio_us_url, "d.mp3")
+        self.assertEqual(panel.headword_input.text(), "walk")
 
     def test_set_audio_unknown_region_is_a_noop(self):
         panel, _ = self._panel()
@@ -1121,13 +1169,16 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.set_ipa("uk", "/new/")
         self.assertTrue(panel.state.altered)
 
-    def test_set_ipa_blocks_a_later_passive_grab(self):
+    def test_set_ipa_blocks_a_later_passive_grab_of_that_notation(self):
+        # The notation mirror of the captured clip: only the region taken is
+        # held back.
         panel, _ = self._panel()
         panel.autofill_pronunciation("/aa/", "/bb/", "a.mp3", None, "uk", "us", word="run")
         panel.set_ipa("uk", "/zz/")
         panel.autofill_pronunciation("/cc/", "/dd/", "c.mp3", None, "uk2", "us2", word="walk")
-        self.assertEqual(panel.headword_input.text(), "run")
         self.assertEqual(panel.ipa_uk_input.text(), "/zz/")
+        self.assertEqual(panel.ipa_us_input.text(), "/dd/")
+        self.assertEqual(panel.headword_input.text(), "walk")
 
     def test_set_ipa_unknown_region_is_a_noop(self):
         panel, _ = self._panel()
@@ -1485,9 +1536,23 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.autofill_book_example("next sentence")
         self.assertEqual(panel._rows()[0].examples(), ["next sentence"])
 
-    def test_book_example_ignored_when_altered(self):
+    def test_book_example_ignored_once_the_slot_is_the_users_own(self):
+        panel, _ = self._panel()
+        panel._rows()[0].add_example("my own sentence")
+        panel.autofill_book_example("should be ignored")
+        self.assertEqual(panel._rows()[0].examples(), ["my own sentence"])
+
+    def test_book_example_still_fills_under_a_hand_written_sense(self):
+        # Translating the sense by hand does not close the example beneath it.
+        panel, _ = self._panel()
+        panel._rows()[0].polish_input.setText("pies")
+        panel.autofill_book_example("She saw the dog run.")
+        self.assertEqual(panel._rows()[0].examples(), ["She saw the dog run."])
+
+    def test_book_example_ignored_when_the_round_is_shut(self):
         panel, _ = self._panel()
         panel.headword_input.setText("edited")  # genuine user edit -> altered
+        panel.prepare_for_new_search()
         panel.autofill_book_example("should be ignored")
         self.assertEqual(panel._rows()[0].examples(), [])
 

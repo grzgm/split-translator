@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 from .field_marker import attach_empty_marker, mark_empty
+from .flashcard_autofill import Target
 from .flashcard_editor_state import EditorState
 from .flashcard_fields import CARD_FIELDS
 from .flashcard_tags import format_tags, normalise_tag, parse_tags
@@ -186,6 +187,11 @@ class SenseRow(QFrame):
     activated = Signal(object)
     remove_requested = Signal(object)
     edited = Signal()
+    # The row's FIRST example changed by hand: typed into, captured into, or
+    # removed. Separate from edited because that slot is the one the book
+    # sentence auto-fills, so the editor has to know when the user takes it
+    # over; every other edit here leaves the passive fills alone.
+    first_example_edited = Signal()
 
     # Every code is at most three letters, so the combo (and the printed card)
     # stays narrow. Keep these in sync with ``DictionaryPanel._POS_MAP``, which
@@ -312,6 +318,9 @@ class SenseRow(QFrame):
             lambda _=None, f=field_input: mark_empty(f)
         )
         field_input.textChanged.connect(lambda _=None: self.edited.emit())
+        field_input.textChanged.connect(
+            lambda _=None, r=row: self._first_example_changed(r)
+        )
         attach_empty_marker(field_input)
         row.example_input = field_input
 
@@ -328,6 +337,9 @@ class SenseRow(QFrame):
         # During a programmatic load the panel routes this through its
         # programmatic guard, so it does not mark the card altered then.
         self.edited.emit()
+        # A capture into a sense with no examples yet lands in the first slot,
+        # which the pre-fill wrote before the hook existed; say so here.
+        self._first_example_changed(row)
 
         if focus:
             field_input.setFocus()
@@ -359,10 +371,25 @@ class SenseRow(QFrame):
         rows = self._example_rows()
         return rows[0].example_input.text().strip() if rows else ""
 
+    def _is_first_example(self, row) -> bool:
+        rows = self._example_rows()
+        return bool(rows) and rows[0] is row
+
+    def _first_example_changed(self, row) -> None:
+        """Announce a change to the slot the book-sentence fill owns, but only
+        when the changed row really is that slot. The second and later examples
+        are nobody's target, so they stay silent here."""
+        if self._is_first_example(row):
+            self.first_example_edited.emit()
+
     def _remove_example(self, row) -> None:
+        # Read before the removal: afterwards the next row is the first one.
+        was_first = self._is_first_example(row)
         self.examples_container.removeWidget(row)
         row.deleteLater()
         self.edited.emit()
+        if was_first:
+            self.first_example_edited.emit()
 
     def examples(self) -> list:
         result = []
@@ -478,12 +505,22 @@ class SavedCardRowDelegate(QStyledItemDelegate):
 class FlashcardEditorBase(QWidget):
     """Editor that builds one card at a time and saves it to the store.
 
-    A single EditorState answers the two questions the editor keeps asking:
-    which mode (new or editing) and has the user altered the card. Every user
-    edit routes through _on_user_edit (sets altered); every programmatic fill
-    runs inside _programmatic() (never sets altered). Edits to fields that are
-    printed on the card go through _on_printed_content_edit instead, which does
-    that and also clears the printed flag. Three indicators, the Save button
+    A single EditorState answers the questions the editor keeps asking: which
+    mode (new or editing), has the user altered the card, and which of the
+    passive fills' targets are still free. Every user edit routes through
+    _on_user_edit (sets altered, and names the target it landed on); every
+    programmatic fill runs inside _programmatic() (never sets altered). Edits to
+    fields that are printed on the card go through _on_printed_content_edit
+    instead, which does that and also clears the printed flag.
+
+    Filling comes in two kinds, and they read that state differently. The
+    passive auto-fills (autofill_headword, autofill_pronunciation,
+    autofill_book_example) arrive on their own, seconds apart, as the search box,
+    the book and the dictionary pages answer; each writes a target while the
+    round still owns it (see flashcard_autofill), which is what lets the card be
+    typed into while the pages load. The deliberate gap fill (the fill_empty_*
+    methods behind the Fill button) is asked for by hand, so it runs at any time
+    and writes only into blank fields. Three indicators, the Save button
     label, the read-only Id field and the loaded-row dot, are all refreshed by
     _apply_state_to_ui so they can never disagree. Whether Save is enabled
     reads the same state (see _can_save) and additionally follows the headword,
@@ -563,12 +600,17 @@ class FlashcardEditorBase(QWidget):
         finally:
             self._programmatic_depth -= 1
 
-    def _on_user_edit(self, *_args) -> None:
-        """A genuine user edit. No-op during a programmatic fill."""
-        if self._programmatic_depth == 0:
-            self.state.mark_altered()
+    def _on_user_edit(self, *_args, target: str = "") -> None:
+        """A genuine user edit. No-op during a programmatic fill.
 
-    def _on_printed_content_edit(self, *_args) -> None:
+        target names the passive-fill target the edit landed on, where the
+        caller knows it. That is what closes one field to the fills without
+        closing the rest, so the pages can keep filling around what is being
+        typed while they load (see flashcard_autofill)."""
+        if self._programmatic_depth == 0:
+            self.state.mark_altered(target)
+
+    def _on_printed_content_edit(self, *_args, target: str = "") -> None:
         """A user edit to something that reaches paper: the headword, the own
         notation, the star, or any sense or example. Marks the card altered like
         any edit, and additionally clears the printed flag, because what was
@@ -581,7 +623,7 @@ class FlashcardEditorBase(QWidget):
         the audio, the links) stay on _on_user_edit and leave the flag alone."""
         if self._programmatic_depth:
             return
-        self._on_user_edit()
+        self._on_user_edit(target=target)
         if self.state.printed_flag_altered or not self.is_printed():
             return
         with self._programmatic():
@@ -616,7 +658,12 @@ class FlashcardEditorBase(QWidget):
 
         A printed field's edits also clear the printed flag, because the paper
         copy stops matching the card the moment its printed content changes; the
-        others only mark the card altered."""
+        others only mark the card altered.
+
+        Each field also names itself as the passive fills' target, which works
+        because the registry's names are the target names (see
+        flashcard_autofill.Target). A field with no fill behind it (Own notation,
+        Tags) names a target nothing writes, which costs nothing."""
         for spec, field in self._card_field_widgets():
             on_edit = (
                 self._on_printed_content_edit
@@ -624,7 +671,11 @@ class FlashcardEditorBase(QWidget):
                 else self._on_user_edit
             )
             field.textChanged.connect(lambda _=None, f=field: mark_empty(f))
-            field.textChanged.connect(on_edit)
+            field.textChanged.connect(
+                lambda _=None, handler=on_edit, name=spec.name: handler(
+                    target=name
+                )
+            )
             attach_empty_marker(field)
 
     def init_ui(self):
@@ -917,8 +968,24 @@ class FlashcardEditorBase(QWidget):
         # Everything a sense row holds (part of speech, Polish, English,
         # examples) is printed, so its edits clear the printed flag too.
         row.edited.connect(self._on_printed_content_edit)
+        row.first_example_edited.connect(
+            lambda r=row: self._on_first_example_edit(r)
+        )
         self.senses_container.addWidget(row)
         self.set_active_row(row)
+
+    def _on_first_example_edit(self, row) -> None:
+        """The user has taken over a sense's first example.
+
+        row.edited has already marked the card altered; this only names the
+        target, so the book-sentence fill leaves that example alone while the
+        rest of the card keeps filling. Only the FIRST sense's first example is
+        a fill target: that is the one slot autofill_book_example writes."""
+        if self._programmatic_depth:
+            return
+        rows = self._rows()
+        if rows and rows[0] is row:
+            self.state.mark_altered(Target.EXAMPLE)
 
     def set_active_row(self, row):
         self.active_row = row
@@ -1001,15 +1068,19 @@ class FlashcardEditorBase(QWidget):
     def autofill_book_example(self, sentence: str, book_tag: str = "") -> None:
         """Passive auto-fill of the book match sentence into the first sense's
         first example, and of that book's tag into the tags field. Same rule as
-        autofill_pronunciation: only while the card is unaltered, and written
-        through the programmatic guard so the fill itself never marks the card
-        altered (which lets a later book match refill again). A blank sentence is
-        ignored, and the tag with it: nothing was taken from the book, so there
-        is no source to record."""
+        autofill_pronunciation: only while this round still owns that example
+        slot, and written through the programmatic guard so the fill itself never
+        marks the card altered (which lets a later book match refill again). A
+        blank sentence is ignored, and the tag with it: nothing was taken from
+        the book, so there is no source to record.
+
+        Only the example decides. Writing the sense's Polish or English does not
+        stop the sentence landing beneath it, so a sense can be translated by
+        hand while the book match is still on its way."""
         sentence = (sentence or "").strip()
         if not sentence:
             return
-        if self.state.altered:
+        if not self.state.autofill.allows(Target.EXAMPLE):
             return
         with self._programmatic():
             self._rows()[0].set_first_example(sentence)
@@ -1021,16 +1092,16 @@ class FlashcardEditorBase(QWidget):
         """Seed the headword with the phrase that was searched, before any
         dictionary page has loaded.
 
-        Same passive rule as the other auto-fills: only while the card is
-        unaltered, and written through the programmatic guard so the seed never
-        marks the card altered. A blank word is ignored.
+        Same passive rule as the other auto-fills: only while this round still
+        owns the headword, and written through the programmatic guard so the seed
+        never marks the card altered. A blank word is ignored.
 
         This is what leaves a usable headword when the sites do not load at all
         (no connection, a failed page). When a Cambridge page does load,
         autofill_pronunciation replaces the seed with the page's own canonical
         spelling."""
         word = (word or "").strip()
-        if not word or self.state.altered:
+        if not word or not self.state.autofill.allows(Target.HEADWORD):
             return
         with self._programmatic():
             _fill(self.headword_input, word)
@@ -1046,30 +1117,61 @@ class FlashcardEditorBase(QWidget):
         word=None,
     ):
         """Passive auto-grab from a Cambridge page load. Refill the headword,
-        IPA, spelling and audio only while the card is unaltered; once the user
-        has altered it, do nothing silently (no dialog, no overwrite). The
-        refill runs programmatically so it never marks the card altered, which
-        lets a later page load refill again.
+        IPA, spelling and audio, target by target: each one is written while
+        this round still owns it, and silently skipped once the user has taken
+        it over (no dialog, no overwrite). The refill runs programmatically so
+        it never marks the card altered, which lets a later page load refill
+        again.
+
+        A page takes seconds to load, and this is what lets those seconds be
+        used: typing the headword while the page is on its way keeps the typed
+        headword and still gains the page's IPA, spelling and audio. A card that
+        was already being edited when the search ran is outside the round
+        altogether and takes nothing.
 
         The headword this replaces is usually the search phrase seeded up front
         by autofill_headword, so the field is filled from the moment of the
         search and gains the page's canonical spelling once it loads."""
-        if self.state.altered:
+        if not self.state.autofill.is_open:
             return
-        # Write every grab field (even to empty) so a re-fill clears values the
-        # previous word had but the new one lacks. The headword is the one
+        # Write every free grab field (even to empty) so a re-fill clears values
+        # the previous word had but the new one lacks. The headword is the one
         # exception: a page with no headword leaves the search-phrase seed in
         # place (see autofill_headword) rather than blanking the field.
         with self._programmatic():
             if word:
-                _fill(self.headword_input, word)
-            _fill(self.ipa_uk_input, ipa_uk or "")
-            _fill(self.ipa_us_input, ipa_us or "")
-            _fill(self.spelling_uk_input, spelling_uk or "")
-            _fill(self.spelling_us_input, spelling_us or "")
-            self._audio_uk_url = audio_uk_url or None
-            self._audio_us_url = audio_us_url or None
+                self._autofill_field(Target.HEADWORD, self.headword_input, word)
+            self._autofill_field(Target.IPA_UK, self.ipa_uk_input, ipa_uk)
+            self._autofill_field(Target.IPA_US, self.ipa_us_input, ipa_us)
+            self._autofill_field(
+                Target.SPELLING_UK, self.spelling_uk_input, spelling_uk
+            )
+            self._autofill_field(
+                Target.SPELLING_US, self.spelling_us_input, spelling_us
+            )
+            self._autofill_audio("uk", audio_uk_url)
+            self._autofill_audio("us", audio_us_url)
         self._update_play_buttons()
+
+    def _autofill_field(self, target: str, field: QLineEdit, value) -> None:
+        """Write one passive-fill target, unless the user has taken it over.
+
+        The passive half of _fill_if_empty: that one asks whether the field is
+        blank, this one asks whose the field is. A blank value is written like
+        any other, so a second page load clears what the previous word had and
+        this one lacks. Runs inside the caller's programmatic guard, so it never
+        marks the card altered."""
+        if self.state.autofill.allows(target):
+            _fill(field, value or "")
+
+    def _autofill_audio(self, region: str, url) -> None:
+        """The audio half of _autofill_field, mirroring _set_audio_if_empty."""
+        if not self.state.autofill.allows(Target.audio(region)):
+            return
+        if region == "uk":
+            self._audio_uk_url = url or None
+        else:
+            self._audio_us_url = url or None
 
     def _update_play_buttons(self):
         self.play_uk_button.setEnabled(bool(self._audio_uk_url))
@@ -1178,8 +1280,9 @@ class FlashcardEditorBase(QWidget):
         captured separately, because the block with the notation you want is
         often not the block with the clip you want).
 
-        A deliberate single-field edit, so it marks the card altered; that is
-        what makes a later passive grab leave the edited card alone."""
+        A deliberate single-field edit, so it marks the card altered and takes
+        that one region's clip out of the passive grab's hands; the rest of the
+        card still fills from the page."""
         if region == "uk":
             with self._programmatic():
                 self._audio_uk_url = url or None
@@ -1188,7 +1291,7 @@ class FlashcardEditorBase(QWidget):
                 self._audio_us_url = url or None
         else:
             return
-        self.state.mark_altered()
+        self.state.mark_altered(Target.audio(region))
         self._update_play_buttons()
 
     def set_ipa(self, region: str, ipa: str) -> None:
@@ -1196,14 +1299,14 @@ class FlashcardEditorBase(QWidget):
         page, leaving that region's audio clip alone. The notation half of
         set_audio; see it for why the card is marked altered."""
         if region == "uk":
-            target = self.ipa_uk_input
+            field = self.ipa_uk_input
         elif region == "us":
-            target = self.ipa_us_input
+            field = self.ipa_us_input
         else:
             return
         with self._programmatic():
-            target.setText(ipa or "")
-        self.state.mark_altered()
+            field.setText(ipa or "")
+        self.state.mark_altered(Target.ipa(region))
 
     # --- star -----------------------------------------------------------
 
@@ -1396,23 +1499,28 @@ class FlashcardEditorBase(QWidget):
         return True
 
     def prepare_for_new_search(self) -> None:
-        """Clear the editor before a new dictionary search auto-fills it, so the
-        new word replaces the previous card completely (senses, examples, star,
-        own notation, staged links, loaded-card id), not just the grab fields.
+        """Open this search's round of passive fills, and clear the editor for
+        it, so the new word replaces the previous card completely (senses,
+        examples, star, own notation, staged links, loaded-card id), not just the
+        grab fields.
 
         Only when the card is unaltered: a freshly saved card, a card loaded for
         viewing, one holding only a previous passive auto-fill, or an empty card
         are all reset to a fresh unsaved new card. An altered card is left
         completely untouched, with no discard prompt (a search is passive, so it
-        never nags); that is why this calls _reset_editor directly rather than
-        new_card/clear_editor, which would prompt.
+        never nags), and its round stays shut, so this search's late-arriving
+        pages write nothing into it either; that is why this calls _reset_editor
+        directly rather than new_card/clear_editor, which would prompt.
 
         Called once per search from main_window.on_word_searched, synchronously
-        before the pronunciation grab and the book-sentence fill. Because it runs
-        up front and NOT inside the repeating page-load handlers, the book
-        example filled afterwards survives later same-search Cambridge reloads.
+        before the pronunciation grab and the book-sentence fill. Because the
+        round is opened here and NOT inside the repeating page-load handlers, it
+        is the state of the card at the moment of the search that decides, typing
+        into the fresh card afterwards closes only the fields typed in, and the
+        book example filled just after survives later same-search Cambridge
+        reloads.
         """
-        if self.state.altered:
+        if not self.state.begin_autofill():
             return
         self._reset_editor()
 

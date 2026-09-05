@@ -259,7 +259,7 @@ class TranslationTool(QMainWindow):
         )
         # A book match on the Original edition auto-fills the flashcard's first
         # example with the sentence around the match (only while the dock is
-        # open and the card is unaltered).
+        # open and that example is still free).
         self.book_panel.book_sentence_matched.connect(
             self.on_book_sentence_matched
         )
@@ -273,10 +273,12 @@ class TranslationTool(QMainWindow):
 
     def on_word_searched(self, word: str):
         # A new search starts a fresh card: clear the editor first (only when the
-        # current card is unaltered; an altered card is left alone) so the word's
-        # pronunciation and the book sentence fill into a blank card, not on top
-        # of the previous word's senses and examples. Runs once per search,
-        # before the repeating page-load grabs.
+        # current card is unaltered; an altered card is left alone, and stays out
+        # of this search's fills entirely) so the word's pronunciation and the
+        # book sentence fill into a blank card, not on top of the previous word's
+        # senses and examples. Runs once per search, before the repeating
+        # page-load grabs, which is what makes the state of the card at the
+        # moment of the search the one that decides.
         self.flashcard_panel.prepare_for_new_search()
         # Seed the headword with the phrase just searched, after the clear (which
         # would otherwise wipe it). The card then carries the word straight away,
@@ -684,16 +686,16 @@ class TranslationTool(QMainWindow):
     def on_book_sentence_matched(self, sentence):
         # A book match on the Original edition supplies the sentence around it.
         # Fill it into the flashcard editor's first example, but only when the
-        # dock is open; the panel itself uses it only while its card is
-        # unaltered (see autofill_book_example).
+        # dock is open; the panel itself uses it only while that example slot is
+        # still free (see autofill_book_example).
         if not self.flashcard_dock.isVisible():
             return
         self.flashcard_panel.autofill_book_example(sentence, self.book_tag)
 
     def on_pronunciation_grabbed(self, data):
         # Fires on every Cambridge English page load. Only fill the flashcard
-        # editor when the dock is open; the panel itself refills only while the
-        # card is unaltered, and silently ignores the data once it is altered
+        # editor when the dock is open; the panel itself refills field by field,
+        # skipping the ones the user has typed into while the page was loading
         # (see autofill_pronunciation).
         if not self.flashcard_dock.isVisible():
             return
