@@ -486,3 +486,132 @@ class AnchorEditorScrollMemoryTests(unittest.TestCase):
         editor = self._editor_with_store(store)
         self.assertEqual(editor.original_view._initial_scroll, ("b0", 0.2))
         self.assertEqual(editor.translation_view._initial_scroll, ("b1", 0.7))
+
+
+from split_translator.anchor_store import EDITOR_SURFACE, AnchorStore
+from split_translator.normalise_spec import (
+    ORIGINAL_SIDE,
+    TRANSLATION_SIDE,
+    NormaliseSpec,
+)
+
+
+class AnchorEditorNormalisePanelTests(unittest.TestCase):
+    """The normalisation panel beside the anchor list: applied live to both
+    views, persisted on a debounce, and announced to the owner."""
+
+    def _editor(self, store=None):
+        if store is None:
+            tmp = tempfile.TemporaryDirectory()
+            self.addCleanup(tmp.cleanup)
+            store = AnchorStore(Path(tmp.name) / "anchors.json")
+            self.addCleanup(store.shutdown)
+        self.announced = []
+        original_doc = _doc("b")
+        translation_doc = _doc("b")
+        editor = AnchorEditor(
+            original_doc,
+            translation_doc,
+            store,
+            BookSync(len(original_doc.block_ids), len(translation_doc.block_ids)),
+            QWebEngineProfile(),
+            lambda: None,
+            on_spec_changed=lambda side, spec: self.announced.append((side, spec)),
+        )
+        return editor, store
+
+    def test_the_bottom_is_a_splitter_holding_the_list_and_the_panel(self):
+        editor, _ = self._editor()
+        self.assertEqual(editor.bottom_splitter.count(), 2)
+        self.assertIs(editor.bottom_splitter.widget(0), editor.anchor_list)
+        self.assertIs(editor.bottom_splitter.widget(1), editor.normalise_panel)
+
+    def test_the_splitter_starts_even(self):
+        editor, _ = self._editor()
+        left, right = editor.bottom_splitter.sizes()
+        self.assertEqual(left, right)
+
+    def test_seeds_the_panel_from_the_store(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        store.set_normalise_specs(NormaliseSpec(font=0.9), NormaliseSpec())
+        editor, _ = self._editor(store=store)
+        self.assertAlmostEqual(editor.normalise_panel.spec(ORIGINAL_SIDE).font, 0.9)
+
+    def test_seeds_the_views_from_the_store(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        store.set_normalise_specs(NormaliseSpec(), NormaliseSpec(gap=0.7))
+        editor, _ = self._editor(store=store)
+        self.assertAlmostEqual(editor.translation_view._normalise_spec.gap, 0.7)
+
+    def test_an_edit_reaches_that_side_s_view_only(self):
+        editor, _ = self._editor()
+        seen = {"orig": [], "trans": []}
+        editor.original_view.set_normalise_spec = lambda s: seen["orig"].append(s)
+        editor.translation_view.set_normalise_spec = lambda s: seen["trans"].append(s)
+        editor.normalise_panel.box(ORIGINAL_SIDE, "font").setValue(0.9)
+        self.assertEqual(len(seen["orig"]), 1)
+        self.assertEqual(seen["trans"], [])
+        self.assertAlmostEqual(seen["orig"][0].font, 0.9)
+
+    def test_an_edit_is_announced_to_the_owner(self):
+        editor, _ = self._editor()
+        editor.normalise_panel.box(TRANSLATION_SIDE, "gap").setValue(0.8)
+        self.assertEqual(len(self.announced), 1)
+        side, spec = self.announced[0]
+        self.assertEqual(side, TRANSLATION_SIDE)
+        self.assertAlmostEqual(spec.gap, 0.8)
+
+    def test_an_edit_does_not_persist_immediately(self):
+        # Debounced: a held-down arrow must not spawn one write worker per step.
+        editor, store = self._editor()
+        editor.normalise_panel.box(ORIGINAL_SIDE, "font").setValue(0.9)
+        self.assertTrue(store.get_normalise_specs()[0].is_default)
+
+    def test_the_debounce_persists_when_it_fires(self):
+        editor, store = self._editor()
+        editor.normalise_panel.box(ORIGINAL_SIDE, "font").setValue(0.9)
+        editor._save_specs()  # what the timer calls
+        self.assertAlmostEqual(store.get_normalise_specs()[0].font, 0.9)
+
+    def test_closing_flushes_a_pending_save(self):
+        # BookPanel.close_doc closes the editor before shutting the store down,
+        # so the last edit before closing must not be lost with the timer.
+        editor, store = self._editor()
+        editor.normalise_panel.box(ORIGINAL_SIDE, "font").setValue(0.9)
+        editor.close()
+        self.assertAlmostEqual(store.get_normalise_specs()[0].font, 0.9)
+
+    def test_the_panel_greys_while_normalisation_is_off(self):
+        editor, _ = self._editor()
+        editor.normalise_checkbox.setChecked(False)
+        self.assertFalse(editor.normalise_panel.isEnabled())
+        editor.normalise_checkbox.setChecked(True)
+        self.assertTrue(editor.normalise_panel.isEnabled())
+
+    def test_the_panel_starts_greyed_when_the_stored_flag_is_off(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        store.set_normalise(EDITOR_SURFACE, False)
+        editor, _ = self._editor(store=store)
+        self.assertFalse(editor.normalise_panel.isEnabled())
+
+    def test_reset_reaches_both_views_and_the_owner(self):
+        editor, _ = self._editor()
+        editor.normalise_panel.set_specs(
+            NormaliseSpec(font=0.9), NormaliseSpec(gap=0.8)
+        )
+        self.announced.clear()
+        editor.normalise_panel.reset()
+        self.assertEqual(
+            [side for side, _ in self.announced], [ORIGINAL_SIDE, TRANSLATION_SIDE]
+        )
+        self.assertTrue(editor.original_view._normalise_spec.is_default)
+        self.assertTrue(editor.translation_view._normalise_spec.is_default)

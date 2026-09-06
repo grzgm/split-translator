@@ -21,6 +21,8 @@ from .anchor_book_view import AnchorBookView
 from .anchor_store import EDITOR_SURFACE, AnchorStore
 from .book_loader import BookDocument
 from .book_sync import BookSync
+from .normalise_panel import NormalisePanel
+from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
 _TRANSLATION_ID_ROLE = 257  # Qt.UserRole + 1
@@ -89,6 +91,7 @@ class AnchorEditor(QWidget):
         book_sync: BookSync,
         profile: QWebEngineProfile,
         on_changed,
+        on_spec_changed=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -98,6 +101,11 @@ class AnchorEditor(QWidget):
         self.book_sync = book_sync
         self._profile_ref = profile
         self._on_changed = on_changed
+        # Called with (side, NormaliseSpec) whenever a multiplier changes, so
+        # the owner can apply the same change to the reader's views. The two
+        # surfaces share one set of multipliers, because they exist to line the
+        # editions up with each other rather than to suit one screen.
+        self._on_spec_changed = on_spec_changed
 
         self._selected_original: str | None = None
         self._selected_translation: str | None = None
@@ -135,6 +143,19 @@ class AnchorEditor(QWidget):
         # build with it already applied.
         self._normalise = self.anchor_store.get_normalise(EDITOR_SURFACE)
 
+        # This book pair's per-edition multipliers, shared with the reader.
+        # Seeded so both views build with them already applied.
+        self._original_spec, self._translation_spec = (
+            self.anchor_store.get_normalise_specs()
+        )
+        # Multipliers changed but not yet written. Every AnchorStore.save()
+        # spawns a write worker, so a held-down spin box arrow would spawn one
+        # per step; the timer coalesces them. Applying to the views is NOT
+        # debounced, which is what makes tuning feel live.
+        self._spec_save_timer = QTimer(self)
+        self._spec_save_timer.setSingleShot(True)
+        self._spec_save_timer.timeout.connect(self._save_specs)
+
         self.init_ui()
         self.refresh()
         self._refresh_highlights()
@@ -155,12 +176,14 @@ class AnchorEditor(QWidget):
             self._profile_ref,
             initial_scroll=self._original_scroll,
             normalise=self._normalise,
+            spec=self._original_spec,
         )
         self.translation_view = AnchorBookView(
             self.translation_document,
             self._profile_ref,
             initial_scroll=self._translation_scroll,
             normalise=self._normalise,
+            spec=self._translation_spec,
         )
         self.original_view.block_clicked.connect(self._on_original_clicked)
         self.translation_view.block_clicked.connect(self._on_translation_clicked)
@@ -227,7 +250,23 @@ class AnchorEditor(QWidget):
 
         self.anchor_list = QListWidget()
         self.anchor_list.itemClicked.connect(self._on_anchor_clicked)
-        bottom.addWidget(self.anchor_list)
+
+        # The multipliers sit beside the list rather than under it: they are
+        # tuned while watching the two books above, so they must not push the
+        # books off the screen. Even by default and draggable, like the vertical
+        # splitter above.
+        self.normalise_panel = NormalisePanel()
+        self.normalise_panel.set_specs(self._original_spec, self._translation_spec)
+        self.normalise_panel.changed.connect(self._apply_spec)
+        self.normalise_panel.setEnabled(self._normalise)
+
+        self.bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.bottom_splitter.addWidget(self.anchor_list)
+        self.bottom_splitter.addWidget(self.normalise_panel)
+        self.bottom_splitter.setStretchFactor(0, 1)
+        self.bottom_splitter.setStretchFactor(1, 1)
+        self.bottom_splitter.setSizes([400, 400])
+        bottom.addWidget(self.bottom_splitter)
         splitter.addWidget(bottom_container)
 
         # Give the book views most of the height by default; both stay resizable.
@@ -296,6 +335,32 @@ class AnchorEditor(QWidget):
         self.original_view.set_normalise(self._normalise)
         self.translation_view.set_normalise(self._normalise)
         self.anchor_store.set_normalise(EDITOR_SURFACE, self._normalise)
+        # The multipliers do nothing while normalisation is off (the injected
+        # stylesheet is disabled outright), so say so rather than leaving
+        # live-looking controls that change nothing.
+        self.normalise_panel.setEnabled(self._normalise)
+
+    def _apply_spec(self, side: str, spec: NormaliseSpec) -> None:
+        """One edition's multipliers changed in the panel. Apply to that side's
+        view at once, schedule the write, and tell the owner so the reader's
+        matching view follows."""
+        if side == ORIGINAL_SIDE:
+            self._original_spec = spec
+            self.original_view.set_normalise_spec(spec)
+        else:
+            self._translation_spec = spec
+            self.translation_view.set_normalise_spec(spec)
+        self._spec_save_timer.start(300)
+        if self._on_spec_changed is not None:
+            self._on_spec_changed(side, spec)
+
+    def _save_specs(self) -> None:
+        """Write both editions' multipliers. Called by the debounce timer, and
+        directly on close so a pending edit is not lost."""
+        self._spec_save_timer.stop()
+        self.anchor_store.set_normalise_specs(
+            self._original_spec, self._translation_spec
+        )
 
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         """Mirror a scroll on one side to the other through the anchor mapping.
@@ -444,4 +509,8 @@ class AnchorEditor(QWidget):
         self.anchor_store.set_scroll(
             EDITOR_SURFACE, self._original_scroll, self._translation_scroll
         )
+        # BookPanel.close_doc closes this window before shutting the store down,
+        # so flush any edit still sitting in the debounce.
+        if self._spec_save_timer.isActive():
+            self._save_specs()
         super().closeEvent(event)
