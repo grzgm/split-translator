@@ -9,6 +9,11 @@ from split_translator.anchor_store import (
     AnchorStore,
     anchor_path_for,
 )
+from split_translator.normalise_spec import (
+    ORIGINAL_SIDE,
+    TRANSLATION_SIDE,
+    NormaliseSpec,
+)
 
 
 class AnchorStoreTests(unittest.TestCase):
@@ -256,3 +261,112 @@ class AnchorStoreTests(unittest.TestCase):
         # A caller may pass default=False; an unset surface then reports False.
         store = self._store()
         self.assertFalse(store.get_normalise(READER_SURFACE, default=False))
+
+
+class NormaliseScaleTests(unittest.TestCase):
+    """The two editions' normalisation multipliers, stored per book pair and
+    shared by the reader and the editor."""
+
+    def _path(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "anchors.json"
+
+    def _store(self, path):
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        return store
+
+    def test_defaults_when_nothing_is_stored(self):
+        store = self._store(self._path())
+        original, translation = store.get_normalise_specs()
+        self.assertTrue(original.is_default)
+        self.assertTrue(translation.is_default)
+
+    def test_round_trips_through_the_file(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_normalise_specs(
+            NormaliseSpec(font=0.9, gap=0.8), NormaliseSpec(line_height=1.2)
+        )
+        store.shutdown()
+        reloaded = self._store(path)
+        original, translation = reloaded.get_normalise_specs()
+        self.assertEqual(original, NormaliseSpec(font=0.9, gap=0.8))
+        self.assertEqual(translation, NormaliseSpec(line_height=1.2))
+
+    def test_a_default_side_is_not_written(self):
+        # Keeps the file clean, and means a reset removes the key rather than
+        # leaving a block of ones behind.
+        path = self._path()
+        store = self._store(path)
+        store.set_normalise_specs(NormaliseSpec(font=0.9), NormaliseSpec())
+        store.shutdown()
+        raw = json.loads(path.read_text())
+        self.assertEqual(list(raw["normalise_scale"]), [ORIGINAL_SIDE])
+
+    def test_resetting_both_sides_drops_the_key(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_normalise_specs(NormaliseSpec(font=0.9), NormaliseSpec())
+        store.set_normalise_specs(NormaliseSpec(), NormaliseSpec())
+        store.shutdown()
+        raw = json.loads(path.read_text())
+        self.assertNotIn("normalise_scale", raw)
+
+    def test_a_malformed_block_gives_defaults(self):
+        path = self._path()
+        path.write_text(json.dumps({"normalise_scale": "nonsense"}))
+        original, translation = self._store(path).get_normalise_specs()
+        self.assertTrue(original.is_default)
+        self.assertTrue(translation.is_default)
+
+    def test_a_malformed_side_gives_that_side_the_default(self):
+        path = self._path()
+        path.write_text(
+            json.dumps(
+                {
+                    "normalise_scale": {
+                        ORIGINAL_SIDE: {"font": "wide"},
+                        TRANSLATION_SIDE: {"gap": 0.7},
+                    }
+                }
+            )
+        )
+        original, translation = self._store(path).get_normalise_specs()
+        self.assertTrue(original.is_default)
+        self.assertEqual(translation.gap, 0.7)
+
+    def test_an_out_of_range_stored_value_is_clamped(self):
+        path = self._path()
+        path.write_text(
+            json.dumps({"normalise_scale": {ORIGINAL_SIDE: {"font": 40}}})
+        )
+        original, _ = self._store(path).get_normalise_specs()
+        self.assertEqual(original.font, 2.0)
+
+    def test_a_file_written_before_this_feature_still_loads(self):
+        # No normalise_scale key: the anchors, scroll and normalise flag must
+        # all survive and the specs come back default.
+        path = self._path()
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "anchors": [{"original": "a1", "translation": "b1"}],
+                    "normalise": {READER_SURFACE: False},
+                }
+            )
+        )
+        store = self._store(path)
+        self.assertEqual(store.anchors, [("a1", "b1")])
+        self.assertFalse(store.get_normalise(READER_SURFACE))
+        self.assertTrue(store.get_normalise_specs()[0].is_default)
+
+    def test_saving_specs_keeps_the_anchors(self):
+        path = self._path()
+        store = self._store(path)
+        store.add("a1", "b1")
+        store.set_normalise_specs(NormaliseSpec(font=0.9), NormaliseSpec())
+        store.shutdown()
+        self.assertEqual(self._store(path).anchors, [("a1", "b1")])

@@ -9,6 +9,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread
 
+from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
+
 SCHEMA_VERSION = 1
 
 
@@ -62,6 +64,12 @@ def _parse_scroll(value) -> tuple[str, float] | None:
 # editor) keeps its own original/translation pair so they scroll independently.
 READER_SURFACE = "reader"
 EDITOR_SURFACE = "editor"
+
+# The scroll positions and the on/off flag above are keyed by SURFACE (reader /
+# editor). The normalisation multipliers below are keyed by SIDE (original /
+# translation, imported from normalise_spec) instead, because one set of
+# multipliers is shared by both surfaces: they exist to line the two editions up
+# with each other rather than to suit one screen. The mismatch is deliberate.
 
 _ScrollPair = tuple[tuple[str, float] | None, tuple[str, float] | None]
 
@@ -120,6 +128,22 @@ def load_normalise(filepath: Path) -> dict[str, bool]:
     return result
 
 
+def load_normalise_scale(filepath: Path) -> dict[str, NormaliseSpec]:
+    """Load each edition's normalisation multipliers. Returns a dict keyed by
+    side (original / translation); a side with nothing stored is absent and the
+    caller then uses the default (all x1.0, which is the fixed spec). A missing
+    or malformed "normalise_scale" block yields an empty dict, so a hand-broken
+    file falls back to the rendering the app has always had."""
+    raw = _load_raw(filepath).get("normalise_scale", {})
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, NormaliseSpec] = {}
+    for side in (ORIGINAL_SIDE, TRANSLATION_SIDE):
+        if side in raw:
+            result[side] = NormaliseSpec.from_dict(raw[side])
+    return result
+
+
 def write_anchors(filepath: Path, data: dict) -> None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
@@ -165,6 +189,11 @@ class AnchorStore:
         # Paragraph-normalisation flag per surface (reader / editor). A surface
         # absent here uses the caller's default (ON); see get_normalise.
         self.normalise: dict[str, bool] = load_normalise(filepath)
+        # Each edition's normalisation multipliers, shared by both surfaces
+        # (see ORIGINAL_SIDE). A side absent here renders at the fixed spec.
+        self.normalise_scale: dict[str, NormaliseSpec] = load_normalise_scale(
+            filepath
+        )
 
     def add(self, original_id: str, translation_id: str) -> None:
         self.anchors.append((original_id, translation_id))
@@ -219,6 +248,25 @@ class AnchorStore:
         self.normalise[surface] = bool(value)
         self.save()
 
+    def get_normalise_specs(self) -> tuple[NormaliseSpec, NormaliseSpec]:
+        """Return this book pair's (original, translation) normalisation
+        multipliers, each defaulting to the fixed spec when nothing is
+        stored."""
+        return (
+            self.normalise_scale.get(ORIGINAL_SIDE, NormaliseSpec()),
+            self.normalise_scale.get(TRANSLATION_SIDE, NormaliseSpec()),
+        )
+
+    def set_normalise_specs(
+        self, original: NormaliseSpec, translation: NormaliseSpec
+    ) -> None:
+        """Store both editions' multipliers and persist, in one write. Both
+        sides are taken together (like set_scroll) so a reset, which changes
+        both, does not spawn two write workers."""
+        self.normalise_scale[ORIGINAL_SIDE] = original
+        self.normalise_scale[TRANSLATION_SIDE] = translation
+        self.save()
+
     @staticmethod
     def _scroll_dict(position: tuple[str, float] | None) -> dict | None:
         if position is None:
@@ -254,6 +302,15 @@ class AnchorStore:
             data["scroll"] = scroll
         if self.normalise:
             data["normalise"] = dict(self.normalise)
+        # Only non-default sides are written, so the file stays clean and a
+        # reset removes the key rather than leaving a block of ones behind.
+        scale = {
+            side: spec.to_dict()
+            for side, spec in self.normalise_scale.items()
+            if not spec.is_default
+        }
+        if scale:
+            data["normalise_scale"] = scale
         return data
 
     def save(self) -> None:
