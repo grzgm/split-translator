@@ -7,8 +7,10 @@ That is the same split every other panel here follows.
 
 Greying it out is the owner's job too, done by calling setEnabled(False) on the
 whole widget: while the Normalise toggle is off the injected stylesheet is
-disabled outright, so the multipliers do nothing and live-looking controls would
-be a lie."""
+disabled outright, so the multipliers do nothing in this window and
+live-looking controls would be a lie. (The reader's Normalise flag is stored
+separately, is independent, and defaults ON, so the multipliers still apply
+there.)"""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -101,6 +103,14 @@ class NormalisePanel(QWidget):
         # of the default, not nine tenths of a pixel.
         box.setSuffix("x")
         box.setValue(1.0)
+        # Without this, typing a replacement value (selecting 1.00 and typing
+        # 0.85) emits valueChanged after every keystroke, so the intermediate
+        # "0" clamps to MIN_SCALE and is briefly applied live to both windows
+        # before the rest of the digits land. Disabling keyboard tracking
+        # defers that signal until Enter or focus-out, so a typed edit commits
+        # once, with the finished value. Arrow-step edits are unaffected: they
+        # do not go through this keystroke-by-keystroke path.
+        box.setKeyboardTracking(False)
         box.valueChanged.connect(lambda _=None, s=side: self._on_edited(s))
         return box
 

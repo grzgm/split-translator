@@ -257,7 +257,9 @@ class AnchorEditor(QWidget):
         # splitter above.
         self.normalise_panel = NormalisePanel()
         self.normalise_panel.set_specs(self._original_spec, self._translation_spec)
-        self.normalise_panel.changed.connect(self._apply_spec)
+        self.normalise_panel.changed.connect(self._apply_normalise_spec)
+        # Start greyed to match the seeded flag: the multipliers do nothing in
+        # this window while normalisation is off (see toggle_normalise).
         self.normalise_panel.setEnabled(self._normalise)
 
         self.bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -335,12 +337,14 @@ class AnchorEditor(QWidget):
         self.original_view.set_normalise(self._normalise)
         self.translation_view.set_normalise(self._normalise)
         self.anchor_store.set_normalise(EDITOR_SURFACE, self._normalise)
-        # The multipliers do nothing while normalisation is off (the injected
-        # stylesheet is disabled outright), so say so rather than leaving
-        # live-looking controls that change nothing.
+        # The multipliers do nothing in this window while normalisation is off
+        # (the injected stylesheet is disabled outright), so say so rather than
+        # leaving live-looking controls that change nothing. The reader's own
+        # Normalise flag is separate and independent (default ON), so its views
+        # keep applying these same multipliers regardless of this toggle.
         self.normalise_panel.setEnabled(self._normalise)
 
-    def _apply_spec(self, side: str, spec: NormaliseSpec) -> None:
+    def _apply_normalise_spec(self, side: str, spec: NormaliseSpec) -> None:
         """One edition's multipliers changed in the panel. Apply to that side's
         view at once, schedule the write, and tell the owner so the reader's
         matching view follows."""
@@ -356,11 +360,17 @@ class AnchorEditor(QWidget):
 
     def _save_specs(self) -> None:
         """Write both editions' multipliers. Called by the debounce timer, and
-        directly on close so a pending edit is not lost."""
+        directly on close so a pending edit is not lost.
+
+        Reads straight from the panel rather than self._original_spec /
+        self._translation_spec: those two fields are updated only by
+        _apply_normalise_spec, so they would go stale against any future call
+        to NormalisePanel.set_specs (which deliberately does not emit) made
+        outside construction and reset(). The panel is the source of truth for
+        what gets written; the two fields still just seed the views at
+        construction."""
         self._spec_save_timer.stop()
-        self.anchor_store.set_normalise_specs(
-            self._original_spec, self._translation_spec
-        )
+        self.anchor_store.set_normalise_specs(*self.normalise_panel.specs())
 
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         """Mirror a scroll on one side to the other through the anchor mapping.
@@ -503,14 +513,23 @@ class AnchorEditor(QWidget):
         self._on_changed()
 
     def closeEvent(self, event) -> None:
+        # Flush a pending spec edit BEFORE the scroll write below, not after.
+        # The scroll write always runs; the spec flush only runs when an edit
+        # is still sitting in the debounce. AnchorStore.save() always dumps
+        # the store's full current state (scroll and specs together), so
+        # flushing the spec first means the ALWAYS-needed scroll write is also
+        # the LAST write, and its save() call is the one that ends up carrying
+        # the just-flushed spec to disk together with the scroll position,
+        # rather than the reverse order leaving the (rarer) spec flush as an
+        # extra, separate write tacked on after the routine scroll one.
+        # BookPanel.close_doc closes this window before shutting the store
+        # down, so any edit still sitting in the debounce must be flushed here.
+        if self._spec_save_timer.isActive():
+            self._save_specs()
         # Persist the editor's own scroll position so it reopens here next time,
         # separately from the reader. The shared store flushes in-flight writes
         # on app shutdown (BookPanel.close_doc -> anchor_store.shutdown).
         self.anchor_store.set_scroll(
             EDITOR_SURFACE, self._original_scroll, self._translation_scroll
         )
-        # BookPanel.close_doc closes this window before shutting the store down,
-        # so flush any edit still sitting in the debounce.
-        if self._spec_save_timer.isActive():
-            self._save_specs()
         super().closeEvent(event)

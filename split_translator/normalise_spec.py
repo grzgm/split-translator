@@ -61,8 +61,7 @@ def _clamp(value) -> float:
 def _css_number(value: float) -> str:
     """A CSS number with no binary-floating-point noise. 0.6 * 1.05 is
     0.6300000000000001 in Python and must reach the stylesheet as 0.63."""
-    text = f"{round(value, 3):.3f}".rstrip("0").rstrip(".")
-    return text or "0"
+    return f"{round(value, 3):.3f}".rstrip("0").rstrip(".")
 
 
 @dataclass(frozen=True)
