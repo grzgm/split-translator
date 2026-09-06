@@ -255,9 +255,15 @@ class BookViewNormaliseTests(unittest.TestCase):
         # collapses blank spacer blocks (truly empty AND whitespace-only tagged
         # st-blank), so any book (p- or div-paragraph) levels. The default spec
         # (all multipliers at 1.0) renders exactly as the fixed rules always did.
-        from split_translator.normalise_spec import NormaliseSpec
-
-        css = NormaliseSpec().css()
+        # Asserted against the actual _apply_normalise call site (not against
+        # NormaliseSpec().css() directly), which is what normalise_spec's own
+        # test suite already covers and this class exists to guard against.
+        profile = QWebEngineProfile()
+        view = BookView(_doc(), profile)
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view._apply_normalise()
+        css = calls[0]
         self.assertIn("margin-block: 0.6em", css)
         self.assertIn("p:empty, div:empty", css)
         self.assertIn(".st-blank", css)
@@ -1023,10 +1029,21 @@ class BookPanelNormaliseSpecTests(unittest.TestCase):
     def test_the_editor_is_given_the_callback(self):
         # The reader is what wires the editor to itself; the two panels never
         # call each other directly.
+        #
+        # The editor is closed (and the store shut down) INSIDE the `with`
+        # block, not via addCleanup: addCleanup runs at test teardown, after
+        # the TemporaryDirectory has already been removed, and closeEvent
+        # writes (scroll, and now the spec flush), which recreates the
+        # just-deleted tree from a worker thread (write_anchors does
+        # mkdir(parents=True, exist_ok=True)). That is a plausible contributor
+        # to this suite's known "Directory not empty" cleanup flake.
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d), QWebEngineProfile())
             panel.open_anchor_editor()
-            self.addCleanup(panel.anchor_editor.close)
-            self.assertEqual(
-                panel.anchor_editor._on_spec_changed, panel._apply_normalise_spec
-            )
+            try:
+                self.assertEqual(
+                    panel.anchor_editor._on_spec_changed, panel._apply_normalise_spec
+                )
+            finally:
+                panel.anchor_editor.close()
+                panel.anchor_store.shutdown()

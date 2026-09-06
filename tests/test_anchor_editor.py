@@ -488,7 +488,6 @@ class AnchorEditorScrollMemoryTests(unittest.TestCase):
         self.assertEqual(editor.translation_view._initial_scroll, ("b1", 0.7))
 
 
-from split_translator.anchor_store import EDITOR_SURFACE, AnchorStore
 from split_translator.normalise_spec import (
     ORIGINAL_SIDE,
     TRANSLATION_SIDE,
