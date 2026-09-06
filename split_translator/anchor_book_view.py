@@ -14,6 +14,7 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 from .anchor_click_bridge import AnchorClickBridge
 from .book_loader import BookDocument
 from .book_view import BookView
+from .normalise_spec import NormaliseSpec
 
 
 def _qwebchannel_js() -> str:
@@ -112,6 +113,7 @@ class AnchorBookView(BookView):
         parent=None,
         initial_scroll: tuple[str, float] | None = None,
         normalise: bool = False,
+        spec: NormaliseSpec | None = None,
     ):
         super().__init__(
             document,
@@ -119,6 +121,7 @@ class AnchorBookView(BookView):
             parent,
             initial_scroll=initial_scroll,
             normalise=normalise,
+            spec=spec,
         )
         self._bridge = AnchorClickBridge(self)
         self._bridge.block_clicked.connect(self.block_clicked)

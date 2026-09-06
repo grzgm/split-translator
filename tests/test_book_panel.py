@@ -249,13 +249,15 @@ class BookViewNormaliseTests(unittest.TestCase):
     def test_normalise_css_carries_the_expected_rules(self):
         # The injected CSS zeroes block margins, sets a uniform paragraph gap and
         # collapses blank spacer blocks (truly empty AND whitespace-only tagged
-        # st-blank), so any book (p- or div-paragraph) levels.
-        from split_translator.book_view import _NORMALISE_CSS
+        # st-blank), so any book (p- or div-paragraph) levels. The default spec
+        # (all multipliers at 1.0) renders exactly as the fixed rules always did.
+        from split_translator.normalise_spec import NormaliseSpec
 
-        self.assertIn("margin-block: 0.6em", _NORMALISE_CSS)
-        self.assertIn("p:empty, div:empty", _NORMALISE_CSS)
-        self.assertIn(".st-blank", _NORMALISE_CSS)
-        self.assertIn("line-height", _NORMALISE_CSS)
+        css = NormaliseSpec().css()
+        self.assertIn("margin-block: 0.6em", css)
+        self.assertIn("p:empty, div:empty", css)
+        self.assertIn(".st-blank", css)
+        self.assertIn("line-height", css)
 
     def test_normalise_js_walks_blocks_to_tag_whitespace_spacers(self):
         # A <p>&nbsp;</p> spacer is not :empty, so the injected script must tag
@@ -271,6 +273,84 @@ class BookViewNormaliseTests(unittest.TestCase):
         self.assertIn("textContent", js)
         self.assertIn("st-blank", js)
         self.assertIn("querySelector('img')", js)  # image-only blocks kept
+
+
+class BookViewNormaliseSpecTests(unittest.TestCase):
+    """The view builds its normalisation stylesheet from a spec and can be
+    handed a new one live, on the same injection path as the on/off toggle."""
+
+    def _view(self, **kwargs):
+        from split_translator.book_view import BookView as _BookView
+
+        return _BookView(_doc(), QWebEngineProfile(), **kwargs)
+
+    def _injected(self, view):
+        """The JS the view sends for one _apply_normalise call."""
+        seen = []
+        view.page().runJavaScript = lambda js, *a: seen.append(js)
+        view._apply_normalise()
+        return seen[0]
+
+    def test_defaults_to_the_fixed_spec(self):
+        from split_translator.normalise_spec import NormaliseSpec
+
+        view = self._view()
+        self.assertEqual(view._normalise_spec, NormaliseSpec())
+
+    def test_a_given_spec_reaches_the_injected_css(self):
+        from split_translator.normalise_spec import NormaliseSpec
+
+        view = self._view(spec=NormaliseSpec(font=0.9))
+        self.assertIn("font-size: 90%", self._injected(view))
+
+    def test_set_normalise_spec_changes_the_injected_css(self):
+        from split_translator.normalise_spec import NormaliseSpec
+
+        view = self._view()
+        self.assertIn("font-size: 100%", self._injected(view))
+        view.set_normalise_spec(NormaliseSpec(font=1.2, gap=0.5))
+        css = self._injected(view)
+        self.assertIn("font-size: 120%", css)
+        self.assertIn("margin-block: 0.3em", css)
+
+    def test_the_toggle_still_carries_its_own_flag(self):
+        # The spec and the on/off flag are independent: a spec change must not
+        # silently switch normalisation on. The stub is installed before the
+        # first call rather than via _injected afterwards: a real (unstubbed)
+        # QWebEnginePage.runJavaScript call followed by reassigning that same
+        # attribute crashes the PySide6 WebEngine binding under the offscreen
+        # platform, so every real call on a given view must go through a stub
+        # already in place, never the other way round.
+        from split_translator.normalise_spec import NormaliseSpec
+
+        view = self._view(normalise=False)
+        seen = []
+        view.page().runJavaScript = lambda js, *a: seen.append(js)
+        view.set_normalise_spec(NormaliseSpec(font=0.9))
+        self.assertIn("false", seen[-1].rsplit(",", 1)[-1])
+
+    def test_the_style_text_is_set_on_every_call_not_only_on_create(self):
+        # A spec change reaches the page through the same injection as the
+        # toggle, so the text has to be reassigned each time. Setting it only
+        # inside the "element does not exist yet" branch would make the first
+        # spec permanent.
+        from split_translator import book_view
+
+        js = book_view._NORMALISE_STYLE_JS
+        self.assertEqual(js.count("style.textContent = css;"), 1)
+        self.assertGreater(
+            js.index("style.textContent = css;"), js.index("appendChild")
+        )
+
+
+class AnchorBookViewSpecTests(unittest.TestCase):
+    def test_forwards_the_spec_to_the_base_view(self):
+        from split_translator.anchor_book_view import AnchorBookView
+        from split_translator.normalise_spec import NormaliseSpec
+
+        spec = NormaliseSpec(gap=0.75)
+        view = AnchorBookView(_doc(), QWebEngineProfile(), spec=spec)
+        self.assertEqual(view._normalise_spec, spec)
 
 
 import tempfile

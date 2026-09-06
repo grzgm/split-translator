@@ -129,7 +129,7 @@ class BookPanel(QFrame):
         self.sync_checkbox.setChecked(True)
         self.sync_checkbox.stateChanged.connect(self.toggle_sync)
 
-        # Even out paragraph spacing across books (see BookView._NORMALISE_CSS).
+        # Even out paragraph spacing across books (see normalise_spec.NormaliseSpec).
         # Seeded from the persisted per-book-pair flag (default on).
         self.normalise_checkbox = QCheckBox("Normalise")
         self.normalise_checkbox.setChecked(self._normalise)

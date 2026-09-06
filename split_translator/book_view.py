@@ -9,6 +9,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .book_loader import BookDocument
 from .book_render import RenderedBook
+from .normalise_spec import NormaliseSpec
 
 # Reports the block at the viewport CENTRE and how far the centre has scrolled
 # through it (0.0 at its top, approaching 1.0 at the next block). The centre, not
@@ -93,28 +94,11 @@ _SEARCH_STYLE_JS = """
 })();
 """
 
-# The paragraph-spacing normalisation rules, applied when the Normalise toggle is
-# on. The app strips each book's own stylesheet (see book_loader), so a book
-# falls back to the browser's default sheet, where <p> carries a 1em block margin
-# but <div> carries none. Books built with <p> paragraphs (and empty <p>&nbsp;</p>
-# spacers) then look far roomier than <div>-paragraph books whose stripped-CSS
-# spacer <div>s collapse to nothing. These rules re-level that for ANY book: zero
-# every block's default margin, give the text blocks one uniform gap, and collapse
-# blank spacer blocks so they add no height.
-#
-# Two kinds of blank block must collapse. A truly empty one (<div></div>) is
-# caught by the CSS :empty selector. But a block that only holds whitespace or a
-# non-breaking space (<p>&nbsp;</p>) or only empty inline wrappers
-# (<div><span></span></div>) is NOT :empty, and CSS cannot match "whitespace
-# only". Those are found at runtime (see the walk in _NORMALISE_STYLE_JS) and
-# tagged with the st-blank class, which this rule zeroes too. Kept as a plain
-# string so it can be toggled via the style element's `disabled` flag.
-_NORMALISE_CSS = (
-    "body { line-height: 1.55; }"
-    " p, div, blockquote, li, h1, h2, h3, h4, h5, h6 { margin: 0; }"
-    " p, div, blockquote, li { margin-block: 0.6em; }"
-    " p:empty, div:empty, .st-blank { margin: 0; height: 0; }"
-)
+# The paragraph-spacing normalisation rules now live in normalise_spec, which
+# builds them from one edition's multipliers; see that module for why the app
+# levels spacing at all and how the blank-block collapse works. The runtime half
+# of the blank-block rule stays here, in _NORMALISE_STYLE_JS: CSS cannot match
+# "whitespace only", so those blocks are tagged with st-blank by the walk below.
 
 # Injected on every load and on every toggle. Adds the normalisation style
 # element once (idempotent) and sets its enabled state from %(enabled)s (a JS
@@ -134,9 +118,12 @@ _NORMALISE_STYLE_JS = """
     if (!style) {
         style = document.createElement('style');
         style.id = 'st-normalise-style';
-        style.textContent = css;
         (document.head || document.documentElement).appendChild(style);
     }
+    // Reassigned on every call, not only on create: a normalisation spec change
+    // comes through this same injection, and would otherwise keep the first
+    // stylesheet forever.
+    style.textContent = css;
     style.disabled = !enabled;
     var blocks = document.querySelectorAll('[data-stid]');
     for (var i = 0; i < blocks.length; i++) {
@@ -352,14 +339,19 @@ class BookView(QWebEngineView):
         parent=None,
         initial_scroll: tuple[str, float] | None = None,
         normalise: bool = False,
+        spec: NormaliseSpec | None = None,
     ):
         super().__init__(parent)
         self._document = document
         self._suppress_scroll = False
         self._initial_scroll = initial_scroll
         # Whether paragraph-spacing normalisation is on. Applied on every load and
-        # toggled live via set_normalise; see _NORMALISE_CSS.
+        # toggled live via set_normalise; see normalise_spec.
         self._normalise = normalise
+        # This edition's normalisation multipliers. Independent of the flag
+        # above: the flag says whether normalisation applies at all, the spec
+        # says what it does when it does. Replaced live by set_normalise_spec.
+        self._normalise_spec = spec or NormaliseSpec()
         # A pending (block_id, fraction) to re-apply once the layout settles. A
         # hidden tab lays out against a provisional height, so a scroll computed
         # then bakes a wrong pixel offset; this is re-run on the next reflow.
@@ -477,7 +469,7 @@ class BookView(QWebEngineView):
         # to match self._normalise. Safe to call before the page has loaded: the
         # IIFE creates the element on first run and only flips its flag after.
         js = _NORMALISE_STYLE_JS % {
-            "css": json.dumps(_NORMALISE_CSS),
+            "css": json.dumps(self._normalise_spec.css()),
             "enabled": "true" if self._normalise else "false",
         }
         self.page().runJavaScript(js)
@@ -487,6 +479,15 @@ class BookView(QWebEngineView):
         style element's `disabled` flag; no reload or re-render, so the scroll
         position is kept."""
         self._normalise = bool(enabled)
+        self._apply_normalise()
+
+    def set_normalise_spec(self, spec: NormaliseSpec) -> None:
+        """Give this edition new normalisation multipliers live. Rewrites the
+        injected style element's text; no reload or re-render, so the scroll
+        position is kept, exactly like set_normalise. Leaves the on/off flag
+        alone: a spec change on a view with normalisation off is stored and
+        takes effect when it is switched back on."""
+        self._normalise_spec = spec
         self._apply_normalise()
 
     def mark_search_block(self, block_id: str) -> None:
