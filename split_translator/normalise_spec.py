@@ -21,6 +21,7 @@ adjusts inside it.
 No Qt import, so this unit-tests headless like book_sync and flashcard_autofill.
 """
 
+import math
 from dataclasses import dataclass
 
 # The two editions a book pair holds. They live here, in the module with no
@@ -52,7 +53,7 @@ def _clamp(value) -> float:
         number = float(value)
     except (TypeError, ValueError):
         return 1.0
-    if number != number:  # NaN, which survives min/max unchanged
+    if not math.isfinite(number):  # NaN and inf both survive min/max unchanged
         return 1.0
     return min(max(number, MIN_SCALE), MAX_SCALE)
 

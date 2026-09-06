@@ -93,6 +93,13 @@ class ClampingTests(unittest.TestCase):
         # reach the stylesheet as "nan".
         self.assertEqual(NormaliseSpec(font=float("nan")).font, 1.0)
 
+    def test_an_infinity_falls_back_to_one(self):
+        # Infinity survives min/max unchanged. A corrupt file could produce it:
+        # json.loads accepts Infinity, and 1e400 parses to inf. Silently
+        # choosing the maximum for a corrupt field is worse than choosing 1.0.
+        self.assertEqual(NormaliseSpec(font=float("inf")).font, 1.0)
+        self.assertEqual(NormaliseSpec(gap=float("-inf")).gap, 1.0)
+
 
 class DictTests(unittest.TestCase):
     def test_round_trips(self):
