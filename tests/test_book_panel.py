@@ -925,3 +925,62 @@ class BookPanelEditorTests(unittest.TestCase):
             self.assertIn(
                 (0, 0), panel.book_sync.get_anchors()
             )
+
+
+class BookPanelNormaliseSpecTests(unittest.TestCase):
+    """The reader takes its per-edition multipliers from the same per-book-pair
+    store the anchor editor writes, and follows changes made there live."""
+
+    def _panel(self, cfg, profile):
+        panel = BookPanel(cfg, profile)
+        self.addCleanup(panel.anchor_store.shutdown)
+        self.addCleanup(panel.anchor_store.filepath.unlink, missing_ok=True)
+        return panel
+
+    def test_views_default_to_the_fixed_spec(self):
+        from split_translator.normalise_spec import NormaliseSpec
+
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            self.assertEqual(panel.original_view._normalise_spec, NormaliseSpec())
+            self.assertEqual(panel.translation_view._normalise_spec, NormaliseSpec())
+
+    def test_views_seed_from_the_stored_specs(self):
+        from split_translator.anchor_store import AnchorStore, anchor_path_for
+        from split_translator.normalise_spec import NormaliseSpec
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = _config(d)
+            store = AnchorStore(
+                anchor_path_for(cfg.original_path, cfg.translation_path, cfg.dir)
+            )
+            store.set_normalise_specs(
+                NormaliseSpec(font=0.9), NormaliseSpec(gap=0.7)
+            )
+            store.shutdown()
+            panel = self._panel(cfg, QWebEngineProfile())
+            self.assertAlmostEqual(panel.original_view._normalise_spec.font, 0.9)
+            self.assertAlmostEqual(panel.translation_view._normalise_spec.gap, 0.7)
+
+    def test_a_spec_change_reaches_the_matching_view_only(self):
+        from split_translator.normalise_spec import ORIGINAL_SIDE, NormaliseSpec
+
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            seen = {"orig": [], "trans": []}
+            panel.original_view.set_normalise_spec = lambda s: seen["orig"].append(s)
+            panel.translation_view.set_normalise_spec = lambda s: seen["trans"].append(s)
+            panel._apply_normalise_spec(ORIGINAL_SIDE, NormaliseSpec(font=0.9))
+            self.assertEqual(len(seen["orig"]), 1)
+            self.assertEqual(seen["trans"], [])
+
+    def test_the_editor_is_given_the_callback(self):
+        # The reader is what wires the editor to itself; the two panels never
+        # call each other directly.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            panel.open_anchor_editor()
+            self.addCleanup(panel.anchor_editor.close)
+            self.assertEqual(
+                panel.anchor_editor._on_spec_changed, panel._apply_normalise_spec
+            )

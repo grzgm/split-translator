@@ -19,6 +19,7 @@ from .book_loader import load_book
 from .book_sync import BookSync
 from .book_view import BookView
 from .config import Config
+from .normalise_spec import ORIGINAL_SIDE, NormaliseSpec
 
 
 class BookPanel(QFrame):
@@ -94,6 +95,15 @@ class BookPanel(QFrame):
         # applied, avoiding a flash of the book's raw spacing on open.
         self._normalise = (
             self.anchor_store.get_normalise(READER_SURFACE) if self.has_books else True
+        )
+
+        # This book pair's per-edition normalisation multipliers, set in the
+        # anchor editor and shared with the reader: they exist to line the two
+        # editions up with each other, so one set serves both surfaces.
+        self._original_spec, self._translation_spec = (
+            self.anchor_store.get_normalise_specs()
+            if self.has_books
+            else (NormaliseSpec(), NormaliseSpec())
         )
 
         # The anchor-mapped target the hidden tab SHOULD be at, set when a scroll
@@ -176,12 +186,14 @@ class BookPanel(QFrame):
             self.profile,
             initial_scroll=self._original_scroll,
             normalise=self._normalise,
+            spec=self._original_spec,
         )
         self.translation_view = BookView(
             self.translation_document,
             self.profile,
             initial_scroll=self._translation_scroll,
             normalise=self._normalise,
+            spec=self._translation_spec,
         )
         self.tabs.addTab(self.original_view, "Original")
         self.tabs.addTab(self.translation_view, "Translation")
@@ -466,11 +478,26 @@ class BookPanel(QFrame):
                 self.book_sync,
                 self.profile,
                 self._reseed_sync,
+                on_spec_changed=self._apply_normalise_spec,
             )
             self.anchor_editor.setWindowTitle("Anchor editor")
             self.anchor_editor.resize(1200, 800)
         self.anchor_editor.show()
         self.anchor_editor.raise_()
+
+    def _apply_normalise_spec(self, side: str, spec: NormaliseSpec) -> None:
+        """A multiplier changed in the anchor editor. Apply it to the reader's
+        matching edition too, live, so both windows show the same spacing while
+        it is being tuned. The editor never touches these views itself; this
+        panel owns the editor and does the wiring."""
+        if not self.has_books:
+            return
+        if side == ORIGINAL_SIDE:
+            self._original_spec = spec
+            self.original_view.set_normalise_spec(spec)
+        else:
+            self._translation_spec = spec
+            self.translation_view.set_normalise_spec(spec)
 
     def close_doc(self) -> None:
         if not self.has_books:
