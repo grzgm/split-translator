@@ -235,16 +235,20 @@ class BookViewNormaliseTests(unittest.TestCase):
         self.assertTrue(calls[0].rstrip().endswith("true);"))  # enabled = true
 
     def test_set_normalise_toggles_the_flag(self):
+        # set_normalise keeps retag at its default True (see _apply_normalise),
+        # so the call always ends "..., <enabled>, true);"; assert the enabled
+        # arg precisely rather than just the JS call's tail, which is now the
+        # (always-true) retag arg instead.
         profile = QWebEngineProfile()
         view = BookView(_doc(), profile)
         calls = []
         view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
         view.set_normalise(True)
         self.assertTrue(view._normalise)
-        self.assertTrue(calls[-1].rstrip().endswith("true);"))
+        self.assertTrue(calls[-1].rstrip().endswith("true, true);"))
         view.set_normalise(False)
         self.assertFalse(view._normalise)
-        self.assertTrue(calls[-1].rstrip().endswith("false);"))
+        self.assertTrue(calls[-1].rstrip().endswith("false, true);"))
 
     def test_normalise_css_carries_the_expected_rules(self):
         # The injected CSS zeroes block margins, sets a uniform paragraph gap and
@@ -327,7 +331,10 @@ class BookViewNormaliseSpecTests(unittest.TestCase):
         seen = []
         view.page().runJavaScript = lambda js, *a: seen.append(js)
         view.set_normalise_spec(NormaliseSpec(font=0.9))
-        self.assertIn("false", seen[-1].rsplit(",", 1)[-1])
+        # The call now carries a trailing retag arg too (see the retag tests
+        # below), so check the enabled arg by position rather than the call's
+        # tail, which is retag's.
+        self.assertIn("false", seen[-1].rsplit(",", 2)[-2])
 
     def test_the_style_text_is_set_on_every_call_not_only_on_create(self):
         # A spec change reaches the page through the same injection as the
@@ -341,6 +348,45 @@ class BookViewNormaliseSpecTests(unittest.TestCase):
         self.assertGreater(
             js.index("style.textContent = css;"), js.index("appendChild")
         )
+
+    def test_set_normalise_spec_skips_the_retag_walk(self):
+        # A spec-only change cannot alter which blocks are blank (that depends
+        # on the DOM's text and images, not the CSS numbers), and a spin box
+        # fires this once per step, so the walk must be skipped here. The stub
+        # is installed before the first real call (see
+        # test_the_toggle_still_carries_its_own_flag for why that ordering is
+        # load-bearing).
+        from split_translator.normalise_spec import NormaliseSpec
+
+        view = self._view()
+        seen = []
+        view.page().runJavaScript = lambda js, *a: seen.append(js)
+        view.set_normalise_spec(NormaliseSpec(font=0.9))
+        self.assertTrue(seen[-1].rstrip().endswith("false);"))
+
+    def test_set_normalise_still_runs_the_retag_walk(self):
+        # The on/off toggle changes what "blank" should render as and a
+        # freshly loaded page has no tags yet, so both set_normalise and the
+        # on-load call keep retag=True (the default).
+        view = self._view()
+        seen = []
+        view.page().runJavaScript = lambda js, *a: seen.append(js)
+        view.set_normalise(True)
+        self.assertTrue(seen[-1].rstrip().endswith("true);"))
+
+    def test_the_retag_walk_is_still_present_in_the_js(self):
+        # Guards against a future edit deleting the walk wholesale rather than
+        # merely gating it behind retag: the tagging logic (see
+        # BookViewNormaliseTests.test_normalise_js_walks_blocks_to_tag_whitespace_spacers)
+        # must still be there, just reachable only when retag is true.
+        from split_translator import book_view
+
+        js = book_view._NORMALISE_STYLE_JS
+        self.assertIn("if (!retag) return;", js)
+        self.assertIn("[data-stid]", js)
+        self.assertIn("textContent", js)
+        self.assertIn("st-blank", js)
+        self.assertIn("querySelector('img')", js)
 
 
 class AnchorBookViewSpecTests(unittest.TestCase):

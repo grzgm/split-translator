@@ -100,20 +100,28 @@ _SEARCH_STYLE_JS = """
 # of the blank-block rule stays here, in _NORMALISE_STYLE_JS: CSS cannot match
 # "whitespace only", so those blocks are tagged with st-blank by the walk below.
 
-# Injected on every load and on every toggle. Adds the normalisation style
-# element once (idempotent) and sets its enabled state from %(enabled)s (a JS
-# boolean), so a later toggle just flips the element's `disabled` flag: no reload
-# or re-render, the scroll position is kept.
+# Injected on every load, on every toggle, and on every spec change. Adds the
+# normalisation style element once (idempotent) and sets its enabled state from
+# %(enabled)s (a JS boolean), so a later toggle or spec change just rewrites the
+# element's text and/or flips its `disabled` flag: no reload or re-render, the
+# scroll position is kept.
 #
-# It also re-tags blank spacer blocks each time. A block counts as blank when it
-# has no visible text (textContent is empty once trimmed of whitespace and
-# non-breaking spaces) and contains no <img>, so an image-only block is never
-# collapsed. When enabled it adds the st-blank class to such blocks; when disabled
-# it strips the class, restoring the book's raw spacing. The walk is over
-# [data-stid] blocks only and runs once per call, which is negligible. %(css)s is
-# the JSON-quoted rule text.
+# It also, when %(retag)s is true, re-tags blank spacer blocks. A block counts
+# as blank when it has no visible text (textContent is empty once trimmed of
+# whitespace and non-breaking spaces) and contains no <img>, so an image-only
+# block is never collapsed. When enabled it adds the st-blank class to such
+# blocks; when disabled it strips the class, restoring the book's raw spacing.
+# The walk is over [data-stid] blocks only, which for a whole novel means every
+# block in the book: it runs once per call, which was negligible while the only
+# caller was a checkbox a user clicks occasionally, but a spin box driving
+# set_normalise_spec fires this on every step (holding an arrow spins through
+# many intermediate values), so that caller passes %(retag)s = false to skip it.
+# That is safe because which blocks are blank depends only on the DOM's text and
+# images, neither of which a stylesheet change touches: a spec change can only
+# ever affect an already-correct set of st-blank tags' appearance, never which
+# blocks should carry the class. %(css)s is the JSON-quoted rule text.
 _NORMALISE_STYLE_JS = """
-(function(css, enabled) {
+(function(css, enabled, retag) {
     var style = document.getElementById('st-normalise-style');
     if (!style) {
         style = document.createElement('style');
@@ -125,6 +133,7 @@ _NORMALISE_STYLE_JS = """
     // stylesheet forever.
     style.textContent = css;
     style.disabled = !enabled;
+    if (!retag) return;
     var blocks = document.querySelectorAll('[data-stid]');
     for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
@@ -137,7 +146,7 @@ _NORMALISE_STYLE_JS = """
         if (blank) b.classList.add('st-blank');
         else b.classList.remove('st-blank');
     }
-})(%(css)s, %(enabled)s);
+})(%(css)s, %(enabled)s, %(retag)s);
 """
 
 # Toggles the search-block class. Self-contained (no dependency on a pre-injected
@@ -464,13 +473,23 @@ class BookView(QWebEngineView):
         # raw spacing.
         self._apply_normalise()
 
-    def _apply_normalise(self) -> None:
+    def _apply_normalise(self, retag: bool = True) -> None:
         # Inject (once) the normalisation style element and set its enabled state
         # to match self._normalise. Safe to call before the page has loaded: the
         # IIFE creates the element on first run and only flips its flag after.
+        #
+        # retag controls the blank-spacer walk (see _NORMALISE_STYLE_JS): pass
+        # False when only the stylesheet's numbers changed (set_normalise_spec),
+        # since which blocks are blank depends on the DOM's text and images, not
+        # on the CSS rule text, so a spec-only change has nothing for the walk to
+        # find. Both set_normalise (the on/off flag decides what "blank" should
+        # render as) and the on-load call from _inject_search_mark (a freshly
+        # loaded page has no tags yet) genuinely need it, so they keep the
+        # default True.
         js = _NORMALISE_STYLE_JS % {
             "css": json.dumps(self._normalise_spec.css()),
             "enabled": "true" if self._normalise else "false",
+            "retag": "true" if retag else "false",
         }
         self.page().runJavaScript(js)
 
@@ -486,9 +505,15 @@ class BookView(QWebEngineView):
         injected style element's text; no reload or re-render, so the scroll
         position is kept, exactly like set_normalise. Leaves the on/off flag
         alone: a spec change on a view with normalisation off is stored and
-        takes effect when it is switched back on."""
+        takes effect when it is switched back on.
+
+        Skips the blank-block retag walk (retag=False): which blocks are blank
+        depends only on the DOM's text and images, never on the stylesheet's
+        numbers, so a spec change has nothing new for that walk to find. This
+        matters because a spin box fires this once per step, and the walk is
+        over every [data-stid] block in the whole (concatenated) book."""
         self._normalise_spec = spec
-        self._apply_normalise()
+        self._apply_normalise(retag=False)
 
     def mark_search_block(self, block_id: str) -> None:
         """Highlight the block holding the current search match (clears any prior
