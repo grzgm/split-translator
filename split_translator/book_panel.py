@@ -42,7 +42,8 @@ class BookPanel(QFrame):
         # has an empty state. Everything below that reads a document, an anchor
         # store or a view is skipped, and init_ui puts a placeholder where the
         # tabs would go. Only the both-blank case reaches here: a path that is
-        # set but unreadable is caught in app.main, which returns to the picker.
+        # set but unreadable is caught by the workspace session in app.py,
+        # which returns to the picker.
         self.has_books = bool(config.original_path and config.translation_path)
 
         if self.has_books:

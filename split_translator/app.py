@@ -16,7 +16,7 @@
 import os
 import sys
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from . import APP_DISPLAY_NAME, APP_NAME
@@ -86,6 +86,84 @@ def apply_pending_rename(
     return next_slug
 
 
+class WorkspaceSession:
+    """Keeps one workspace window open at a time, for the life of the process.
+
+    Qt WebEngine cannot survive `QApplication.exec()` running a second time.
+    Once a web view has existed, a second exec and quit jump through a null
+    pointer inside `aboutToQuit` and the process segfaults; a window with no web
+    view survives the same thing. So the event loop runs exactly once, in main,
+    and a workspace switch happens inside it: the outgoing window announces
+    that it has closed, the session moves any renamed folder, and then it either
+    builds the next window or quits.
+
+    Nothing is swapped in place. Every store's path is fixed when the window is
+    constructed, so a switch is still a whole new window on the same web
+    profile; what changed is only that the loop around it never restarts.
+    """
+
+    def __init__(self, app, profile):
+        self.app = app
+        self.profile = profile
+        # The window currently open. Only its closed signal drives the session.
+        self.window = None
+
+    def open(self, slug: str | None) -> bool:
+        """Build and show the window for a workspace, and say whether one opened.
+
+        Returns False when there is nothing to open: no slug to begin with, or
+        the user gave up in the picker after a workspace failed to load.
+        """
+        while slug is not None:
+            set_last_workspace(slug)
+            config = load_config(config_path_for(slug))
+            try:
+                window = TranslationTool(config, self.profile)
+            except Exception as exc:
+                # both_books_resolve only proves the book files exist. A file
+                # with an unsupported extension, or a corrupt epub or pdf, still
+                # raises out of BookPanel's constructor, so this is the net that
+                # sends the user back to the picker to repair the paths rather
+                # than killing the app.
+                QMessageBox.warning(
+                    None,
+                    "Could not open workspace",
+                    f"'{config.name}' could not be opened:\n\n{exc}\n\n"
+                    "Check its book paths.",
+                )
+                slug = pick_workspace()
+                continue
+            window.closed.connect(lambda w=window: self._defer_close(w))
+            self.window = window
+            window.show()
+            return True
+        return False
+
+    def _defer_close(self, window) -> None:
+        # Handled on the next pass of the loop, never inside the outgoing
+        # window's closeEvent: building a window full of web views while another
+        # is still being torn down is re-entrancy WebEngine does not tolerate.
+        QTimer.singleShot(0, lambda: self._on_window_closed(window))
+
+    def _on_window_closed(self, window) -> None:
+        if window is not self.window:
+            # A stray signal from a window that has already been replaced.
+            return
+        self.window = None
+        # The folder move is deferred to here because it cannot run while the
+        # window's stores hold paths into that folder, and it must land before
+        # the next window reads from it. The dialog already allocated the new
+        # slug and set next_workspace to it, so no slug is discovered here; only
+        # a failed move changes which one is opened. settings.json needs no
+        # repair either: open records the slug it opens the workspace with.
+        next_slug = apply_pending_rename(
+            window.pending_rename, window.next_workspace
+        )
+        window.deleteLater()
+        if not self.open(next_slug):
+            self.app.quit()
+
+
 def main() -> int:
     # Set the application name before creating QApplication so QStandardPaths resolves
     # the profile directory to ~/.local/share/split-translator (and the right place on
@@ -107,43 +185,21 @@ def main() -> int:
     app = QApplication(sys.argv)
     # setApplicationDisplayName lives on QGuiApplication and needs the instance to exist.
     app.setApplicationDisplayName(APP_DISPLAY_NAME)
+    # The event loop runs exactly once (see WorkspaceSession), so closing the
+    # last window must not end it by itself: during a switch the outgoing window
+    # closes before the incoming one exists. The session quits explicitly once a
+    # window closes with no workspace to open next.
+    app.setQuitOnLastWindowClosed(False)
 
     # The profile is parented to the app so it outlives every view that uses it.
     # That is also what lets cookies, cache and Cloudflare clearance survive a
     # workspace switch: only the window is rebuilt, never the profile.
     profile = create_web_profile(app)
 
-    slug = choose_startup_workspace()
-    while slug is not None:
-        set_last_workspace(slug)
-        config = load_config(config_path_for(slug))
-        try:
-            window = TranslationTool(config, profile)
-        except Exception as exc:
-            # both_books_resolve only proves the book files exist. A file with an
-            # unsupported extension, or a corrupt epub or pdf, still raises out of
-            # BookPanel's constructor, so this is the net that sends the user back
-            # to the picker to repair the paths rather than killing the app.
-            QMessageBox.warning(
-                None,
-                "Could not open workspace",
-                f"'{config.name}' could not be opened:\n\n{exc}\n\n"
-                "Check its book paths.",
-            )
-            slug = pick_workspace()
-            continue
-        window.show()
-        app.exec()
-        # The folder move is deferred to here because it cannot run while the
-        # window's stores hold paths into that folder. The dialog already
-        # allocated the new slug and set next_workspace to it, so no slug is
-        # discovered here; only a failed move changes which one is opened.
-        # settings.json needs no repair either: the next iteration records the
-        # slug it opens the workspace with.
-        slug = apply_pending_rename(window.pending_rename, window.next_workspace)
-        window.deleteLater()
-
-    return 0
+    session = WorkspaceSession(app, profile)
+    if not session.open(choose_startup_workspace()):
+        return 0
+    return app.exec()
 
 
 if __name__ == "__main__":

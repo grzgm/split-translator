@@ -14,9 +14,8 @@ app = QApplication.instance() or QApplication([])
 
 class CloseEventTests(unittest.TestCase):
     """The graph and print windows have no parent, so they are independent
-    top-level windows. Left open they keep app.exec() from returning, which
-    would hang a workspace switch, and they hold the outgoing workspace's store,
-    so a survivor would show the previous workspace's deck."""
+    top-level windows, and they hold the outgoing workspace's store. Left open
+    after a switch, a survivor would show the previous workspace's deck."""
 
     def test_close_event_closes_the_graph_and_print_windows(self):
         graph = QWidget()

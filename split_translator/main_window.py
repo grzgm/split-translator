@@ -1,7 +1,7 @@
 """Main application window wiring history, dictionary and PDF panels together."""
 
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
@@ -54,6 +54,12 @@ class TranslationTool(QMainWindow):
     _FLASHCARD_TITLE = "Flashcard"
     _ALTERED_MARKER = " *"
 
+    # Emitted once this window has closed and flushed its stores. The window only
+    # announces it: app.py decides whether another workspace opens or the
+    # application quits (see WorkspaceSession), so nothing here needs to know
+    # what follows.
+    closed = Signal()
+
     def __init__(self, config: Config, profile: QWebEngineProfile):
         super().__init__()
         self.config = config
@@ -77,9 +83,9 @@ class TranslationTool(QMainWindow):
         self.flashcard_print_window = None
 
         # Set when the user picks a different workspace (or renames the open
-        # one, which moves its folder). app.main reads both after this window
-        # closes: the window is rebuilt rather than re-pointed, because every
-        # store's path is fixed at construction.
+        # one, which moves its folder). app.py's WorkspaceSession reads both once
+        # this window announces it has closed: the window is rebuilt rather than
+        # re-pointed, because every store's path is fixed at construction.
         self.next_workspace: str | None = None
         self.pending_rename: tuple[str, str] | None = None
 
@@ -493,7 +499,8 @@ class TranslationTool(QMainWindow):
         """Show the workspace picker.
 
         Choosing a different workspace, renaming the open one, or changing its
-        book paths all close this window; app.main then builds a fresh one.
+        book paths all close this window; the workspace session in app.py then
+        builds a fresh one inside the same event loop.
         Nothing is swapped in place: every store's path is fixed when it is
         constructed, and closeEvent is the only code that flushes them.
         """
@@ -525,10 +532,9 @@ class TranslationTool(QMainWindow):
         """Close the flashcard graph and print windows.
 
         Both are created with no parent, so they are independent top-level
-        windows. Two things follow: app.exec() does not return while one is
-        still visible, which would hang a workspace switch, and each holds this
-        workspace's flashcard store, so a survivor would sit there showing the
-        previous workspace's deck.
+        windows, and each holds this workspace's flashcard store. Left open, a
+        survivor would outlast the window that owns that store and sit there
+        showing the previous workspace's deck after a switch.
         """
         for window in (self.flashcard_graph_window, self.flashcard_print_window):
             if window is not None:
@@ -720,3 +726,7 @@ class TranslationTool(QMainWindow):
         self.flashcard_store.shutdown()
         self.book_panel.close_doc()
         super().closeEvent(event)
+        # Announced last, after every store has flushed, so whatever follows (a
+        # folder rename, the next workspace's window) finds the files at rest.
+        if event.isAccepted():
+            self.closed.emit()

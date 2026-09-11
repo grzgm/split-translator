@@ -1,10 +1,10 @@
-"""The deferred folder rename app.main performs between two windows.
+"""The deferred folder rename the workspace session performs between two windows.
 
 The move itself cannot run while the window is up, because its stores hold
-absolute paths into that folder, so app.main does it once the window has closed
-and everything has flushed. What is tested here is the decision around the move,
-which is pure logic: whether it happened, and which folder the loop should open
-next.
+absolute paths into that folder, so the session in app.py does it once the
+window has closed and everything has flushed. What is tested here is the
+decision around the move, which is pure logic: whether it happened, and which
+folder the session should open next.
 """
 
 import unittest
