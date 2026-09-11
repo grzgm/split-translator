@@ -7,6 +7,7 @@ from PySide6.QtCore import QFile, QIODevice, Qt, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import (
+    QWebEngineLoadingInfo,
     QWebEnginePage,
     QWebEngineProfile,
     QWebEngineScript,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .capture_bridge import CaptureBridge
+from .grab_gate import GrabGate, is_challenge_response
 
 
 def _qwebchannel_js() -> str:
@@ -101,6 +103,21 @@ def _parse_grab(result) -> dict:
         return {}
 
 
+def _response_headers(info) -> dict:
+    """A finished load's response headers, as lower-case names mapped to their
+    text values (a list per name).
+
+    Qt reports them as a QByteArray name mapped to a list of QByteArray values.
+    Header names are case-insensitive, so they are lowered once here, and the
+    bytes are decoded as Latin-1, which accepts any byte."""
+    return {
+        bytes(name.data()).decode("latin-1").lower(): [
+            bytes(value.data()).decode("latin-1") for value in values
+        ]
+        for name, values in info.responseHeaders().items()
+    }
+
+
 class CaptureWebView(QWebEngineView):
     """A web view whose right-click menu keeps the browser defaults and adds the
     two flashcard capture actions below them."""
@@ -173,12 +190,12 @@ class DictionaryPanel(QWidget):
         # couples to that page's internal scripting). Lazily built on first use.
         self._player: QMediaPlayer | None = None
         self._audio_output: QAudioOutput | None = None
-        # Armed by search() so the passive auto-grab on the next Cambridge English
-        # load fires only for an app-initiated lookup. A load the user causes by
-        # searching or clicking inside the page leaves this False, so it is not
-        # grabbed. Consumed (cleared) by the first English loadFinished after a
-        # search, whether that load succeeded or not.
-        self._app_search_pending = False
+        # Decides which Cambridge English load the passive auto-grab belongs to:
+        # the page an app search asks for, even when a Cloudflare check stands
+        # in front of it, and never a load the user causes by searching,
+        # clicking or going Back inside the page (see grab_gate). Armed by
+        # search().
+        self._grab_gate = GrabGate()
         self.init_ui()
         self._setup_capture_buttons()
 
@@ -813,21 +830,31 @@ class DictionaryPanel(QWidget):
             )
 
         # Once the English page loads from an app search, read the headword's
-        # grammar (plural-only marker) and its pronunciation. _on_english_loaded
-        # grabs only for the app's own search load, not a manual in-page one; the
-        # flashcard editor then decides whether to use the result.
-        self.cambridge_en_view.loadFinished.connect(self._on_english_loaded)
+        # grammar (plural-only marker) and its pronunciation; the flashcard
+        # editor then decides whether to use the result. The loads are followed
+        # through loadingChanged rather than loadFinished, because only
+        # loadingChanged says where a load started and what the response was,
+        # which is how a Cloudflare check is told apart from the page behind it.
+        # (Qt emits loadFinished first, so the two cannot be paired up.)
+        self.cambridge_en_view.page().loadingChanged.connect(
+            self._on_english_loading
+        )
 
-    def _on_english_loaded(self, ok: bool):
-        # Consume the armed flag on every English load, so a load that is not an
-        # app search (or a failed app-search load) never leaks the grab onto the
-        # next, manual load. Grab only when this load was the app's own search.
-        was_app_search = self._app_search_pending
-        self._app_search_pending = False
-        if not (ok and was_app_search):
+    def _on_english_loading(self, info) -> None:
+        """Tell the grab gate about each Cambridge English load as it starts and
+        as it ends, and grab the page the gate says the app's search was for."""
+        url = info.url().toString()
+        status = info.status()
+        if status == QWebEngineLoadingInfo.LoadStatus.LoadStartedStatus:
+            self._grab_gate.load_started(url)
             return
-        self.grab_grammar()
-        self.grab_pronunciation()
+        succeeded = (
+            status == QWebEngineLoadingInfo.LoadStatus.LoadSucceededStatus
+        )
+        challenge = is_challenge_response(_response_headers(info))
+        if self._grab_gate.load_finished(succeeded, url, challenge=challenge):
+            self.grab_grammar()
+            self.grab_pronunciation()
 
     def _inject_capture(self, view, pairs, ok, pos_rule=None, pos_map=None):
         if not ok:
@@ -883,9 +910,13 @@ class DictionaryPanel(QWidget):
         # Arm the passive auto-grab for the Cambridge English load this search is
         # about to start. Only this app-initiated load grabs; the user searching
         # or clicking inside the page afterwards does not. A flashcard-selection
-        # search leaves it disarmed so it cannot overwrite the loaded card.
+        # search disarms it, so the card's page cannot overwrite the loaded card,
+        # not even when a Cloudflare check is still holding an earlier search's
+        # grab at that very address.
         if arm_grab:
-            self._app_search_pending = True
+            self._grab_gate.arm()
+        else:
+            self._grab_gate.disarm()
 
         encoded_word = quote(word)
 

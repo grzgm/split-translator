@@ -101,6 +101,19 @@ class AutofillWhileLoadingTests(unittest.TestCase):
         # And the hand-written translation is still there.
         self.assertEqual(panel._rows()[0].polish_input.text(), "biegac")
 
+    def test_own_notation_typed_while_the_page_loads_does_not_stop_it(self):
+        # Own notation has no fill behind it, so a note written while the page
+        # is held up (Cambridge's bot check can take a while to pass) costs the
+        # card none of the page's fill.
+        panel, _ = self._panel()
+        self._search(panel, "running")
+        panel.own_notation_input.setText("my note")
+        self._page_loaded(panel)
+        self.assertEqual(panel.own_notation_input.text(), "my note")
+        self.assertEqual(panel.headword_input.text(), "run")
+        self.assertEqual(panel.ipa_uk_input.text(), "/run/")
+        self.assertEqual(panel._audio_uk_url, "uk.mp3")
+
     def test_a_typed_sense_does_not_stop_the_book_sentence(self):
         # The example slot is the book's until someone types in the slot itself.
         panel, _ = self._panel()

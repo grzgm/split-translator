@@ -113,7 +113,7 @@ class HeadwordSearchTests(unittest.TestCase):
     def test_search_headword_does_not_arm_the_grab(self):
         panel = self._panel()
         panel.search_headword("address")
-        self.assertFalse(panel._app_search_pending)
+        self.assertFalse(panel._grab_gate.is_armed)
 
     def test_normal_search_still_emits_and_arms(self):
         panel = self._panel()
@@ -122,7 +122,7 @@ class HeadwordSearchTests(unittest.TestCase):
         panel.search_input.setText("address")
         panel.search()
         self.assertEqual(searches, ["address"])
-        self.assertTrue(panel._app_search_pending)
+        self.assertTrue(panel._grab_gate.is_armed)
 
     def _search_button(self, panel):
         # The Search button is a local in init_ui, not stored on the panel; find
@@ -222,10 +222,40 @@ class AudioPlaybackTests(unittest.TestCase):
         self.assertEqual(played, [])
 
 
+class _LoadReport:
+    """Stands in for QWebEngineLoadingInfo, which only Qt constructs. Headers
+    are given as name to value and handed over in Qt's own shape: a QByteArray
+    name mapped to a list of QByteArray values."""
+
+    def __init__(self, status, url, headers=None):
+        from PySide6.QtCore import QByteArray, QUrl
+
+        self._status = status
+        self._url = QUrl(url)
+        self._headers = {
+            QByteArray(name.encode()): [QByteArray(value.encode())]
+            for name, value in (headers or {}).items()
+        }
+
+    def status(self):
+        return self._status
+
+    def url(self):
+        return self._url
+
+    def responseHeaders(self):
+        return self._headers
+
+
 class AppSearchGrabGateTests(unittest.TestCase):
     """The passive auto-grab (grammar + pronunciation) must fire only for the
     Cambridge English load started by the app's own search bar, not for a load
-    the user causes by searching or clicking inside the page."""
+    the user causes by searching or clicking inside the page. A Cloudflare
+    check standing in front of that page does not use the grab up: it passes to
+    the page that replaces the check."""
+
+    RUN = "https://dictionary.cambridge.org/dictionary/english/run"
+    WALK = "https://dictionary.cambridge.org/dictionary/english/walk"
 
     def _panel(self):
         return DictionaryPanel(QWebEngineProfile.defaultProfile())
@@ -236,12 +266,29 @@ class AppSearchGrabGateTests(unittest.TestCase):
         panel.grab_pronunciation = lambda: calls.append("pronunciation")
         return calls
 
+    def _load(self, panel, url=RUN, ok=True, challenge=False, started_at=None):
+        """One Cambridge English load as Qt reports it, started and then
+        finished. Every Cambridge response comes through Cloudflare; a check is
+        a failed load (HTTP 403) that Cloudflare also marks with cf-mitigated.
+        A redirected load starts at one address and ends at another."""
+        from PySide6.QtWebEngineCore import QWebEngineLoadingInfo
+
+        status = QWebEngineLoadingInfo.LoadStatus
+        panel._on_english_loading(
+            _LoadReport(status.LoadStartedStatus, started_at or url)
+        )
+        headers = {"Server": "cloudflare"}
+        if challenge:
+            headers["CF-Mitigated"] = "challenge"
+        end = status.LoadSucceededStatus if ok else status.LoadFailedStatus
+        panel._on_english_loading(_LoadReport(end, url, headers))
+
     def test_grab_runs_for_the_app_search_load(self):
         panel = self._panel()
         calls = self._spy_grabs(panel)
         panel.search_input.setText("run")
-        panel.search()  # arms the app-search flag
-        panel._on_english_loaded(True)
+        panel.search()  # arms the grab
+        self._load(panel)
         self.assertEqual(calls, ["grammar", "pronunciation"])
 
     def test_second_load_after_a_search_does_not_grab(self):
@@ -249,27 +296,61 @@ class AppSearchGrabGateTests(unittest.TestCase):
         calls = self._spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        panel._on_english_loaded(True)  # app search load, grabs
+        self._load(panel)  # app search load, grabs
         calls.clear()
-        panel._on_english_loaded(True)  # manual in-page navigation, must not grab
+        self._load(panel, url=self.WALK)  # manual in-page navigation, must not grab
         self.assertEqual(calls, [])
 
     def test_load_without_a_preceding_search_does_not_grab(self):
         panel = self._panel()
         calls = self._spy_grabs(panel)
-        panel._on_english_loaded(True)  # user typed in Cambridge's own box
+        self._load(panel)  # user typed in Cambridge's own box
         self.assertEqual(calls, [])
 
-    def test_failed_app_search_load_consumes_the_flag(self):
-        # A failed load (ok=False) still consumes the armed flag, so it does not
+    def test_failed_app_search_load_spends_the_grab(self):
+        # A failed load (no connection) still spends the grab, so it does not
         # leak onto the next, manual load.
         panel = self._panel()
         calls = self._spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        panel._on_english_loaded(False)  # app search load failed, no grab
+        self._load(panel, ok=False)  # app search load failed, no grab
         self.assertEqual(calls, [])
-        panel._on_english_loaded(True)  # next load is manual, must not grab
+        self._load(panel)  # next load is manual, must not grab
+        self.assertEqual(calls, [])
+
+    def test_a_bot_check_passes_the_grab_to_the_page_behind_it(self):
+        # The report: held on Cambridge's check, the card was never filled,
+        # because the check was the load that used the grab up.
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel.search_input.setText("run")
+        panel.search()
+        self._load(panel, ok=False, challenge=True)  # "Just a moment..."
+        self.assertEqual(calls, [])
+        # Passed: the answer goes back to the same address, with a token.
+        self._load(panel, started_at=self.RUN + "?__cf_chl_f_tk=abc")
+        self.assertEqual(calls, ["grammar", "pronunciation"])
+
+    def test_back_from_a_bot_check_does_not_grab(self):
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel.search_input.setText("run")
+        panel.search()
+        self._load(panel, ok=False, challenge=True)
+        self._load(panel, url=self.WALK)  # the previous word's page
+        self.assertEqual(calls, [])
+
+    def test_a_card_selected_during_a_bot_check_is_not_grabbed(self):
+        # Even a card for the very word the check holds the grab for: its page
+        # loads at the same address, and must not overwrite the loaded card.
+        panel = self._panel()
+        calls = self._spy_grabs(panel)
+        panel.search_input.setText("run")
+        panel.search()
+        self._load(panel, ok=False, challenge=True)
+        panel.search_headword("run")
+        self._load(panel)
         self.assertEqual(calls, [])
 
     def test_direct_grab_calls_are_unaffected(self):
