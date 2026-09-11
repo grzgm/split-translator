@@ -1127,7 +1127,7 @@ class FlashcardEditorBase(QWidget):
         used: typing the headword while the page is on its way keeps the typed
         headword and still gains the page's IPA, spelling and audio. A card that
         was already being edited when the search ran is outside the round
-        altogether and takes nothing.
+        altogether and takes nothing, and so is a saved card.
 
         The headword this replaces is usually the search phrase seeded up front
         by autofill_headword, so the field is filled from the moment of the
@@ -1458,7 +1458,8 @@ class FlashcardEditorBase(QWidget):
         # Save keeps the card loaded rather than clearing the editor: the just
         # saved card becomes the loaded card in unaltered editing mode, so its
         # fields stay put and a brand-new card turns into an existing one without
-        # any wipe.
+        # any wipe. Like any loaded card it takes no passive fill from here on,
+        # so a later book match (F3) or page grab cannot change what was saved.
         self.state.to_editing(card.id, card.created_at or None)
         self._after_save(card)
         self._apply_state_to_ui()
@@ -1789,7 +1790,9 @@ class FlashcardEditorBase(QWidget):
                 self.add_sense()
 
             self._staged_links = list(self.store.links_for(card.id))
-        # Enter editing mode: a clean baseline, so altered stays False.
+        # Enter editing mode: a clean baseline, so altered stays False, and shut
+        # to the passive fills, so the lookup announced below (its book match,
+        # and F3 through the rest) cannot rewrite the card just loaded.
         self.state.to_editing(card.id, card.created_at or None)
         self._apply_state_to_ui()
         self._refresh_saved_list()

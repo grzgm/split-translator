@@ -19,7 +19,8 @@ way:
 
 A target stays taken for the whole round even if the user empties it again: a
 field is never rewritten under someone who has been in it. The next round (a
-search, a New card, a clear, a load or a save) starts from a clean sheet.
+search, a New card or a clear) starts from a clean sheet. A load or a save
+shuts the round instead: a saved card takes no passive fill at all.
 
 No Qt import, so this unit-tests headless like flashcard_editor_state and
 flashcard_fields."""

@@ -465,9 +465,9 @@ class TranslationTool(QMainWindow):
         # and the title bar's float button are how it gets detached again.
         self.flashcard_dock.setFloating(False)
         self.flashcard_dock.show()
-        # Grab the already-loaded page now; the panel ignores it unless the
-        # editor is empty. (A still-loading page also fires the auto-grab on
-        # load.)
+        # Grab the already-loaded page now; the panel fills only a card that is
+        # still open to the automatic fills, field by field, and leaves a saved
+        # card alone. (A still-loading page also fires the auto-grab on load.)
         self.dictionary_panel.grab_pronunciation()
 
     def open_flashcard_graph(self):

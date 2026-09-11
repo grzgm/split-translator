@@ -127,17 +127,32 @@ class EditorStateRoundTests(unittest.TestCase):
         state.begin_autofill()
         self.assertTrue(state.autofill.allows(Target.HEADWORD))
 
-    def test_load_clear_and_save_restart_the_round(self):
-        # The same three baselines that clear altered and printed_flag_altered.
+    def test_a_clear_or_new_restarts_the_round(self):
         state = EditorState()
-        state.mark_altered(Target.HEADWORD)
-        state.autofill.close()
-        state.to_editing("id-1", "t")
-        self.assertTrue(state.autofill.allows(Target.HEADWORD))
         state.mark_altered(Target.HEADWORD)
         state.autofill.close()
         state.to_new()
         self.assertTrue(state.autofill.allows(Target.HEADWORD))
+
+    def test_a_load_or_save_shuts_the_round(self):
+        # A saved card, just loaded or just saved, takes no passive fill: a book
+        # match (F3) or a page grab must not rewrite what was saved. The altered
+        # baseline still resets, as it does at every other baseline.
+        state = EditorState()
+        state.mark_altered(Target.HEADWORD)
+        state.to_editing("id-1", "t")
+        self.assertFalse(state.altered)
+        self.assertFalse(state.autofill.is_open)
+        self.assertFalse(state.autofill.allows(Target.EXAMPLE))
+        self.assertFalse(state.autofill.allows(Target.IPA_UK))
+
+    def test_a_search_on_a_saved_card_opens_a_round_again(self):
+        # The search replaces the unaltered saved card with a fresh one, and
+        # that one takes part.
+        state = EditorState()
+        state.to_editing("id-1", "t")
+        self.assertTrue(state.begin_autofill())
+        self.assertTrue(state.autofill.allows(Target.EXAMPLE))
 
 
 if __name__ == "__main__":

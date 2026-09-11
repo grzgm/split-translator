@@ -20,7 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from split_translator.flashcard_panel import FlashcardPanel
-from split_translator.flashcards import Card, FlashcardStore
+from split_translator.flashcards import Card, FlashcardStore, Sense
 
 app = QApplication.instance() or QApplication([])
 
@@ -237,15 +237,58 @@ class AutofillWhileLoadingTests(unittest.TestCase):
         self.assertEqual(panel.headword_input.text(), "run away")
         self.assertEqual(panel.ipa_uk_input.text(), "/run/")
 
-    def test_a_loaded_card_is_open_while_its_page_loads(self):
-        panel, store = self._panel()
-        store.cards = [Card(headword="loaded", id="id-1", senses=[])]
+    # --- a saved card, loaded or just saved, takes no passive fill ---------
+
+    def _load(self, panel, store, card):
+        """Select a saved card in the list, as a click does."""
+        store.cards = [card]
         panel._refresh_saved_list()
         panel._on_saved_clicked(panel.saved_list.item(0))
-        panel.ipa_us_input.setText("/mine/")
+
+    def test_book_matches_leave_a_loaded_cards_example_alone(self):
+        # Selecting a card looks its headword up in the book, and F3 and
+        # Shift+F3 then walk the matches. None of those sentences is the saved
+        # card's to take, and neither is the book's tag.
+        panel, store = self._panel()
+        saved = Card(
+            headword="run",
+            id="id-1",
+            senses=[Sense(examples=["The sentence I kept."])],
+        )
+        self._load(panel, store, saved)
+        panel.autofill_book_example("He began to run.", "book:dune")  # lookup
+        panel.autofill_book_example("They ran all night.", "book:dune")  # F3
+        self.assertEqual(panel._rows()[0].examples(), ["The sentence I kept."])
+        self.assertEqual(panel.tags_input.text(), "")
+
+    def test_book_matches_leave_a_just_saved_cards_example_alone(self):
+        # The report: search, save, then F3 through the book, and the saved
+        # card's example changed under it.
+        panel, _ = self._panel()
+        self._search(panel)
+        panel.autofill_book_example("He began to run.", "book:dune")
+        panel.save_card()
+        panel.autofill_book_example("They ran all night.", "book:dune")  # F3
+        self.assertEqual(panel._rows()[0].examples(), ["He began to run."])
+
+    def test_a_page_grab_leaves_a_loaded_card_alone(self):
+        # Showing the dock grabs the Cambridge page on screen, which need not
+        # even be this card's word.
+        panel, store = self._panel()
+        saved = Card(headword="walk", id="id-1", ipa_uk="/mine/")
+        self._load(panel, store, saved)
         self._page_loaded(panel)
-        self.assertEqual(panel.ipa_uk_input.text(), "/run/")
-        self.assertEqual(panel.ipa_us_input.text(), "/mine/")
+        self.assertEqual(panel.headword_input.text(), "walk")
+        self.assertEqual(panel.ipa_uk_input.text(), "/mine/")
+        self.assertIsNone(panel._audio_uk_url)
+
+    def test_new_after_a_saved_card_fills_again(self):
+        # New replaces the saved card with a fresh one, which takes part again.
+        panel, store = self._panel()
+        self._load(panel, store, Card(headword="walk", id="id-1"))
+        self.assertTrue(panel.new_card(force=True))
+        panel.autofill_book_example("He began to run.", "book:dune")
+        self.assertEqual(panel._rows()[0].examples(), ["He began to run."])
 
     # --- the fills stay passive -------------------------------------------
 

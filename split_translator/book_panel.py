@@ -370,7 +370,8 @@ class BookPanel(QFrame):
         # Auto-fill the flashcard's first example from the book. Search always
         # runs on the Original edition (no cross-edition fuzzing), so read the
         # sentence around the active match and re-emit it. The flashcard side
-        # decides whether to use it (only while its card is unaltered).
+        # decides whether to use it (never on a saved card, and only while the
+        # example is still free).
         if count:
             self.original_view.match_sentence(
                 self.search_term, active, self.book_sentence_matched.emit

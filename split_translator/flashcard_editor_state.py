@@ -4,10 +4,11 @@ One small object answers the questions the editor keeps asking: which mode is
 the editor in (building a new card, or editing a saved one), has the user
 altered the current card since it was last loaded, cleared or saved, and which
 of the passive fills' targets are still free to write. The last of those lives
-in its own AutofillRound (see flashcard_autofill), held here because a round
-begins exactly where the altered baseline is reset. No Qt import, so it
-unit-tests headless like page_mapper and graph_layout. The panel holds exactly
-one instance and every mode/altered decision reads it."""
+in its own AutofillRound (see flashcard_autofill), held here because the round
+is settled exactly where the altered baseline is reset: a clear opens a fresh
+one, and a load or a save shuts it. No Qt import, so it unit-tests headless like
+page_mapper and graph_layout. The panel holds exactly one instance and every
+mode/altered decision reads it."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -56,9 +57,10 @@ class EditorState:
     #: rather than a Qt signal so this module keeps its no-Qt, headless-testable
     #: character; the panel adapts it to a signal.
     on_altered_changed: Callable[[bool], None] | None = None
-    #: The passive fills' permission to write. Restarted by to_new and
-    #: to_editing, so every load, clear and save opens a fresh round with every
-    #: target free, exactly like altered and printed_flag_altered.
+    #: The passive fills' permission to write. Restarted by to_new, so a clear
+    #: or New opens a fresh round with every target free; shut by to_editing,
+    #: so a saved card, just loaded or just saved, takes no passive fill until
+    #: a search or New replaces it.
     autofill: AutofillRound = field(default_factory=AutofillRound)
     _altered: bool = field(default=False, repr=False)
 
@@ -94,13 +96,20 @@ class EditorState:
 
     def to_editing(self, card_id: str, created_at: str | None) -> None:
         """Enter editing a saved card. A freshly loaded card is a clean
-        baseline, so altered is cleared."""
+        baseline, so altered is cleared.
+
+        The passive fills are shut out of it. What a saved card holds was
+        chosen and saved, and the fills that keep arriving afterwards are not
+        about it: the book search a load starts, every F3 through the matches,
+        the page grab when the dock is shown. Only what the user does changes
+        it (typing, a capture, Fill). A search or New replaces the card with a
+        fresh one, and that one takes part again."""
         self.mode = "editing"
         self.loaded_card_id = card_id
         self.loaded_created_at = created_at
         self.altered = False
         self.printed_flag_altered = False
-        self.autofill.restart()
+        self.autofill.close()
 
     def begin_autofill(self) -> bool:
         """Open a round of passive fills, and say whether it opened.

@@ -554,22 +554,20 @@ class FlashcardPanelTests(unittest.TestCase):
         panel.autofill_book_example("She saw the dog run.")
         self.assertEqual(panel.tags_input.text(), "")
 
-    def test_a_loaded_card_can_gain_a_book_tag(self):
-        # An unaltered loaded card still takes passive fills, so it takes the
-        # tag too, and neither the altered state nor the printed flag moves.
+    def test_a_loaded_card_gains_no_book_tag_from_a_match(self):
+        # A saved card takes no passive fill, so a book match brings it neither
+        # a sentence nor a tag, and neither the altered state nor the printed
+        # flag moves.
         panel, _ = self._loaded_printed_card()
+        tags = panel.tags_input.text()
         panel.autofill_book_example("She saw the dog run.", "book:dracula")
-        self.assertEqual(panel.tags_input.text(), "book:dracula")
+        self.assertEqual(panel.tags_input.text(), tags)
         self.assertFalse(panel.state.altered)
         self.assertTrue(panel.is_printed())
 
     def test_a_book_tag_already_present_is_left_alone(self):
-        panel, store = self._panel()
-        store.cards = [
-            Card(headword="address", id="id-addr", tags=["book:dracula", "noun"])
-        ]
-        panel._refresh_saved_list()
-        panel._on_saved_clicked(panel.saved_list.item(0))
+        panel, _ = self._panel()
+        panel.tags_input.setText("book:dracula, noun")
         panel.autofill_book_example("She saw the dog run.", "book:dracula")
         self.assertEqual(panel.tags_input.text(), "book:dracula, noun")
 
@@ -675,10 +673,20 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertTrue(panel.is_printed())
 
     def test_programmatic_fills_leave_the_printed_flag_alone(self):
-        # A book sentence filling the first example is not the user editing the
-        # card, so it neither alters it nor clears the flag.
-        panel, _ = self._loaded_printed_card()
-        panel.autofill_book_example("A sentence from the book.")
+        # A book sentence that Fill puts into a blank first example is not the
+        # user editing the card, so it neither alters it nor clears the flag.
+        panel, store = self._panel()
+        store.cards = [
+            Card(
+                headword="address",
+                id="id-addr",
+                printed=True,
+                senses=[Sense(polish="adres")],
+            )
+        ]
+        panel._refresh_saved_list()
+        panel._on_saved_clicked(panel.saved_list.item(0))
+        self.assertTrue(panel.fill_empty_book_example("A sentence from the book."))
         self.assertTrue(panel.is_printed())
         self.assertFalse(panel.state.altered)
 
@@ -752,26 +760,26 @@ class FlashcardPanelTests(unittest.TestCase):
         self.assertEqual(panel.spelling_uk_input.text(), "uk")
         self.assertEqual(panel._audio_uk_url, "a.mp3")
 
-    def test_grab_refills_a_loaded_but_unaltered_card(self):
-        # Uniform rule: an unaltered loaded card IS refilled by a passive grab.
+    def test_grab_leaves_a_loaded_card_alone(self):
+        # A saved card takes no passive grab: showing the dock reads whatever
+        # Cambridge page is on screen, and that must not rewrite the card.
         panel, _ = self._panel()
         card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
         panel.load_card(card)
-        self.assertFalse(panel.state.altered)
         panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
-        self.assertEqual(panel.headword_input.text(), "walk")
-        self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
+        self.assertEqual(panel.headword_input.text(), "loaded")
+        self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
+        self.assertIsNone(panel._audio_uk_url)
+        self.assertFalse(panel.state.altered)
 
-    def test_grab_keeps_a_typed_headword_on_a_loaded_card(self):
-        # Same rule on a loaded card: the retyped headword is the user's, the
-        # notation they left alone is refilled from the page.
+    def test_grab_leaves_a_loaded_card_alone_while_it_is_edited(self):
         panel, _ = self._panel()
         card = Card(headword="loaded", ipa_uk="/ld/", senses=[])
         panel.load_card(card)
         panel.headword_input.setText("touched")  # user edit -> altered
         panel.autofill_pronunciation("/cc/", None, "c.mp3", None, word="walk")
         self.assertEqual(panel.headword_input.text(), "touched")
-        self.assertEqual(panel.ipa_uk_input.text(), "/cc/")
+        self.assertEqual(panel.ipa_uk_input.text(), "/ld/")
 
     def test_grab_leaves_a_loaded_card_alone_after_a_mid_edit_search(self):
         panel, _ = self._panel()
