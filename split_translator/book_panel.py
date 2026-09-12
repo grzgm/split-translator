@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
 )
@@ -19,6 +20,7 @@ from .book_loader import load_book
 from .book_sync import BookSync
 from .book_view import BookView
 from .config import Config
+from .layout import LAYOUT_WIDE, normalise_layout
 from .normalise_spec import ORIGINAL_SIDE, NormaliseSpec
 
 
@@ -117,6 +119,10 @@ class BookPanel(QFrame):
         self._original_sync_target: tuple[str, float] | None = None
         self._translation_sync_target: tuple[str, float] | None = None
 
+        # Which arrangement the two editions sit in. Set before init_ui because
+        # it decides what init_ui builds; changed afterwards through set_layout.
+        self._layout = normalise_layout(config.layout)
+
         self.init_ui()
 
     def init_ui(self):
@@ -179,9 +185,10 @@ class BookPanel(QFrame):
             # absorbs it instead, because its two QLabels grow vertically, and
             # the buttons end up floating a quarter of the way down the panel.
             layout.addWidget(placeholder, 1)
+            self._body = layout
+            self._views_root = placeholder
             return
 
-        self.tabs = QTabWidget()
         self.original_view = BookView(
             self.original_document,
             self.profile,
@@ -196,9 +203,10 @@ class BookPanel(QFrame):
             normalise=self._normalise,
             spec=self._translation_spec,
         )
-        self.tabs.addTab(self.original_view, "Original")
-        self.tabs.addTab(self.translation_view, "Translation")
-        layout.addWidget(self.tabs)
+
+        self._body = layout
+        self._views_root = self._build_views()
+        self._body.addWidget(self._views_root)
 
         self.original_view.scrolled.connect(
             lambda bid, frac: self._sync_from(self.original_view, bid, frac)
@@ -206,7 +214,66 @@ class BookPanel(QFrame):
         self.translation_view.scrolled.connect(
             lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
         )
+
+    def _build_views(self):
+        """The container holding the two editions, in the current layout."""
+        if self._layout == LAYOUT_WIDE:
+            return self._build_wide_views()
+        return self._build_tabbed_views()
+
+    def _build_tabbed_views(self) -> QTabWidget:
+        """One edition at a time, the other hidden behind its tab."""
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.original_view, "Original")
+        self.tabs.addTab(self.translation_view, "Translation")
         self.tabs.currentChanged.connect(self._on_tab_changed)
+        return self.tabs
+
+    def _build_wide_views(self) -> QSplitter:
+        """Both editions at once, the Original on the left. There are no tabs,
+        so neither edition is ever the hidden one and the corrections that exist
+        for a hidden tab have nothing to correct."""
+        self.tabs = None
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.addWidget(self.original_view)
+        split.addWidget(self.translation_view)
+        split.setSizes([1, 1])
+        return split
+
+    def set_layout(self, layout: str) -> None:
+        """Show the two editions in tabs or side by side.
+
+        They are re-parented, never rebuilt, so neither book reloads. Each then
+        reapplies its remembered position, because the column it sits in has
+        changed width and the offset it was showing was computed against the old
+        one.
+        """
+        layout = normalise_layout(layout)
+        if layout == self._layout:
+            return
+        self._layout = layout
+        if not self.has_books:
+            return
+        # Detach the outgoing tab widget's signal first. Taking its pages away
+        # changes the current index, and _on_tab_changed would then run against
+        # a half dismantled panel and reapply a scroll nobody asked for.
+        if self.tabs is not None:
+            self.tabs.currentChanged.disconnect(self._on_tab_changed)
+        # Out of the old container before it is deleted: a widget goes down with
+        # its parent, and these views must outlive both layouts.
+        for view in (self.original_view, self.translation_view):
+            view.setParent(None)
+        self._body.removeWidget(self._views_root)
+        self._views_root.setParent(None)
+        self._views_root.deleteLater()
+        self._views_root = self._build_views()
+        self._body.addWidget(self._views_root)
+        for view, position in (
+            (self.original_view, self._original_scroll),
+            (self.translation_view, self._translation_scroll),
+        ):
+            if position and position[0]:
+                view.reapply_scroll(*position)
 
     def _on_tab_changed(self, _index: int) -> None:
         self._update_position_label()
@@ -232,6 +299,17 @@ class BookPanel(QFrame):
         if block_id:
             view.reapply_scroll(block_id, fraction)
 
+    def _is_active(self, view) -> bool:
+        """Whether this view is one the reader can see.
+
+        In the wide layout both editions are on screen, so both are active and a
+        scroll mirrors whichever way the reader moves. With tabs only the front
+        one is, which is what keeps a mirrored scroll from bouncing back.
+        """
+        if self._layout == LAYOUT_WIDE:
+            return True
+        return view is self.current_view()
+
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         self._update_position_label()
         # A scroll reported by the HIDDEN tab while it has a pending mapped sync
@@ -240,7 +318,7 @@ class BookPanel(QFrame):
         # entirely, so it neither corrupts the persisted cache nor bounces back
         # as a reverse sync. The correct position is the mapped target, already
         # recorded and re-applied on the next tab switch.
-        is_hidden = source_view is not self.current_view()
+        is_hidden = not self._is_active(source_view)
         if source_view is self.original_view:
             has_pending = self._original_sync_target is not None
         else:
@@ -256,8 +334,8 @@ class BookPanel(QFrame):
             self._translation_scroll = (block_id, fraction)
         if not self.sync_enabled:
             return
-        # Only mirror from the active tab.
-        if source_view is not self.current_view():
+        # Only mirror from an edition the reader can see.
+        if not self._is_active(source_view):
             return
         # The active tab is the one the user is moving, so its own mapped sync
         # target is now stale: their position supersedes it. Clear it so a later
@@ -324,7 +402,10 @@ class BookPanel(QFrame):
     def current_view(self) -> BookView | None:
         if not self.has_books:
             return None
-        if self.tabs.currentIndex() == 0:
+        # No tabs means the wide layout, where both editions are on screen. The
+        # Original is the answer there: it is the search target, and the block
+        # count in the nav row describes it.
+        if self.tabs is None or self.tabs.currentIndex() == 0:
             return self.original_view
         return self.translation_view
 
@@ -340,6 +421,10 @@ class BookPanel(QFrame):
         # Original first so the highlighted match the user steps through is on
         # the tab they are looking at. (The Translation edition is still fully
         # readable; it just is not the search target.)
+        if self.tabs is None:
+            # Wide layout: both editions are on screen, so there is no tab to
+            # bring to the front.
+            return
         if self.tabs.currentIndex() != 0:
             self.tabs.setCurrentIndex(0)
 
