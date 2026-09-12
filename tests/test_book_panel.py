@@ -409,11 +409,11 @@ import tempfile
 
 from split_translator.book_panel import BookPanel
 from split_translator.config import Config
-from split_translator.layout import LAYOUT_DEFAULT, LAYOUT_WIDE
+from split_translator.layout import LAYOUT_BOOK, LAYOUT_NORMAL
 from tests.fixtures.make_fixtures import make_epub
 
 
-def _config(d, layout=LAYOUT_DEFAULT):
+def _config(d, layout=LAYOUT_NORMAL):
     epub = make_epub(d)
     return Config(
         name="Test",
@@ -1058,63 +1058,45 @@ class BookPanelLayoutTests(unittest.TestCase):
         self.addCleanup(panel.anchor_store.filepath.unlink, missing_ok=True)
         return panel
 
-    def test_default_layout_puts_the_editions_in_tabs(self):
+    def test_normal_view_puts_the_editions_in_tabs(self):
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d), QWebEngineProfile())
             self.assertEqual(panel.tabs.count(), 2)
             self.assertIs(panel.tabs.widget(0), panel.original_view)
 
-    def test_wide_layout_shows_both_editions_at_once(self):
+    def test_book_view_shows_both_editions_at_once(self):
         with tempfile.TemporaryDirectory() as d:
-            panel = self._panel(_config(d, LAYOUT_WIDE), QWebEngineProfile())
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             self.assertIsNone(panel.tabs)
             parent = panel.original_view.parentWidget()
             self.assertIs(panel.translation_view.parentWidget(), parent)
 
-    def test_switching_re_parents_the_very_same_views(self):
+    def test_the_editions_take_the_height_in_the_book_view(self):
+        # The nav row's two QLabels grow vertically, so without a stretch on the
+        # view area they swallow the spare height and the editions end up in a
+        # short band down the panel (measured: 480px of an 853px panel).
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
+            panel.resize(900, 800)
+            panel.show()
+            self.addCleanup(panel.hide)
+            QApplication.processEvents()
+            self.assertGreater(panel.original_view.height(), 700)
+
+    def test_the_editions_take_the_height_in_the_normal_view(self):
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d), QWebEngineProfile())
-            original, translation = panel.original_view, panel.translation_view
-            panel.set_layout(LAYOUT_WIDE)
-            self.assertIs(panel.original_view, original)
-            self.assertIs(panel.translation_view, translation)
-            self.assertIsNone(panel.tabs)
+            panel.resize(900, 800)
+            panel.show()
+            self.addCleanup(panel.hide)
+            QApplication.processEvents()
+            self.assertGreater(panel.original_view.height(), 700)
 
-    def test_switching_there_and_back_rebuilds_the_tabs_each_time(self):
-        # The outgoing tab widget has its signal detached, so the round trip
-        # has to leave a fresh, connected one behind.
-        with tempfile.TemporaryDirectory() as d:
-            panel = self._panel(_config(d), QWebEngineProfile())
-            panel.set_layout(LAYOUT_WIDE)
-            panel.set_layout(LAYOUT_DEFAULT)
-            self.assertEqual(panel.tabs.count(), 2)
-            self.assertIs(panel.tabs.widget(0), panel.original_view)
-            panel.set_layout(LAYOUT_WIDE)
-            self.assertIsNone(panel.tabs)
-
-    def test_switching_reapplies_each_remembered_position(self):
-        # The column has changed width, so the offset each view was showing was
-        # computed against the old one.
-        with tempfile.TemporaryDirectory() as d:
-            panel = self._panel(_config(d), QWebEngineProfile())
-            panel.sync_enabled = False
-            panel._sync_from(panel.original_view, "b3", 0.25)
-            panel._sync_from(panel.translation_view, "b2", 0.5)
-            calls = []
-            panel.original_view.reapply_scroll = (
-                lambda bid, frac: calls.append(("o", bid, frac))
-            )
-            panel.translation_view.reapply_scroll = (
-                lambda bid, frac: calls.append(("t", bid, frac))
-            )
-            panel.set_layout(LAYOUT_WIDE)
-            self.assertEqual(calls, [("o", "b3", 0.25), ("t", "b2", 0.5)])
-
-    def test_wide_layout_mirrors_a_translation_scroll_to_the_original(self):
+    def test_book_view_mirrors_a_translation_scroll_to_the_original(self):
         # Both editions are on screen, so neither is the hidden one and a scroll
         # mirrors whichever way the reader moves.
         with tempfile.TemporaryDirectory() as d:
-            panel = self._panel(_config(d, LAYOUT_WIDE), QWebEngineProfile())
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.sync_enabled = True
             calls = []
             panel.original_view.scroll_to = (
@@ -1123,7 +1105,7 @@ class BookPanelLayoutTests(unittest.TestCase):
             panel._sync_from(panel.translation_view, "b3", 0.25)
             self.assertEqual(len(calls), 1)
 
-    def test_tabbed_layout_ignores_a_scroll_from_the_hidden_edition(self):
+    def test_normal_view_ignores_a_scroll_from_the_hidden_edition(self):
         # The control for the test above: with tabs, only the front edition
         # mirrors.
         with tempfile.TemporaryDirectory() as d:
@@ -1138,7 +1120,7 @@ class BookPanelLayoutTests(unittest.TestCase):
 
     def test_search_targets_the_original_without_tabs(self):
         with tempfile.TemporaryDirectory() as d:
-            panel = self._panel(_config(d, LAYOUT_WIDE), QWebEngineProfile())
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             found = []
             panel.original_view.find = (
                 lambda term, forward, cb: found.append(term)

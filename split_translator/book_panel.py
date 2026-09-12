@@ -20,7 +20,7 @@ from .book_loader import load_book
 from .book_sync import BookSync
 from .book_view import BookView
 from .config import Config
-from .layout import LAYOUT_WIDE, normalise_layout
+from .layout import LAYOUT_BOOK, normalise_layout
 from .normalise_spec import ORIGINAL_SIDE, NormaliseSpec
 
 
@@ -120,7 +120,8 @@ class BookPanel(QFrame):
         self._translation_sync_target: tuple[str, float] | None = None
 
         # Which arrangement the two editions sit in. Set before init_ui because
-        # it decides what init_ui builds; changed afterwards through set_layout.
+        # it decides what init_ui builds, and fixed for the life of the window:
+        # choosing the other view rebuilds it (see layout.py).
         self._layout = normalise_layout(config.layout)
 
         self.init_ui()
@@ -185,8 +186,6 @@ class BookPanel(QFrame):
             # absorbs it instead, because its two QLabels grow vertically, and
             # the buttons end up floating a quarter of the way down the panel.
             layout.addWidget(placeholder, 1)
-            self._body = layout
-            self._views_root = placeholder
             return
 
         self.original_view = BookView(
@@ -204,9 +203,10 @@ class BookPanel(QFrame):
             spec=self._translation_spec,
         )
 
-        self._body = layout
-        self._views_root = self._build_views()
-        self._body.addWidget(self._views_root)
+        # Stretch 1 for the same reason the placeholder above has it: the nav
+        # row's two QLabels grow vertically, so without it they swallow the
+        # spare height and the editions end up in a short band down the panel.
+        layout.addWidget(self._build_views(), 1)
 
         self.original_view.scrolled.connect(
             lambda bid, frac: self._sync_from(self.original_view, bid, frac)
@@ -216,9 +216,9 @@ class BookPanel(QFrame):
         )
 
     def _build_views(self):
-        """The container holding the two editions, in the current layout."""
-        if self._layout == LAYOUT_WIDE:
-            return self._build_wide_views()
+        """The container holding the two editions, in this window's layout."""
+        if self._layout == LAYOUT_BOOK:
+            return self._build_side_by_side_views()
         return self._build_tabbed_views()
 
     def _build_tabbed_views(self) -> QTabWidget:
@@ -229,7 +229,7 @@ class BookPanel(QFrame):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         return self.tabs
 
-    def _build_wide_views(self) -> QSplitter:
+    def _build_side_by_side_views(self) -> QSplitter:
         """Both editions at once, the Original on the left. There are no tabs,
         so neither edition is ever the hidden one and the corrections that exist
         for a hidden tab have nothing to correct."""
@@ -239,41 +239,6 @@ class BookPanel(QFrame):
         split.addWidget(self.translation_view)
         split.setSizes([1, 1])
         return split
-
-    def set_layout(self, layout: str) -> None:
-        """Show the two editions in tabs or side by side.
-
-        They are re-parented, never rebuilt, so neither book reloads. Each then
-        reapplies its remembered position, because the column it sits in has
-        changed width and the offset it was showing was computed against the old
-        one.
-        """
-        layout = normalise_layout(layout)
-        if layout == self._layout:
-            return
-        self._layout = layout
-        if not self.has_books:
-            return
-        # Detach the outgoing tab widget's signal first. Taking its pages away
-        # changes the current index, and _on_tab_changed would then run against
-        # a half dismantled panel and reapply a scroll nobody asked for.
-        if self.tabs is not None:
-            self.tabs.currentChanged.disconnect(self._on_tab_changed)
-        # Out of the old container before it is deleted: a widget goes down with
-        # its parent, and these views must outlive both layouts.
-        for view in (self.original_view, self.translation_view):
-            view.setParent(None)
-        self._body.removeWidget(self._views_root)
-        self._views_root.setParent(None)
-        self._views_root.deleteLater()
-        self._views_root = self._build_views()
-        self._body.addWidget(self._views_root)
-        for view, position in (
-            (self.original_view, self._original_scroll),
-            (self.translation_view, self._translation_scroll),
-        ):
-            if position and position[0]:
-                view.reapply_scroll(*position)
 
     def _on_tab_changed(self, _index: int) -> None:
         self._update_position_label()
@@ -302,11 +267,11 @@ class BookPanel(QFrame):
     def _is_active(self, view) -> bool:
         """Whether this view is one the reader can see.
 
-        In the wide layout both editions are on screen, so both are active and a
+        In the book view both editions are on screen, so both are active and a
         scroll mirrors whichever way the reader moves. With tabs only the front
         one is, which is what keeps a mirrored scroll from bouncing back.
         """
-        if self._layout == LAYOUT_WIDE:
+        if self._layout == LAYOUT_BOOK:
             return True
         return view is self.current_view()
 
@@ -402,7 +367,7 @@ class BookPanel(QFrame):
     def current_view(self) -> BookView | None:
         if not self.has_books:
             return None
-        # No tabs means the wide layout, where both editions are on screen. The
+        # No tabs means the book view, where both editions are on screen. The
         # Original is the answer there: it is the search target, and the block
         # count in the nav row describes it.
         if self.tabs is None or self.tabs.currentIndex() == 0:
@@ -422,7 +387,7 @@ class BookPanel(QFrame):
         # the tab they are looking at. (The Translation edition is still fully
         # readable; it just is not the search target.)
         if self.tabs is None:
-            # Wide layout: both editions are on screen, so there is no tab to
+            # Book view: both editions are on screen, so there is no tab to
             # bring to the front.
             return
         if self.tabs.currentIndex() != 0:

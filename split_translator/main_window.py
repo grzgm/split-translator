@@ -2,7 +2,7 @@
 
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,7 +27,7 @@ from .flashcard_print_window import FlashcardPrintWindow
 from .flashcard_tags import book_tag
 from .flashcards import FlashcardStore
 from .history import HistoryPanel
-from .layout import LAYOUT_DEFAULT, LAYOUT_WIDE, normalise_layout
+from .layout import LAYOUT_BOOK, LAYOUT_NORMAL, normalise_layout
 from .shortcuts import SHORTCUTS
 from .shortcuts_dialog import ShortcutsDialog
 from .status_bar import StatusBar
@@ -35,13 +35,13 @@ from .workspace import read_workspace
 from .workspace_dialog import WorkspaceDialog
 
 
-# How the window divides itself between the dictionary and the books. The wide
-# layout shows both editions at once, so the book side takes two parts to the
+# How the window divides itself between the dictionary and the books. The book
+# view shows both editions at once, so the book side takes two parts to the
 # dictionary's one and each edition ends up about as wide as the dictionary
 # column.
 _SPLITTER_SIZES = {
-    LAYOUT_DEFAULT: [1000, 500],
-    LAYOUT_WIDE: [1000, 2000],
+    LAYOUT_NORMAL: [1000, 500],
+    LAYOUT_BOOK: [1000, 2000],
 }
 
 
@@ -131,22 +131,22 @@ class TranslationTool(QMainWindow):
         main_layout.addWidget(history_container)
 
         # Content splitter: dictionary panel + book panel.
-        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self.dictionary_panel = DictionaryPanel(
             self.profile, layout=self.config.layout
         )
         self.book_panel = BookPanel(self.config, self.profile)
 
-        self.content_splitter.addWidget(self.dictionary_panel)
-        self.content_splitter.addWidget(self.book_panel)
-        # Both panels build themselves in the workspace's layout, so this only
-        # has to set the widths that go with it.
-        self.content_splitter.setSizes(
+        content_splitter.addWidget(self.dictionary_panel)
+        content_splitter.addWidget(self.book_panel)
+        # Both panels build themselves in this window's layout, so this only has
+        # to set the widths that go with it.
+        content_splitter.setSizes(
             _SPLITTER_SIZES[normalise_layout(self.config.layout)]
         )
 
-        main_layout.addWidget(self.content_splitter)
+        main_layout.addWidget(content_splitter)
         self.dictionary_panel.set_focus()
 
         # The status bar owns its own highlighting, arrival flash and close
@@ -192,14 +192,28 @@ class TranslationTool(QMainWindow):
         print_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
         print_action.triggered.connect(self.open_flashcard_print)
 
-        wide_action = QAction("Wide layout", self)
-        wide_action.setCheckable(True)
-        wide_action.setChecked(
-            normalise_layout(self.config.layout) == LAYOUT_WIDE
-        )
-        # triggered, not toggled: setChecked above records the workspace's
-        # layout on the entry and must not switch anything itself.
-        wide_action.triggered.connect(self.toggle_wide_layout)
+        # The two views, listed separately and marked like radio buttons: an
+        # exclusive group shows which one this window was built for. They also
+        # own their shortcuts, so the sequences work and appear in the menu.
+        current = normalise_layout(self.config.layout)
+        self.layout_group = QActionGroup(self)
+        self.layout_group.setExclusive(True)
+        layout_actions = []
+        for label, keys, name in (
+            ("Normal view", "Ctrl+Shift+N", LAYOUT_NORMAL),
+            ("Book view", "Ctrl+Shift+B", LAYOUT_BOOK),
+        ):
+            action = QAction(label, self)
+            action.setShortcut(QKeySequence(keys))
+            action.setCheckable(True)
+            action.setChecked(name == current)
+            self.layout_group.addAction(action)
+            # triggered, not toggled: setChecked above only records which view
+            # is open and must not set a rebuild going.
+            action.triggered.connect(
+                lambda _checked=False, chosen=name: self.choose_layout(chosen)
+            )
+            layout_actions.append(action)
 
         workspace_action = QAction("Workspaces...", self)
         workspace_action.triggered.connect(self.open_workspaces)
@@ -209,7 +223,9 @@ class TranslationTool(QMainWindow):
         view_menu.addAction(anchor_action)
         view_menu.addAction(graph_action)
         view_menu.addAction(print_action)
-        view_menu.addAction(wide_action)
+        view_menu.addSeparator()
+        for action in layout_actions:
+            view_menu.addAction(action)
         # Separated because this one is not a view: it changes which data the
         # whole window is showing.
         view_menu.addSeparator()
@@ -483,20 +499,23 @@ class TranslationTool(QMainWindow):
         self.flashcard_dock.show()
         self.flashcard_panel.focus_own_notation()
 
-    def apply_layout(self, layout: str) -> None:
-        """Put the whole window into one layout: both panels rearrange and the
-        splitter takes the widths that layout wants."""
-        layout = normalise_layout(layout)
-        self.dictionary_panel.set_layout(layout)
-        self.book_panel.set_layout(layout)
-        self.content_splitter.setSizes(_SPLITTER_SIZES[layout])
+    def choose_layout(self, layout: str) -> None:
+        """View menu: open this workspace in the other view.
 
-    def toggle_wide_layout(self, checked: bool) -> None:
-        """View menu: switch layout and remember it for this workspace, so the
-        next launch opens the way this one was left."""
-        layout = LAYOUT_WIDE if checked else LAYOUT_DEFAULT
-        self.apply_layout(layout)
+        The choice is recorded and the window closes, so the workspace session
+        in app.py builds a fresh one for it inside the same event loop. This is
+        the workspace-switch path, taken for the same reason: every panel is
+        laid out once, on a window built for that view. Rearranging the live
+        panes instead left web views mis-sized (a hidden tab keeping its old
+        width and painting over its neighbour, panes coming back zero wide),
+        which is the fault this replaced.
+        """
+        layout = normalise_layout(layout)
+        if layout == normalise_layout(self.config.layout):
+            return
         save_layout(self.config.dir, layout)
+        self.next_workspace = self.config.dir.name
+        self.close()
 
     def toggle_flashcard(self):
         if self.flashcard_dock.isVisible():

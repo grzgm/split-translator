@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from .capture_bridge import CaptureBridge
 from .grab_gate import GrabGate, is_challenge_response
-from .layout import LAYOUT_DEFAULT, LAYOUT_WIDE, normalise_layout
+from .layout import LAYOUT_BOOK, LAYOUT_NORMAL, normalise_layout
 
 
 def _qwebchannel_js() -> str:
@@ -205,7 +205,7 @@ class DictionaryPanel(QWidget):
     ipa_capture_requested = Signal(str, str)  # region, IPA notation
 
     def __init__(self, profile: QWebEngineProfile, parent=None,
-                 layout: str = LAYOUT_DEFAULT):
+                 layout: str = LAYOUT_NORMAL):
         super().__init__(parent)
         self.profile = profile
         self.capture_bridge = CaptureBridge(self)
@@ -237,7 +237,7 @@ class DictionaryPanel(QWidget):
         self._followed_base = False
         self._search_id = 0
         # Which arrangement the six views sit in. Set before init_ui because it
-        # decides what init_ui builds; changed afterwards through set_layout.
+        # decides what init_ui builds, and fixed for the life of the window.
         self._layout = normalise_layout(layout)
         # The tab widgets, one set per layout. Both names always exist, so the
         # panel can be asked about either without knowing which it is in.
@@ -294,9 +294,9 @@ class DictionaryPanel(QWidget):
         search_layout.addWidget(correction_button)
         layout.addLayout(search_layout)
 
-        # Web views. The six are built once, here; which arrangement they sit
-        # in is the workspace's choice, so switching layout re-parents them
-        # rather than rebuilding them (see set_layout).
+        # Web views. The six are built once, here, into the arrangement this
+        # window was opened in. They are never moved between arrangements: see
+        # layout.py for why choosing the other view rebuilds the window.
         self.cambridge_en_view = self._make_view()
         self.cambridge_pl_view = self._make_view()
         self.google_meaning_view = self._make_view()
@@ -305,17 +305,15 @@ class DictionaryPanel(QWidget):
         self._install_diki_audio_gate(self.diki_view)
         self.google_translate_search = self._make_view()
 
-        self._body = layout
-        self._views_root = self._build_views()
-        self._body.addWidget(self._views_root)
+        layout.addWidget(self._build_views())
 
     def _build_views(self) -> QWidget:
-        """The container holding the six views, in the current layout."""
-        if self._layout == LAYOUT_WIDE:
-            return self._build_wide_views()
-        return self._build_default_views()
+        """The container holding the six views, in this window's layout."""
+        if self._layout == LAYOUT_BOOK:
+            return self._build_book_views()
+        return self._build_normal_views()
 
-    def _build_default_views(self) -> QWidget:
+    def _build_normal_views(self) -> QWidget:
         """Four squares: the two Cambridge panes stacked on the left, the tabbed
         Meaning/bab.la/diki square over the Google "po polsku" pane on the
         right."""
@@ -341,7 +339,7 @@ class DictionaryPanel(QWidget):
         main_splitter.setSizes([500, 500])
         return main_splitter
 
-    def _build_wide_views(self) -> QWidget:
+    def _build_book_views(self) -> QWidget:
         """Two tabbed squares, stacked: whatever sits at the top of the default
         view shares the top square, whatever sits at the bottom shares the
         bottom one. Each opens on its Cambridge tab, the pane wanted first."""
@@ -361,31 +359,6 @@ class DictionaryPanel(QWidget):
         stack.addWidget(self.bottom_tabs)
         stack.setSizes([1, 1])
         return stack
-
-    def set_layout(self, layout: str) -> None:
-        """Put the six views into one arrangement or the other.
-
-        They are re-parented, never rebuilt, so no page reloads and no search is
-        re-run. Asking for the layout the panel is already in does nothing,
-        which is what makes it safe for the window to apply the stored layout on
-        open.
-        """
-        layout = normalise_layout(layout)
-        if layout == self._layout:
-            return
-        self._layout = layout
-        # Out of the old containers before those are deleted: a widget goes down
-        # with its parent, and these views must outlive both layouts.
-        for view in self._all_views():
-            view.setParent(None)
-        self._body.removeWidget(self._views_root)
-        self._views_root.setParent(None)
-        self._views_root.deleteLater()
-        self.google_tabs = None
-        self.top_tabs = None
-        self.bottom_tabs = None
-        self._views_root = self._build_views()
-        self._body.addWidget(self._views_root)
 
     def _all_views(self) -> list:
         return [

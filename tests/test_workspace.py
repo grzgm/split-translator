@@ -224,7 +224,7 @@ class SaveWorkspaceTests(unittest.TestCase):
                         "name": "Lalka",
                         "original_path": "/b/a.epub",
                         "translation_path": "/b/b.epub",
-                        "layout": "wide",
+                        "layout": "book",
                     }
                 ),
                 encoding="utf-8",
@@ -243,7 +243,7 @@ class SaveWorkspaceTests(unittest.TestCase):
             )
             self.assertEqual(raw["name"], "Lalka (Prus)")
             self.assertEqual(raw["original_path"], "/b/c.epub")
-            self.assertEqual(raw["layout"], "wide")
+            self.assertEqual(raw["layout"], "book")
 
 
 class DeleteWorkspaceTests(unittest.TestCase):

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from split_translator.config import load_config, save_layout
-from split_translator.layout import LAYOUT_DEFAULT, LAYOUT_WIDE
+from split_translator.layout import LAYOUT_BOOK, LAYOUT_NORMAL
 
 
 class ConfigTests(unittest.TestCase):
@@ -84,7 +84,7 @@ class ConfigTests(unittest.TestCase):
                     "translation_path": "/books/b.epub",
                 },
             )
-            self.assertEqual(load_config(path).layout, LAYOUT_DEFAULT)
+            self.assertEqual(load_config(path).layout, LAYOUT_NORMAL)
 
     def test_reads_a_stored_layout(self):
         with tempfile.TemporaryDirectory() as d:
@@ -93,10 +93,10 @@ class ConfigTests(unittest.TestCase):
                 {
                     "original_path": "/books/a.epub",
                     "translation_path": "/books/b.epub",
-                    "layout": "wide",
+                    "layout": "book",
                 },
             )
-            self.assertEqual(load_config(path).layout, LAYOUT_WIDE)
+            self.assertEqual(load_config(path).layout, LAYOUT_BOOK)
 
     def test_an_unreadable_layout_loads_as_the_default_view(self):
         # Hand-edited, or written by a newer version: the app opens in the view
@@ -111,7 +111,7 @@ class ConfigTests(unittest.TestCase):
                     "layout": "sideways",
                 },
             )
-            self.assertEqual(load_config(path).layout, LAYOUT_DEFAULT)
+            self.assertEqual(load_config(path).layout, LAYOUT_NORMAL)
 
 
 class SaveLayoutTests(unittest.TestCase):
@@ -130,15 +130,15 @@ class SaveLayoutTests(unittest.TestCase):
                     "translation_path": "/books/b.epub",
                 },
             )
-            save_layout(Path(d), LAYOUT_WIDE)
+            save_layout(Path(d), LAYOUT_BOOK)
             raw = json.loads(
                 (Path(d) / "config.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(raw["layout"], "wide")
+            self.assertEqual(raw["layout"], "book")
             self.assertEqual(raw["name"], "Lalka")
             self.assertEqual(raw["original_path"], "/books/a.epub")
 
     def test_writes_nothing_when_there_is_no_config_to_update(self):
         with tempfile.TemporaryDirectory() as d:
-            save_layout(Path(d), LAYOUT_WIDE)
+            save_layout(Path(d), LAYOUT_BOOK)
             self.assertFalse((Path(d) / "config.json").exists())

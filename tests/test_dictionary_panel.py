@@ -11,7 +11,7 @@ from split_translator.dictionary_panel import (
     DictionaryPanel,
     _parse_base_form,
 )
-from split_translator.layout import LAYOUT_DEFAULT, LAYOUT_WIDE
+from split_translator.layout import LAYOUT_BOOK, LAYOUT_NORMAL
 from split_translator.flashcard_editor_base import SenseRow
 
 app = QApplication.instance() or QApplication([])
@@ -598,7 +598,7 @@ if __name__ == "__main__":
 
 
 class DictionaryLayoutTests(unittest.TestCase):
-    def _panel(self, layout=LAYOUT_DEFAULT):
+    def _panel(self, layout=LAYOUT_NORMAL):
         return DictionaryPanel(
             QWebEngineProfile.defaultProfile(), layout=layout
         )
@@ -606,7 +606,7 @@ class DictionaryLayoutTests(unittest.TestCase):
     def _labels(self, tabs):
         return [tabs.tabText(i) for i in range(tabs.count())]
 
-    def test_default_layout_keeps_the_four_squares(self):
+    def test_normal_view_keeps_the_four_squares(self):
         panel = self._panel()
         self.assertIsNone(panel.top_tabs)
         self.assertIsNone(panel.bottom_tabs)
@@ -614,8 +614,8 @@ class DictionaryLayoutTests(unittest.TestCase):
             self._labels(panel.google_tabs), ["Meaning", "bab.la", "diki"]
         )
 
-    def test_wide_layout_stacks_two_tabbed_squares(self):
-        panel = self._panel(LAYOUT_WIDE)
+    def test_book_view_stacks_two_tabbed_squares(self):
+        panel = self._panel(LAYOUT_BOOK)
         self.assertIsNone(panel.google_tabs)
         self.assertEqual(
             self._labels(panel.top_tabs),
@@ -625,44 +625,20 @@ class DictionaryLayoutTests(unittest.TestCase):
             self._labels(panel.bottom_tabs), ["Cambridge PL", "po polsku"]
         )
 
-    def test_wide_layout_opens_on_the_cambridge_tabs(self):
-        panel = self._panel(LAYOUT_WIDE)
+    def test_book_view_opens_on_the_cambridge_tabs(self):
+        panel = self._panel(LAYOUT_BOOK)
         self.assertIs(panel.top_tabs.currentWidget(), panel.cambridge_en_view)
         self.assertIs(
             panel.bottom_tabs.currentWidget(), panel.cambridge_pl_view
         )
 
-    def test_switching_re_parents_the_very_same_views(self):
-        # Nothing is rebuilt, so no page reloads and no search is re-run.
-        panel = self._panel()
-        before = panel._all_views()
-        panel.set_layout(LAYOUT_WIDE)
-        self.assertEqual(panel._all_views(), before)
-        self.assertIs(panel.top_tabs.widget(0), before[0])
-
-    def test_switching_back_restores_the_four_squares(self):
-        panel = self._panel(LAYOUT_WIDE)
-        panel.set_layout(LAYOUT_DEFAULT)
-        self.assertIsNone(panel.top_tabs)
-        self.assertEqual(
-            self._labels(panel.google_tabs), ["Meaning", "bab.la", "diki"]
-        )
-
-    def test_asking_for_the_layout_it_is_already_in_rebuilds_nothing(self):
-        # The window applies the stored layout on open, so this call is the
-        # common case, not an odd one.
-        panel = self._panel()
-        tabs = panel.google_tabs
-        panel.set_layout(LAYOUT_DEFAULT)
-        self.assertIs(panel.google_tabs, tabs)
-
-    def test_an_unreadable_layout_builds_the_default_view(self):
+    def test_an_unreadable_layout_builds_the_normal_view(self):
         panel = self._panel("sideways")
         self.assertIsNone(panel.top_tabs)
         self.assertIsNotNone(panel.google_tabs)
 
-    def test_a_search_still_loads_all_six_views_in_the_wide_layout(self):
-        panel = self._panel(LAYOUT_WIDE)
+    def test_a_search_still_loads_all_six_views_in_the_book_view(self):
+        panel = self._panel(LAYOUT_BOOK)
         panel._read_base_form = lambda callback: callback(NO_POINTER)
         urls = []
         for view in panel._all_views():

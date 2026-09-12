@@ -6,7 +6,7 @@ bindings (every entry whose ``handler`` is set), and the Ctrl+/ overlay
 is one entry here, so the bindings and the reference can never drift.
 
 Entries with no ``handler`` are display-only: they appear in the overlay but are
-wired elsewhere (the two View-menu actions) or are a range (Alt+1..9), neither of
+wired elsewhere (the View-menu actions) or are a range (Alt+1..9), neither of
 which is a plain single ``QShortcut``.
 """
 
@@ -65,6 +65,10 @@ SHORTCUTS = [
     ShortcutEntry("Ctrl+Shift+F", "Flashcard editor (View menu)", "View"),
     ShortcutEntry("Ctrl+Shift+A", "Sync editor (View menu)", "View"),
     ShortcutEntry("Ctrl+Shift+P", "Print flashcards (View menu)", "View"),
+    ShortcutEntry("Ctrl+Shift+N", "Normal view (View menu)", "View",
+                  note="four dictionary squares, the two editions in tabs"),
+    ShortcutEntry("Ctrl+Shift+B", "Book view (View menu)", "View",
+                  note="two dictionary squares, both editions side by side"),
     ShortcutEntry("Ctrl+/", "Show this keyboard-shortcuts list", "View",
                   handler="show_shortcuts"),
 ]

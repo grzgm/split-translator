@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .layout import LAYOUT_DEFAULT, normalise_layout
+from .layout import LAYOUT_NORMAL, normalise_layout
 
 # All personal config and storage lives in a hidden .config dir at the project
 # root, one level above this package, so the project root stays uncluttered.
@@ -30,7 +30,7 @@ class Config:
     # Which arrangement this workspace was last read in (see layout.py).
     # Last and defaulted because it is the only field the window writes
     # back, and every other caller builds a Config without it.
-    layout: str = LAYOUT_DEFAULT
+    layout: str = LAYOUT_NORMAL
 
 
 def load_config(config_path: Path = CONFIG_PATH) -> Config:
