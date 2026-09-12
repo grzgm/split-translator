@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from .capture_bridge import CaptureBridge
 from .grab_gate import GrabGate, is_challenge_response
+from .layout import LAYOUT_DEFAULT, LAYOUT_WIDE, normalise_layout
 
 
 def _qwebchannel_js() -> str:
@@ -203,7 +204,8 @@ class DictionaryPanel(QWidget):
     audio_capture_requested = Signal(str, str)  # region, mp3 URL
     ipa_capture_requested = Signal(str, str)  # region, IPA notation
 
-    def __init__(self, profile: QWebEngineProfile, parent=None):
+    def __init__(self, profile: QWebEngineProfile, parent=None,
+                 layout: str = LAYOUT_DEFAULT):
         super().__init__(parent)
         self.profile = profile
         self.capture_bridge = CaptureBridge(self)
@@ -234,6 +236,14 @@ class DictionaryPanel(QWidget):
         # be dropped rather than acted on (see _on_base_form).
         self._followed_base = False
         self._search_id = 0
+        # Which arrangement the six views sit in. Set before init_ui because it
+        # decides what init_ui builds; changed afterwards through set_layout.
+        self._layout = normalise_layout(layout)
+        # The tab widgets, one set per layout. Both names always exist, so the
+        # panel can be asked about either without knowing which it is in.
+        self.google_tabs = None
+        self.top_tabs = None
+        self.bottom_tabs = None
         self.init_ui()
         self._setup_capture_buttons()
 
@@ -284,30 +294,44 @@ class DictionaryPanel(QWidget):
         search_layout.addWidget(correction_button)
         layout.addLayout(search_layout)
 
-        # Web views.
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
-
+        # Web views. The six are built once, here; which arrangement they sit
+        # in is the workspace's choice, so switching layout re-parents them
+        # rather than rebuilding them (see set_layout).
         self.cambridge_en_view = self._make_view()
         self.cambridge_pl_view = self._make_view()
-
-        left_splitter.addWidget(self.cambridge_en_view)
-        left_splitter.addWidget(self.cambridge_pl_view)
-        left_splitter.setSizes([1, 1])
-
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        self.google_tabs = QTabWidget()
         self.google_meaning_view = self._make_view()
         self.babla_view = self._make_view()
         self.diki_view = self._make_view()
         self._install_diki_audio_gate(self.diki_view)
+        self.google_translate_search = self._make_view()
+
+        self._body = layout
+        self._views_root = self._build_views()
+        self._body.addWidget(self._views_root)
+
+    def _build_views(self) -> QWidget:
+        """The container holding the six views, in the current layout."""
+        if self._layout == LAYOUT_WIDE:
+            return self._build_wide_views()
+        return self._build_default_views()
+
+    def _build_default_views(self) -> QWidget:
+        """Four squares: the two Cambridge panes stacked on the left, the tabbed
+        Meaning/bab.la/diki square over the Google "po polsku" pane on the
+        right."""
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        left_splitter.addWidget(self.cambridge_en_view)
+        left_splitter.addWidget(self.cambridge_pl_view)
+        left_splitter.setSizes([1, 1])
+
+        self.google_tabs = QTabWidget()
         self.google_tabs.addTab(self.google_meaning_view, "Meaning")
         self.google_tabs.addTab(self.babla_view, "bab.la")
         self.google_tabs.addTab(self.diki_view, "diki")
 
-        self.google_translate_search = self._make_view()
-
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_splitter.addWidget(self.google_tabs)
         right_splitter.addWidget(self.google_translate_search)
         right_splitter.setSizes([400, 400])
@@ -315,7 +339,53 @@ class DictionaryPanel(QWidget):
         main_splitter.addWidget(left_splitter)
         main_splitter.addWidget(right_splitter)
         main_splitter.setSizes([500, 500])
-        layout.addWidget(main_splitter)
+        return main_splitter
+
+    def _build_wide_views(self) -> QWidget:
+        """Two tabbed squares, stacked: whatever sits at the top of the default
+        view shares the top square, whatever sits at the bottom shares the
+        bottom one. Each opens on its Cambridge tab, the pane wanted first."""
+        stack = QSplitter(Qt.Orientation.Vertical)
+
+        self.top_tabs = QTabWidget()
+        self.top_tabs.addTab(self.cambridge_en_view, "Cambridge EN")
+        self.top_tabs.addTab(self.google_meaning_view, "Meaning")
+        self.top_tabs.addTab(self.babla_view, "bab.la")
+        self.top_tabs.addTab(self.diki_view, "diki")
+
+        self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.addTab(self.cambridge_pl_view, "Cambridge PL")
+        self.bottom_tabs.addTab(self.google_translate_search, "po polsku")
+
+        stack.addWidget(self.top_tabs)
+        stack.addWidget(self.bottom_tabs)
+        stack.setSizes([1, 1])
+        return stack
+
+    def set_layout(self, layout: str) -> None:
+        """Put the six views into one arrangement or the other.
+
+        They are re-parented, never rebuilt, so no page reloads and no search is
+        re-run. Asking for the layout the panel is already in does nothing,
+        which is what makes it safe for the window to apply the stored layout on
+        open.
+        """
+        layout = normalise_layout(layout)
+        if layout == self._layout:
+            return
+        self._layout = layout
+        # Out of the old containers before those are deleted: a widget goes down
+        # with its parent, and these views must outlive both layouts.
+        for view in self._all_views():
+            view.setParent(None)
+        self._body.removeWidget(self._views_root)
+        self._views_root.setParent(None)
+        self._views_root.deleteLater()
+        self.google_tabs = None
+        self.top_tabs = None
+        self.bottom_tabs = None
+        self._views_root = self._build_views()
+        self._body.addWidget(self._views_root)
 
     def _all_views(self) -> list:
         return [
