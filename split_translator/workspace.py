@@ -196,14 +196,25 @@ def taken_slugs(root: Path | None = None) -> set[str]:
 
 def save_workspace(workspace: Workspace) -> None:
     """Write a workspace's config.json, creating the folder if it is missing, so
-    a freshly created workspace and an edited one take the same path."""
+    a freshly created workspace and an edited one take the same path.
+
+    Only the three keys this function owns are written. Anything else already in
+    the file (the reader's layout, for one) is read back and kept, so editing a
+    name or a book path does not discard it.
+    """
     workspace.dir.mkdir(parents=True, exist_ok=True)
-    data = {
-        "name": workspace.name,
-        "original_path": workspace.original_path,
-        "translation_path": workspace.translation_path,
-    }
-    with open(workspace.dir / "config.json", "w", encoding="utf-8") as f:
+    path = workspace.dir / "config.json"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data["name"] = workspace.name
+    data["original_path"] = workspace.original_path
+    data["translation_path"] = workspace.translation_path
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 

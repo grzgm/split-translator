@@ -212,6 +212,39 @@ class SaveWorkspaceTests(unittest.TestCase):
             save_workspace(edited)
             self.assertEqual(read_workspace(workspace.dir), edited)
 
+    def test_keeps_keys_it_does_not_own(self):
+        # The picker owns the name and the two book paths. The reader owns the
+        # layout. Renaming a workspace or repointing its books must not discard
+        # the view it was left in.
+        with tempfile.TemporaryDirectory() as d:
+            workspace = create_workspace("Lalka", Path(d))
+            (workspace.dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "name": "Lalka",
+                        "original_path": "/b/a.epub",
+                        "translation_path": "/b/b.epub",
+                        "layout": "wide",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            save_workspace(
+                Workspace(
+                    slug=workspace.slug,
+                    name="Lalka (Prus)",
+                    dir=workspace.dir,
+                    original_path="/b/c.epub",
+                    translation_path="/b/b.epub",
+                )
+            )
+            raw = json.loads(
+                (workspace.dir / "config.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(raw["name"], "Lalka (Prus)")
+            self.assertEqual(raw["original_path"], "/b/c.epub")
+            self.assertEqual(raw["layout"], "wide")
+
 
 class DeleteWorkspaceTests(unittest.TestCase):
     def test_removes_the_folder_and_its_contents(self):
