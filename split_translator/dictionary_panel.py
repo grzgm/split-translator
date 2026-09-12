@@ -1,7 +1,7 @@
 """Dictionary lookup panel: search bar plus a grid of web views for each source."""
 
 import json
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from PySide6.QtCore import QFile, QIODevice, Qt, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -91,16 +91,47 @@ _DIKI_AUDIO_GATE_JS = r"""
 """
 
 
-def _parse_grab(result) -> dict:
-    """The pronunciation grab's return value as a dict.
+# Cambridge's own host, so a URL read off a page can be checked against it
+# before the app follows it (see _parse_base_form).
+_CAMBRIDGE_HOST = "dictionary.cambridge.org"
 
-    runJavaScript hands back the JSON string _GRAB_JS builds (a bare object
+
+def _cambridge_en_url(word: str) -> str:
+    return f"https://{_CAMBRIDGE_HOST}/dictionary/english/{quote(word)}"
+
+
+def _cambridge_pl_url(word: str) -> str:
+    return (
+        f"https://{_CAMBRIDGE_HOST}/pl/dictionary/english-polish/{quote(word)}"
+    )
+
+
+def _parse_grab(result) -> dict:
+    """What a page read returned, as a dict.
+
+    runJavaScript hands back the JSON string the script builds (a bare object
     would arrive empty, see _GRAB_JS). A page that returned nothing, or
-    anything unparseable, is an empty grab rather than an error."""
+    anything unparseable, is an empty read rather than an error. Shared by the
+    pronunciation grab and the base-form read."""
     try:
         return json.loads(result) if result else {}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _parse_base_form(result) -> dict | None:
+    """The base form a page points at, as {"word", "url"}, or None when the
+    page is an entry in its own right.
+
+    The URL comes off the page, so it is checked before the app follows it:
+    only a Cambridge dictionary address is, whatever the page says."""
+    base = _parse_grab(result).get("base") or {}
+    word = (base.get("word") or "").strip()
+    url = (base.get("url") or "").strip()
+    parts = urlsplit(url)
+    if not word or parts.scheme != "https" or parts.netloc != _CAMBRIDGE_HOST:
+        return None
+    return {"word": word, "url": url}
 
 
 def _response_headers(info) -> dict:
@@ -196,6 +227,13 @@ class DictionaryPanel(QWidget):
         # clicking or going Back inside the page (see grab_gate). Armed by
         # search().
         self._grab_gate = GrabGate()
+        # Cambridge serves a search for an inflected form as an entry that only
+        # points at the base form, and the app follows that pointer once per
+        # search (see _BASE_FORM_JS). _search_id says which search the views are
+        # showing, so an answer that arrives after the next search has begun can
+        # be dropped rather than acted on (see _on_base_form).
+        self._followed_base = False
+        self._search_id = 0
         self.init_ui()
         self._setup_capture_buttons()
 
@@ -315,8 +353,10 @@ class DictionaryPanel(QWidget):
 
         // The page headword (span.hw.dhw). This is Cambridge's canonical
         // spelling of the entry, which differs from the raw search term when
-        // the search redirects to a lemma (searching "running" lands on "run").
-        // We return it so the flashcard editor fills its Headword from the
+        // Cambridge answers the search with another entry (searching
+        // "surmises" lands on "surmise"), and when the app has followed a
+        // page that only points at the base form (see _BASE_FORM_JS). We
+        // return it so the flashcard editor fills its Headword from the
         // dictionary rather than the search box.
         var head = document.querySelector('.hw.dhw');
         var headword = head ? head.textContent.trim() : null;
@@ -414,6 +454,121 @@ class DictionaryPanel(QWidget):
         except (json.JSONDecodeError, TypeError):
             data = {}
         self.grammar_grabbed.emit(data)
+
+    # --- the base form a page points at ----------------------------------
+
+    # Cambridge answers a search for an inflected form with an entry that is
+    # nothing but a pointer to the base form: "surmised" is served as an entry
+    # reading "past simple and past participle of surmise", linked to the
+    # "surmise" entry. The same shape covers "biggest" (superlative of "big"),
+    # "ran" (past simple of "run") and "mice" (plural of "mouse"). The address
+    # does not change, so the first headword on the page is still the inflected
+    # form, which is not the word the card is about.
+    #
+    # This reads that pointer, and only that. Every entry carrying the page's
+    # first headword, within the first dictionary section on the page, must
+    # consist solely of definitions that are a usage label ending in "of" plus
+    # one cross-reference link and nothing besides, all naming the same base
+    # word. A word that is also an entry of its own ("running", "better",
+    # "left", "saw", "found") therefore reports no base form, and so does a
+    # pointer with no link to follow ("children"). Checked against the live
+    # page of each of those words.
+    #
+    # Returns a JSON string for the same reason as _GRAB_JS (a bare object
+    # arrives empty from runJavaScript); {"base": null} when there is no
+    # pointer to follow.
+    _BASE_FORM_JS = r"""
+    (function() {
+        function pointerTarget(def) {
+            var usage = def.querySelector('.usage.dusage');
+            var refs = def.querySelectorAll('a.Ref');
+            if (!usage || refs.length !== 1) { return null; }
+            var label = usage.textContent.replace(/\s+/g, ' ').trim();
+            if (!/ of$/.test(label)) { return null; }
+            var word = refs[0].textContent.replace(/\s+/g, ' ').trim();
+            var whole = def.textContent.replace(/\s+/g, ' ').trim();
+            // The label and the link are the whole definition. Anything else in
+            // it is a meaning of its own ("comparative of good: of a higher
+            // standard than ..."), which makes this an entry, not a pointer.
+            if (!word || whole !== label + ' ' + word) { return null; }
+            return { word: word, url: refs[0].href };
+        }
+        var first = document.querySelector('.hw.dhw');
+        if (!first) { return JSON.stringify({ base: null }); }
+        var headword = first.textContent.trim();
+        var section = first.closest('.pr.dictionary');
+        var entries = (section || document)
+            .querySelectorAll('.pr.entry-body__el');
+        var base = null;
+        for (var i = 0; i < entries.length; i++) {
+            var head = entries[i].querySelector('.hw.dhw');
+            if (!head || head.textContent.trim() !== headword) { continue; }
+            var defs = entries[i].querySelectorAll('.def.ddef_d');
+            if (!defs.length) { return JSON.stringify({ base: null }); }
+            for (var j = 0; j < defs.length; j++) {
+                var target = pointerTarget(defs[j]);
+                if (!target || (base && target.word !== base.word)) {
+                    return JSON.stringify({ base: null });
+                }
+                base = target;
+            }
+        }
+        return JSON.stringify({ base: base });
+    })();
+    """
+
+    def _grab_searched_page(self) -> None:
+        """The page this search asked for has arrived: grab it, or follow it.
+
+        A card for "surmised" is a card about "surmise", so the pointer is read
+        before anything is taken off the page: the headword, pronunciation,
+        spelling and audio then all come from the one entry Cambridge means."""
+        if self._followed_base:
+            # The base entry itself, followed once already for this search.
+            self._grab_page()
+            return
+        search_id = self._search_id
+        self._read_base_form(
+            lambda result: self._on_base_form(search_id, result)
+        )
+
+    def _read_base_form(self, callback) -> None:
+        """Ask the loaded page which base form it points at. Its own method so a
+        test can answer for the page, which a live Cambridge entry cannot."""
+        self.cambridge_en_view.page().runJavaScript(
+            self._BASE_FORM_JS, callback
+        )
+
+    def _on_base_form(self, search_id: int, result) -> None:
+        """The page's answer: follow a pointer, grab anything else.
+
+        The read is asynchronous, so a newer search may own the views by the
+        time it answers. That search has its own page coming and settles
+        itself, so a late answer is dropped rather than acted on."""
+        if search_id != self._search_id:
+            return
+        base = _parse_base_form(result)
+        if base is None:
+            self._grab_page()
+            return
+        self._follow_base_form(base)
+
+    def _follow_base_form(self, base: dict) -> None:
+        """Load the base entry in both Cambridge views, and grab that instead.
+
+        The grab is armed again for the load this starts: it is the app's own
+        load, as much the searched page as the pointer was. One hop per search,
+        so a page that points on again is grabbed as it is."""
+        self._followed_base = True
+        self._grab_gate.arm()
+        self.cambridge_en_view.setUrl(QUrl(base["url"]))
+        self.cambridge_pl_view.setUrl(QUrl(_cambridge_pl_url(base["word"])))
+
+    def _grab_page(self) -> None:
+        """Read the Cambridge English page on screen into the flashcard editor
+        (its plural marker, then its pronunciation block)."""
+        self.grab_grammar()
+        self.grab_pronunciation()
 
     # --- inject capture buttons into the dictionary views ----------------
 
@@ -853,8 +1008,7 @@ class DictionaryPanel(QWidget):
         )
         challenge = is_challenge_response(_response_headers(info))
         if self._grab_gate.load_finished(succeeded, url, challenge=challenge):
-            self.grab_grammar()
-            self.grab_pronunciation()
+            self._grab_searched_page()
 
     def _inject_capture(self, view, pairs, ok, pos_rule=None, pos_map=None):
         if not ok:
@@ -918,18 +1072,15 @@ class DictionaryPanel(QWidget):
         else:
             self._grab_gate.disarm()
 
+        # A fresh search: it may follow a base form of its own, and any answer
+        # the last one is still owed is now stale (see _on_base_form).
+        self._search_id += 1
+        self._followed_base = False
+
         encoded_word = quote(word)
 
-        cambridge_en_url = (
-            f"https://dictionary.cambridge.org/dictionary/english/{encoded_word}"
-        )
-        self.cambridge_en_view.setUrl(QUrl(cambridge_en_url))
-
-        cambridge_pl_url = (
-            "https://dictionary.cambridge.org/pl/dictionary/"
-            f"english-polish/{encoded_word}"
-        )
-        self.cambridge_pl_view.setUrl(QUrl(cambridge_pl_url))
+        self.cambridge_en_view.setUrl(QUrl(_cambridge_en_url(word)))
+        self.cambridge_pl_view.setUrl(QUrl(_cambridge_pl_url(word)))
 
         # Two Google searches.
         google_meaning_url = f"https://www.google.pl/search?q={encoded_word}+meaning"

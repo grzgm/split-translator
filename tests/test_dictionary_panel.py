@@ -7,10 +7,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import QApplication
 
-from split_translator.dictionary_panel import DictionaryPanel
+from split_translator.dictionary_panel import (
+    DictionaryPanel,
+    _parse_base_form,
+)
 from split_translator.flashcard_editor_base import SenseRow
 
 app = QApplication.instance() or QApplication([])
+
+# What a Cambridge entry that points at no base form answers with.
+NO_POINTER = json.dumps({"base": None})
 
 
 class PosCodeTests(unittest.TestCase):
@@ -247,6 +253,32 @@ class _LoadReport:
         return self._headers
 
 
+def _spy_grabs(panel):
+    """Record the passive grabs instead of reading a page."""
+    calls = []
+    panel.grab_grammar = lambda: calls.append("grammar")
+    panel.grab_pronunciation = lambda: calls.append("pronunciation")
+    return calls
+
+
+def _load_page(panel, url, ok=True, challenge=False, started_at=None):
+    """One Cambridge English load as Qt reports it, started and then finished.
+    Every Cambridge response comes through Cloudflare; a check is a failed load
+    (HTTP 403) that Cloudflare also marks with cf-mitigated. A redirected load
+    starts at one address and ends at another."""
+    from PySide6.QtWebEngineCore import QWebEngineLoadingInfo
+
+    status = QWebEngineLoadingInfo.LoadStatus
+    panel._on_english_loading(
+        _LoadReport(status.LoadStartedStatus, started_at or url)
+    )
+    headers = {"Server": "cloudflare"}
+    if challenge:
+        headers["CF-Mitigated"] = "challenge"
+    end = status.LoadSucceededStatus if ok else status.LoadFailedStatus
+    panel._on_english_loading(_LoadReport(end, url, headers))
+
+
 class AppSearchGrabGateTests(unittest.TestCase):
     """The passive auto-grab (grammar + pronunciation) must fire only for the
     Cambridge English load started by the app's own search bar, not for a load
@@ -258,99 +290,80 @@ class AppSearchGrabGateTests(unittest.TestCase):
     WALK = "https://dictionary.cambridge.org/dictionary/english/walk"
 
     def _panel(self):
-        return DictionaryPanel(QWebEngineProfile.defaultProfile())
-
-    def _spy_grabs(self, panel):
-        calls = []
-        panel.grab_grammar = lambda: calls.append("grammar")
-        panel.grab_pronunciation = lambda: calls.append("pronunciation")
-        return calls
-
-    def _load(self, panel, url=RUN, ok=True, challenge=False, started_at=None):
-        """One Cambridge English load as Qt reports it, started and then
-        finished. Every Cambridge response comes through Cloudflare; a check is
-        a failed load (HTTP 403) that Cloudflare also marks with cf-mitigated.
-        A redirected load starts at one address and ends at another."""
-        from PySide6.QtWebEngineCore import QWebEngineLoadingInfo
-
-        status = QWebEngineLoadingInfo.LoadStatus
-        panel._on_english_loading(
-            _LoadReport(status.LoadStartedStatus, started_at or url)
-        )
-        headers = {"Server": "cloudflare"}
-        if challenge:
-            headers["CF-Mitigated"] = "challenge"
-        end = status.LoadSucceededStatus if ok else status.LoadFailedStatus
-        panel._on_english_loading(_LoadReport(end, url, headers))
+        panel = DictionaryPanel(QWebEngineProfile.defaultProfile())
+        # Every page in these tests is an entry in its own right, so it points
+        # at no base form (the pointer pages are BaseFormFollowTests).
+        panel._read_base_form = lambda callback: callback(NO_POINTER)
+        return panel
 
     def test_grab_runs_for_the_app_search_load(self):
         panel = self._panel()
-        calls = self._spy_grabs(panel)
+        calls = _spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()  # arms the grab
-        self._load(panel)
+        _load_page(panel, self.RUN)
         self.assertEqual(calls, ["grammar", "pronunciation"])
 
     def test_second_load_after_a_search_does_not_grab(self):
         panel = self._panel()
-        calls = self._spy_grabs(panel)
+        calls = _spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        self._load(panel)  # app search load, grabs
+        _load_page(panel, self.RUN)  # app search load, grabs
         calls.clear()
-        self._load(panel, url=self.WALK)  # manual in-page navigation, must not grab
+        _load_page(panel, self.WALK)  # manual in-page navigation, must not grab
         self.assertEqual(calls, [])
 
     def test_load_without_a_preceding_search_does_not_grab(self):
         panel = self._panel()
-        calls = self._spy_grabs(panel)
-        self._load(panel)  # user typed in Cambridge's own box
+        calls = _spy_grabs(panel)
+        _load_page(panel, self.RUN)  # user typed in Cambridge's own box
         self.assertEqual(calls, [])
 
     def test_failed_app_search_load_spends_the_grab(self):
         # A failed load (no connection) still spends the grab, so it does not
         # leak onto the next, manual load.
         panel = self._panel()
-        calls = self._spy_grabs(panel)
+        calls = _spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        self._load(panel, ok=False)  # app search load failed, no grab
+        _load_page(panel, self.RUN, ok=False)  # app search load failed, no grab
         self.assertEqual(calls, [])
-        self._load(panel)  # next load is manual, must not grab
+        _load_page(panel, self.RUN)  # next load is manual, must not grab
         self.assertEqual(calls, [])
 
     def test_a_bot_check_passes_the_grab_to_the_page_behind_it(self):
         # The report: held on Cambridge's check, the card was never filled,
         # because the check was the load that used the grab up.
         panel = self._panel()
-        calls = self._spy_grabs(panel)
+        calls = _spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        self._load(panel, ok=False, challenge=True)  # "Just a moment..."
+        _load_page(panel, self.RUN, ok=False, challenge=True)  # "Just a moment..."
         self.assertEqual(calls, [])
         # Passed: the answer goes back to the same address, with a token.
-        self._load(panel, started_at=self.RUN + "?__cf_chl_f_tk=abc")
+        _load_page(panel, self.RUN, started_at=self.RUN + "?__cf_chl_f_tk=abc")
         self.assertEqual(calls, ["grammar", "pronunciation"])
 
     def test_back_from_a_bot_check_does_not_grab(self):
         panel = self._panel()
-        calls = self._spy_grabs(panel)
+        calls = _spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        self._load(panel, ok=False, challenge=True)
-        self._load(panel, url=self.WALK)  # the previous word's page
+        _load_page(panel, self.RUN, ok=False, challenge=True)
+        _load_page(panel, self.WALK)  # the previous word's page
         self.assertEqual(calls, [])
 
     def test_a_card_selected_during_a_bot_check_is_not_grabbed(self):
         # Even a card for the very word the check holds the grab for: its page
         # loads at the same address, and must not overwrite the loaded card.
         panel = self._panel()
-        calls = self._spy_grabs(panel)
+        calls = _spy_grabs(panel)
         panel.search_input.setText("run")
         panel.search()
-        self._load(panel, ok=False, challenge=True)
+        _load_page(panel, self.RUN, ok=False, challenge=True)
         panel.search_headword("run")
-        self._load(panel)
+        _load_page(panel, self.RUN)
         self.assertEqual(calls, [])
 
     def test_direct_grab_calls_are_unaffected(self):
@@ -365,6 +378,163 @@ class AppSearchGrabGateTests(unittest.TestCase):
         panel._on_grammar("")
         self.assertEqual(len(pron), 1)
         self.assertEqual(len(gram), 1)
+
+
+class BaseFormTests(unittest.TestCase):
+    """What counts as a base form worth following. The answer is read off a web
+    page, so what it names is checked before anything is loaded from it."""
+
+    SURMISE = "https://dictionary.cambridge.org/dictionary/english/surmise"
+
+    def test_a_linked_pointer_is_a_base_form(self):
+        base = _parse_base_form(
+            json.dumps({"base": {"word": "surmise", "url": self.SURMISE}})
+        )
+        self.assertEqual(base, {"word": "surmise", "url": self.SURMISE})
+
+    def test_a_page_that_points_nowhere_has_no_base_form(self):
+        # An entry in its own right: "surmise" itself, "running", "better".
+        self.assertIsNone(_parse_base_form(NO_POINTER))
+
+    def test_a_link_away_from_cambridge_is_refused(self):
+        for url in (
+            "https://example.com/dictionary/english/surmise",
+            "http://dictionary.cambridge.org/dictionary/english/surmise",
+            "",
+        ):
+            self.assertIsNone(
+                _parse_base_form(
+                    json.dumps({"base": {"word": "surmise", "url": url}})
+                ),
+                url,
+            )
+
+    def test_a_pointer_naming_no_word_is_refused(self):
+        self.assertIsNone(
+            _parse_base_form(
+                json.dumps({"base": {"word": " ", "url": self.SURMISE}})
+            )
+        )
+
+    def test_an_empty_or_malformed_answer_is_no_base_form(self):
+        # runJavaScript hands back None when the page returned nothing.
+        self.assertIsNone(_parse_base_form(None))
+        self.assertIsNone(_parse_base_form(""))
+        self.assertIsNone(_parse_base_form("not json"))
+
+
+class BaseFormFollowTests(unittest.TestCase):
+    """Cambridge answers a search for an inflected form with an entry that only
+    points at the base form: "surmised" is served as "past simple and past
+    participle of surmise", at its own address. The app follows that pointer,
+    so both Cambridge views show the base word and the card is filled from that
+    entry rather than from the inflected one."""
+
+    SURMISED = "https://dictionary.cambridge.org/dictionary/english/surmised"
+    SURMISE = "https://dictionary.cambridge.org/dictionary/english/surmise"
+    SURMISE_PL = (
+        "https://dictionary.cambridge.org/pl/dictionary/english-polish/surmise"
+    )
+    POINTER = json.dumps({"base": {"word": "surmise", "url": SURMISE}})
+
+    def _panel(self, answer):
+        panel = DictionaryPanel(QWebEngineProfile.defaultProfile())
+        # Stand in for the page: no display and no network here, so the read of
+        # a live Cambridge entry is answered in its place.
+        panel._read_base_form = lambda callback: callback(answer)
+        return panel
+
+    def _watch_urls(self, panel):
+        """Record where the two Cambridge views are pointed, and load nothing
+        anywhere (the other four views are not part of this)."""
+        urls = {"en": [], "pl": []}
+        for view in panel._all_views():
+            view.setUrl = lambda url: None
+        panel.cambridge_en_view.setUrl = lambda url: urls["en"].append(
+            url.toString()
+        )
+        panel.cambridge_pl_view.setUrl = lambda url: urls["pl"].append(
+            url.toString()
+        )
+        return urls
+
+    def _search(self, panel, word):
+        panel.search_input.setText(word)
+        panel.search()
+
+    def test_a_pointer_page_is_followed_in_both_cambridge_views(self):
+        panel = self._panel(self.POINTER)
+        urls = self._watch_urls(panel)
+        calls = _spy_grabs(panel)
+        self._search(panel, "surmised")
+        _load_page(panel, self.SURMISED)
+        # Nothing is taken off the inflected entry: the base word is loaded.
+        self.assertEqual(calls, [])
+        self.assertEqual(urls["en"][-1], self.SURMISE)
+        self.assertEqual(urls["pl"][-1], self.SURMISE_PL)
+
+    def test_the_base_entry_is_grabbed_once_it_arrives(self):
+        panel = self._panel(self.POINTER)
+        self._watch_urls(panel)
+        calls = _spy_grabs(panel)
+        self._search(panel, "surmised")
+        _load_page(panel, self.SURMISED)  # the pointer, followed
+        _load_page(panel, self.SURMISE)  # the entry the app then asked for
+        self.assertEqual(calls, ["grammar", "pronunciation"])
+
+    def test_a_search_follows_one_pointer_at_most(self):
+        # A base entry that points on again is grabbed as it is, so two entries
+        # pointing at each other cannot loop.
+        panel = self._panel(self.POINTER)
+        urls = self._watch_urls(panel)
+        calls = _spy_grabs(panel)
+        self._search(panel, "surmised")
+        _load_page(panel, self.SURMISED)
+        followed = len(urls["en"])
+        _load_page(panel, self.SURMISE)
+        self.assertEqual(calls, ["grammar", "pronunciation"])
+        self.assertEqual(len(urls["en"]), followed)
+
+    def test_an_entry_page_is_grabbed_and_not_followed(self):
+        panel = self._panel(NO_POINTER)
+        urls = self._watch_urls(panel)
+        calls = _spy_grabs(panel)
+        self._search(panel, "surmise")
+        searched = len(urls["en"])
+        _load_page(panel, self.SURMISE)
+        self.assertEqual(calls, ["grammar", "pronunciation"])
+        self.assertEqual(len(urls["en"]), searched)
+
+    def test_an_answer_arriving_after_the_next_search_is_dropped(self):
+        # The read is asynchronous, and by the time this page answers, another
+        # search owns the views. That search has its own page coming.
+        panel = self._panel(self.POINTER)
+        urls = self._watch_urls(panel)
+        calls = _spy_grabs(panel)
+        held = []
+        panel._read_base_form = held.append  # answer nothing for now
+        self._search(panel, "surmised")
+        _load_page(panel, self.SURMISED)
+        self._search(panel, "walk")
+        searched = len(urls["en"])
+        held[0](self.POINTER)  # the page before last, answering late
+        self.assertEqual(calls, [])
+        self.assertEqual(len(urls["en"]), searched)
+
+    def test_a_flashcard_lookup_reads_no_base_form(self):
+        # Selecting a card grabs nothing, so there is nothing to follow either:
+        # the card keeps the headword it was saved with.
+        panel = self._panel(self.POINTER)
+        urls = self._watch_urls(panel)
+        calls = _spy_grabs(panel)
+        reads = []
+        panel._read_base_form = reads.append
+        panel.search_headword("surmised")
+        searched = len(urls["en"])
+        _load_page(panel, self.SURMISED)
+        self.assertEqual(reads, [])
+        self.assertEqual(calls, [])
+        self.assertEqual(len(urls["en"]), searched)
 
 
 class PronunciationCaptureBridgeTests(unittest.TestCase):
