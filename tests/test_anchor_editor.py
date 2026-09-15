@@ -508,6 +508,21 @@ class AnchorEditorScrollMemoryTests(unittest.TestCase):
         self.assertEqual(editor.original_view._initial_scroll, ("b0", 0.2))
         self.assertEqual(editor.translation_view._initial_scroll, ("b1", 0.7))
 
+    def test_a_saved_position_on_a_lost_block_reopens_at_a_paragraph(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        seed = AnchorStore(path)
+        # The documents' paragraphs are b0 and b1; b5 no longer exists.
+        seed.set_scroll(EDITOR_SURFACE, ("b5", 0.3), ("b0", 0.7))
+        seed.shutdown()
+
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        editor = self._editor_with_store(store)
+        self.assertEqual(editor.original_view._initial_scroll, ("b1", 0.0))
+        self.assertEqual(editor.translation_view._initial_scroll, ("b0", 0.7))
+
 
 from split_translator.normalise_spec import (
     ORIGINAL_SIDE,

@@ -7,6 +7,8 @@ from split_translator.book_loader import (
     _rewrite_image_refs,
     assign_block_ids,
     load_book,
+    resolve_block_id,
+    resolve_position,
 )
 from tests.fixtures.make_fixtures import (
     make_epub,
@@ -292,6 +294,50 @@ class PdfLoadTests(unittest.TestCase):
             second = load_book(path)
             self.assertEqual(first.block_ids, second.block_ids)
             self.assertEqual(first.html, second.html)
+
+
+class ResolveBlockIdTests(unittest.TestCase):
+    """A stored id can stop being a paragraph (a spacer lost its id), so it is
+    resolved to the nearest paragraph by number."""
+
+    IDS = ["b0", "b3", "b7"]
+
+    def test_a_paragraph_id_resolves_to_itself(self):
+        self.assertEqual(resolve_block_id(self.IDS, "b3"), "b3")
+
+    def test_a_lost_id_moves_forward_to_the_next_paragraph(self):
+        self.assertEqual(resolve_block_id(self.IDS, "b4"), "b7")
+
+    def test_a_lost_id_moves_back_when_asked(self):
+        self.assertEqual(resolve_block_id(self.IDS, "b4", forward=False), "b3")
+
+    def test_past_the_last_paragraph_it_falls_back_to_the_last(self):
+        self.assertEqual(resolve_block_id(self.IDS, "b9"), "b7")
+
+    def test_before_the_first_paragraph_moving_back_falls_forward(self):
+        self.assertEqual(resolve_block_id(["b2", "b5"], "b1", forward=False), "b2")
+
+    def test_an_unreadable_id_resolves_to_nothing(self):
+        self.assertIsNone(resolve_block_id(self.IDS, ""))
+        self.assertIsNone(resolve_block_id(self.IDS, "chapter1"))
+
+    def test_no_paragraphs_resolve_to_nothing(self):
+        self.assertIsNone(resolve_block_id([], "b1"))
+
+
+class ResolvePositionTests(unittest.TestCase):
+    def test_a_position_on_a_paragraph_is_unchanged(self):
+        self.assertEqual(resolve_position(["b0", "b3"], ("b3", 0.4)), ("b3", 0.4))
+
+    def test_a_position_on_a_lost_block_starts_at_the_next_paragraph(self):
+        # The fraction belonged to the lost block, so it is not carried over.
+        self.assertEqual(resolve_position(["b0", "b3"], ("b1", 0.4)), ("b3", 0.0))
+
+    def test_no_position_stays_none(self):
+        self.assertIsNone(resolve_position(["b0"], None))
+
+    def test_an_unresolvable_position_becomes_none(self):
+        self.assertIsNone(resolve_position([], ("b1", 0.2)))
 
 
 class UnsupportedFormatTests(unittest.TestCase):

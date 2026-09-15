@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from .anchor_book_view import AnchorBookView
 from .anchor_store import EDITOR_SURFACE, AnchorStore
-from .book_loader import BookDocument
+from .book_loader import BookDocument, resolve_position
 from .book_sync import BookSync
 from .normalise_panel import NormalisePanel
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
@@ -118,9 +118,15 @@ class AnchorEditor(QWidget):
         self._gesture = SyncGesture(self)
 
         # The editor remembers its own scroll position, separate from the
-        # reader. Seed from the editor surface and write it back on close.
-        self._original_scroll, self._translation_scroll = (
-            self.anchor_store.get_scroll(EDITOR_SURFACE)
+        # reader. Seed from the editor surface and write it back on close. A
+        # saved position can name a block that is no longer a paragraph, so it
+        # reopens at the next paragraph instead.
+        original, translation = self.anchor_store.get_scroll(EDITOR_SURFACE)
+        self._original_scroll = resolve_position(
+            self.original_document.block_ids, original
+        )
+        self._translation_scroll = resolve_position(
+            self.translation_document.block_ids, translation
         )
 
         # Paragraph-spacing normalisation for the editor, persisted per book pair

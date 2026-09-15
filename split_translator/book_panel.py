@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from .anchor_editor import AnchorEditor
 from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
-from .book_loader import load_book
+from .book_loader import load_book, resolve_position
 from .book_sync import BookSync
 from .book_view import BookView
 from .config import Config
@@ -88,8 +88,14 @@ class BookPanel(QFrame):
         # Seeded from the store so an unchanged session re-saves the same spot.
         # The reader and the anchor editor track their positions separately.
         if self.has_books:
-            self._original_scroll, self._translation_scroll = (
-                self.anchor_store.get_scroll(READER_SURFACE)
+            original, translation = self.anchor_store.get_scroll(READER_SURFACE)
+            # A saved position can name a block that is no longer a paragraph,
+            # so it reopens at the next paragraph instead.
+            self._original_scroll = resolve_position(
+                self.original_document.block_ids, original
+            )
+            self._translation_scroll = resolve_position(
+                self.translation_document.block_ids, translation
             )
         else:
             self._original_scroll, self._translation_scroll = None, None
@@ -366,7 +372,7 @@ class BookPanel(QFrame):
             total = len(self.original_document.block_ids)
         else:
             total = len(self.translation_document.block_ids)
-        self.position_label.setText(f"{total} blocks")
+        self.position_label.setText(f"{total} paragraphs")
 
     def toggle_sync(self, state):
         self.sync_enabled = state == Qt.CheckState.Checked.value

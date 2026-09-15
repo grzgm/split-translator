@@ -396,6 +396,13 @@ class BookPanelContractTests(unittest.TestCase):
             panel = BookPanel(_config(d), profile)
             panel.search("   ")  # must not raise
 
+    def test_position_label_counts_paragraphs(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = BookPanel(_config(d), profile)
+            panel._update_position_label()
+            self.assertEqual(panel.position_label.text(), "4 paragraphs")
+
 
 from split_translator.book_sync import BookSync
 
@@ -518,6 +525,29 @@ class BookPanelScrollMemoryTests(unittest.TestCase):
             panel = self._panel(cfg, profile)
             self.assertEqual(panel.original_view._initial_scroll, ("b1", 0.0))
             self.assertEqual(panel.translation_view._initial_scroll, ("b1", 0.0))
+
+    def test_a_saved_position_on_a_lost_block_reopens_at_a_paragraph(self):
+        # The fixture's paragraphs are b0..b3. A saved id that is no longer a
+        # paragraph resolves to the next one, or the last when none follows.
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            cfg = _config(d)
+            from split_translator.anchor_store import (
+                READER_SURFACE,
+                AnchorStore,
+                anchor_path_for,
+            )
+            path = anchor_path_for(
+                cfg.original_path, cfg.translation_path, cfg.dir
+            )
+            seed = AnchorStore(path)
+            seed.set_scroll(READER_SURFACE, ("b99", 0.5), ("b1", 0.25))
+            seed.shutdown()
+            self.addCleanup(path.unlink, missing_ok=True)
+
+            panel = self._panel(cfg, profile)
+            self.assertEqual(panel.original_view._initial_scroll, ("b3", 0.0))
+            self.assertEqual(panel.translation_view._initial_scroll, ("b1", 0.25))
 
 
 class BookPanelTabSwitchTests(unittest.TestCase):
