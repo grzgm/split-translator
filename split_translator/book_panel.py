@@ -434,7 +434,7 @@ class BookPanel(QFrame):
             return
         self.search_term = term.strip()
         if not self.search_term:
-            # Clearing the term clears the section marks in both editions.
+            # Clearing the term clears the search marks in both editions.
             self.original_view.clear_search_mark()
             self.translation_view.clear_search_mark()
             return
@@ -493,14 +493,14 @@ class BookPanel(QFrame):
         self.original_view.find(self.search_term, False, self._on_find_result)
 
     def _mark_current_match(self, active: int, count: int) -> None:
-        # Highlight the section holding the active match, and the anchor-
-        # equivalent section in the other edition. Search always runs on the
+        # Highlight the paragraph holding the active match, and its counterpart
+        # paragraphs in the other edition. Search always runs on the
         # Original edition, so the active match is always an Original one: mark
         # original_view and mirror onto translation_view, without inferring the
         # side from the active tab. With no match (or a blank term) clear both
-        # marks. The block is located from `active` (the find's 1-based match
+        # marks. The paragraph is located from `active` (the find's 1-based match
         # index), not the scroll position, so a wrap-around to the first match
-        # marks the right block even though the findText callback can fire before
+        # marks the right paragraph even though the findText callback can fire before
         # the scroll has moved.
         view = self.original_view
         other = self.translation_view

@@ -1,5 +1,6 @@
-"""A single book edition rendered in a web view, with scroll position exposed as
-content coordinates (a block id plus a fraction toward the next block)."""
+"""A single book edition rendered in a web view, with scroll positions exposed as
+a paragraph position (a paragraph id plus a fraction toward the next paragraph)
+and a section position (a section index plus a share of its height)."""
 
 import json
 
@@ -158,7 +159,7 @@ _TOPMOST_ID_JS = """
 """
 
 # Injected once per load: adds the search-block overlay style. The reader marks
-# the section holding the current find match (and its counterpart paragraphs in
+# the paragraph holding the current find match (and its counterpart paragraphs in
 # the other edition) by toggling this class. The class name is distinct from the
 # anchor editor's classes so the two never clash if a view ever carries both.
 _SEARCH_STYLE_JS = """
@@ -437,7 +438,7 @@ class BookView(QWebEngineView):
         self._rendered = RenderedBook(document)
         self.setPage(QWebEnginePage(profile, self))
         # Inject the search-block overlay helpers once the page loads, so a book
-        # search can mark the section holding the current match. Connect before
+        # search can mark the paragraph holding the current match. Connect before
         # loading so the signal is not missed.
         self.loadFinished.connect(self._inject_search_mark)
         # Restore the saved scroll position once the page has laid out: offsets
@@ -496,8 +497,8 @@ class BookView(QWebEngineView):
             )
 
     def scroll_to(self, block_id: str, fraction: float) -> None:
-        """Scroll so the viewport top sits `fraction` from `block_id` toward the
-        next block. Suppresses the echoed scroll event briefly."""
+        """Scroll so the point `fraction` from `block_id` toward the next block
+        sits at the viewport centre. Suppresses the echoed scroll event briefly."""
         self._suppress_scroll = True
         js = _SCROLL_TO_JS % {
             "id": json.dumps(block_id),

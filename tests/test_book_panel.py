@@ -212,7 +212,7 @@ class BookViewSectionTests(unittest.TestCase):
         self.assertTrue(view._suppress_scroll)
         self.assertIn("(2, 0.25)", calls[-1])
 
-    def test_reapply_section_scrolls_now_and_arms_a_pending_reapply(self):
+    def test_reapply_section_scrolls_now_and_arms_a_pending_section(self):
         view = BookView(_doc(), QWebEngineProfile())
         calls = []
         view.scroll_to_section = lambda k, s: calls.append((k, s))
@@ -785,10 +785,10 @@ class BookPanelSearchMarkTests(unittest.TestCase):
         panel.translation_view.clear_search_mark = lambda: marks["trans"].append(None)
         return marks
 
-    def test_match_marks_active_block_and_mapped_block_in_the_other(self):
-        # A find with a match marks the matched block in the active edition and
-        # the anchor-equivalent block in the other. Same book for both editions,
-        # so the mapping is identity: marking b1 in the original marks b1 too.
+    def test_match_marks_the_paragraph_and_its_counterpart_in_the_other(self):
+        # With no anchors the book is one stretch, and both editions are the
+        # same book, so the same share of the text lands on the same paragraph:
+        # marking b1 in the original marks b1 too.
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = self._panel(_config(d), profile)
@@ -800,7 +800,7 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             panel.search_term = "needle"
             panel._mark_current_match(1, 1)
             self.assertEqual(marks["orig"], [[bid]])
-            self.assertEqual(marks["trans"], [[bid]])  # identity mapping
+            self.assertEqual(marks["trans"], [[bid]])  # same book, same paragraph
 
     def test_no_match_clears_both_marks(self):
         with tempfile.TemporaryDirectory() as d:
