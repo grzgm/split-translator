@@ -5,8 +5,8 @@ running count reaches Chromium's activeMatch. That only lines up with Chromium
 if each match is counted exactly once. Real book markup nests block elements
 (``<div class="chapter">`` around the paragraphs, ``<blockquote>`` around a
 ``<p>``, a ``<li>`` holding a ``<p>``), and ``assign_block_ids`` tags every block
-element, nested or not. An ancestor's ``textContent`` already contains its
-children's text, so a walk over every ``[data-stid]`` counts each nested match
+with text of its own, nested or not. A tagged ancestor's ``textContent`` already
+contains its children's text, so a walk over every ``[data-stid]`` counts a nested match
 twice: once in the paragraph and once in every wrapper above it. The count then
 runs ahead of Chromium's, the target index is reached early, and the mark lands
 on the wrapper, which starts higher up the page than the paragraph that matched.
@@ -47,7 +47,7 @@ class _Page:
 
     def __init__(self, body: str):
         self._tmp = tempfile.TemporaryDirectory()
-        self.html, self.ids = assign_block_ids(body)
+        self.html, self.ids, _texts = assign_block_ids(body)
         path = pathlib.Path(self._tmp.name) / "book.html"
         path.write_text(
             "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
@@ -110,8 +110,9 @@ class NestedBlockMatchTests(unittest.TestCase):
     def setUp(self):
         self.page = _Page(NESTED_BODY)
         self.addCleanup(self.page.close)
-        # b0 is the chapter div; b1..b3 are the paragraphs inside it.
-        self.assertEqual(self.page.ids, ["b0", "b1", "b2", "b3"])
+        # b0 would be the chapter div, which holds no text of its own and so
+        # gets no id; b1..b3 are the paragraphs inside it.
+        self.assertEqual(self.page.ids, ["b1", "b2", "b3"])
 
     def test_wrapper_div_is_never_marked(self):
         # The regression itself. Every match lives in a paragraph, so no match
@@ -301,9 +302,10 @@ class WrapperOwnTextTests(unittest.TestCase):
     def setUp(self):
         self.page = _Page(WRAPPER_TEXT_BODY)
         self.addCleanup(self.page.close)
-        # b0 chapter, b1 first p, b2 the passage div (own text + nested block),
-        # b3 the song div nested inside it, b4 the closing p.
-        self.assertEqual(self.page.ids, ["b0", "b1", "b2", "b3", "b4"])
+        # b0 would be the chapter div (no text of its own, no id), b1 first p,
+        # b2 the passage div (own text + nested block), b3 the song div nested
+        # inside it, b4 the closing p.
+        self.assertEqual(self.page.ids, ["b1", "b2", "b3", "b4"])
 
     def test_the_wrapper_owns_its_own_text(self):
         # The reported bug: this match is highlighted but nothing is marked,

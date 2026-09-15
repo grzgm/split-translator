@@ -93,16 +93,15 @@ class NormaliseSpec:
     def css(self) -> str:
         """This edition's normalisation stylesheet.
 
-        The three rules after `body` carry no scaled value and are copied
-        verbatim from the fixed stylesheet this object replaces. Their order
-        matters and must not change: the zeroing rule has to precede
-        margin-block, and the blank-block rule has to come last to win.
+        The three rules after `body` carry no scaled value. Their order matters
+        and must not change: the zeroing rule has to precede margin-block, and
+        the spacer rule comes last.
 
-        Two kinds of blank block collapse here. A truly empty one is caught by
-        the CSS :empty selector; one holding only whitespace, a non-breaking
-        space or empty inline wrappers is not :empty and cannot be matched by
-        CSS, so it is tagged with the st-blank class at runtime (see the walk
-        in book_view) and caught by the same rule."""
+        Blank spacer blocks collapse here. The loader marks every block with no
+        visible text and no image with a data-st-spacer attribute (see
+        book_loader), whether it is truly empty or holds only whitespace, a
+        non-breaking space or empty inline wrappers, so one attribute selector
+        catches them all without any work in the page."""
         return (
             "body { font-size: "
             f"{_css_number(DEFAULT_FONT_PERCENT * self.font)}%; line-height: "
@@ -110,7 +109,7 @@ class NormaliseSpec:
             " p, div, blockquote, li, h1, h2, h3, h4, h5, h6 { margin: 0; }"
             " p, div, blockquote, li { margin-block: "
             f"{_css_number(DEFAULT_GAP_EM * self.gap)}em; }}"
-            " p:empty, div:empty, .st-blank { margin: 0; height: 0; }"
+            " [data-st-spacer] { margin: 0; height: 0; }"
         )
 
     def to_dict(self) -> dict:

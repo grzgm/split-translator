@@ -18,7 +18,7 @@ from tests.fixtures.make_fixtures import (
 class AssignBlockIdsTests(unittest.TestCase):
     def test_assigns_sequential_ids_to_block_elements(self):
         html = "<h1>Title</h1><p>One</p><p>Two</p>"
-        out, ids = assign_block_ids(html)
+        out, ids, _texts = assign_block_ids(html)
         self.assertEqual(ids, ["b0", "b1", "b2"])
         self.assertIn('data-stid="b0"', out)
         self.assertIn('data-stid="b1"', out)
@@ -26,7 +26,7 @@ class AssignBlockIdsTests(unittest.TestCase):
 
     def test_ignores_inline_elements(self):
         html = "<p>Hello <span>world</span> <b>bold</b></p>"
-        out, ids = assign_block_ids(html)
+        out, ids, _texts = assign_block_ids(html)
         # Only the <p> is a block; span and b are inline and get no marker.
         self.assertEqual(ids, ["b0"])
 
@@ -34,7 +34,7 @@ class AssignBlockIdsTests(unittest.TestCase):
         # A real EPUB id must not stop us marking the block, and must not be
         # mistaken for one of our anchors.
         html = '<p id="ch1">Existing id here.</p><p>Plain.</p>'
-        out, ids = assign_block_ids(html)
+        out, ids, _texts = assign_block_ids(html)
         self.assertEqual(ids, ["b0", "b1"])
         # The author id survives; our marker is added alongside it.
         self.assertIn('id="ch1"', out)
@@ -42,14 +42,14 @@ class AssignBlockIdsTests(unittest.TestCase):
 
     def test_preserves_entities_verbatim(self):
         html = "<p>Tom &amp; Jerry &lt;3</p>"
-        out, _ = assign_block_ids(html)
+        out, _ids, _texts = assign_block_ids(html)
         self.assertIn("&amp;", out)
         self.assertIn("&lt;", out)
 
     def test_is_deterministic_across_two_runs(self):
         html = "<div>a</div><div>b</div>"
-        out1, ids1 = assign_block_ids(html)
-        out2, ids2 = assign_block_ids(html)
+        out1, ids1, _texts1 = assign_block_ids(html)
+        out2, ids2, _texts2 = assign_block_ids(html)
         self.assertEqual(out1, out2)
         self.assertEqual(ids1, ids2)
 
@@ -60,6 +60,73 @@ class AssignBlockIdsTests(unittest.TestCase):
         self.assertEqual(doc.html, '<p data-stid="b0">x</p>')
         self.assertEqual(doc.block_ids, ["b0"])
         self.assertEqual(doc.title, "T")
+
+
+class ParagraphIdTests(unittest.TestCase):
+    """Only paragraphs, blocks with visible text of their own, get an id.
+    Spacers are marked for the stylesheet instead, and every paragraph keeps
+    the number the old every-block counter gave it."""
+
+    def test_only_blocks_with_text_of_their_own_get_an_id(self):
+        html = '<div class="chapter"><p>One</p><p>Two</p></div>'
+        out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b1", "b2"])
+        self.assertNotIn('data-stid="b0"', out)
+
+    def test_ids_keep_their_numbers_when_spacers_sit_between(self):
+        # The English Children of Dune shape: a paragraph, an empty spacer div,
+        # and the Polish shape, a non-breaking-space paragraph.
+        html = "<p>One</p><div></div><p>&nbsp;</p><p>Two</p>"
+        _out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b0", "b3"])
+
+    def test_spacers_get_the_spacer_marker_and_no_id(self):
+        html = "<p>One</p><div></div><p>&nbsp;</p><p><span> </span>&#8203;</p>"
+        out, _ids, _texts = assign_block_ids(html)
+        self.assertEqual(out.count("data-st-spacer"), 3)
+        self.assertIn("<div data-st-spacer></div>", out)
+
+    def test_an_image_only_block_is_neither_paragraph_nor_spacer(self):
+        # A chapter ornament must keep its height, so it is not a spacer.
+        html = '<p><img src="ornament.png"/></p><p>Text</p>'
+        out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b1"])
+        self.assertNotIn("data-st-spacer", out)
+
+    def test_an_svg_cover_is_not_a_spacer(self):
+        html = '<div><svg><image xlink:href="cover.jpeg"/></svg></div>'
+        out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, [])
+        self.assertNotIn("data-st-spacer", out)
+
+    def test_a_wrapper_with_text_of_its_own_keeps_its_id(self):
+        # Children of Dune ends a paragraph div with a nested song div.
+        html = "<div>His fingers moved.<div>A song.</div></div>"
+        _out, ids, texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b0", "b1"])
+        self.assertEqual(texts, ["His fingers moved.", "A song."])
+
+    def test_a_wrapper_around_spacers_only_is_itself_a_spacer(self):
+        html = "<div><p>&nbsp;</p></div><p>Text</p>"
+        out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b2"])
+        self.assertEqual(out.count("data-st-spacer"), 2)
+
+    def test_texts_hold_each_paragraphs_visible_text(self):
+        html = (
+            "<p>Tom &amp; <i>Jerry</i>\n  here</p>"
+            "<p>line one<br/>line two</p>"
+            "<p>soft­hyphen</p>"
+        )
+        _out, _ids, texts = assign_block_ids(html)
+        self.assertEqual(
+            texts, ["Tom & Jerry here", "line one line two", "softhyphen"]
+        )
+
+    def test_text_in_a_script_does_not_make_a_paragraph(self):
+        html = "<div><script>var x = 1;</script></div><p>Text</p>"
+        _out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b1"])
 
 
 class FixtureBuilderTests(unittest.TestCase):
@@ -97,6 +164,19 @@ class EpubLoadTests(unittest.TestCase):
             doc = load_book(make_epub(d))
             # 2 h1 + 2 p = 4 block ids, in order.
             self.assertEqual(doc.block_ids, ["b0", "b1", "b2", "b3"])
+
+    def test_block_texts_follow_the_paragraphs(self):
+        with tempfile.TemporaryDirectory() as d:
+            doc = load_book(make_epub(d))
+            self.assertEqual(
+                doc.block_texts,
+                [
+                    "Chapter One",
+                    "The first paragraph.",
+                    "Chapter Two",
+                    "The second paragraph.",
+                ],
+            )
 
     def test_title_comes_from_opf(self):
         with tempfile.TemporaryDirectory() as d:

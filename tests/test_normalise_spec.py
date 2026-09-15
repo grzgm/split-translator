@@ -13,14 +13,15 @@ from split_translator.normalise_spec import (
     NormaliseSpec,
 )
 
-#: What the default spec must render as, character for character. The three
-#: rules after `body` are copied verbatim from the fixed stylesheet this object
-#: replaces, so a change here is a change to how every book has always looked.
+#: What the default spec must render as, character for character. The two
+#: margin rules after `body` are copied verbatim from the fixed stylesheet this
+#: object replaced, and the last rule collapses the blocks the loader marks as
+#: spacers, so a change here is a change to how every book looks.
 DEFAULT_CSS = (
     "body { font-size: 100%; line-height: 1.55; }"
     " p, div, blockquote, li, h1, h2, h3, h4, h5, h6 { margin: 0; }"
     " p, div, blockquote, li { margin-block: 0.6em; }"
-    " p:empty, div:empty, .st-blank { margin: 0; height: 0; }"
+    " [data-st-spacer] { margin: 0; height: 0; }"
 )
 
 
@@ -69,7 +70,7 @@ class ScalingTests(unittest.TestCase):
         self.assertIn(
             " p, div, blockquote, li, h1, h2, h3, h4, h5, h6 { margin: 0; }", css
         )
-        self.assertIn(" p:empty, div:empty, .st-blank { margin: 0; height: 0; }", css)
+        self.assertIn(" [data-st-spacer] { margin: 0; height: 0; }", css)
 
 
 class ClampingTests(unittest.TestCase):
