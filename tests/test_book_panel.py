@@ -489,17 +489,31 @@ class BookPanelContractTests(unittest.TestCase):
             self.assertEqual(panel.position_label.text(), "4 paragraphs")
 
 
-from split_translator.book_sync import BookSync
+from split_translator.book_sync import SectionMap
+from split_translator.normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE
 
 
 class BookPanelSyncWiringTests(unittest.TestCase):
-    def test_panel_builds_a_book_sync_and_anchor_store(self):
+    def test_panel_builds_a_section_map_and_anchor_store(self):
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = BookPanel(_config(d), profile)
             self.addCleanup(panel.anchor_store.shutdown)
-            self.assertIsInstance(panel.book_sync, BookSync)
+            self.assertIsInstance(panel.section_map, SectionMap)
             self.assertTrue(callable(panel._sync_from))
+
+    def test_both_views_are_given_their_section_starts(self):
+        with tempfile.TemporaryDirectory() as d:
+            panel = BookPanel(_config(d), QWebEngineProfile())
+            self.addCleanup(panel.anchor_store.shutdown)
+            self.assertEqual(
+                panel.original_view._section_starts,
+                panel.section_map.section_starts(ORIGINAL_SIDE),
+            )
+            self.assertEqual(
+                panel.translation_view._section_starts,
+                panel.section_map.section_starts(TRANSLATION_SIDE),
+            )
 
     def test_sync_disabled_does_not_raise_on_scroll(self):
         with tempfile.TemporaryDirectory() as d:
@@ -682,70 +696,75 @@ class BookPanelTabSwitchTests(unittest.TestCase):
             panel.tabs.setCurrentIndex(1)  # must not raise, must not reapply
             self.assertEqual(called, [])
 
-    def test_mirror_records_the_mapped_target_for_the_hidden_side(self):
-        # The core fix: mirroring a scroll on the active Original records the
-        # anchor-MAPPED target for the hidden Translation (not the hidden view's
-        # own drifted report). The fixture uses one book for both editions, so
-        # the mapping is identity: original "b1" maps to translation "b1". (The
-        # exact fraction is set by the anchor interpolation, so we assert the
-        # block id and that the cache and target agree.)
+    def test_mirror_records_the_section_target_for_the_hidden_side(self):
+        # Mirroring a scroll on the active Original records the section position
+        # for the hidden Translation, and caches the paragraph it falls in so
+        # close persists the right spot rather than the hidden view's drift.
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = self._panel(_config(d), profile)
-            # Original is the current tab (index 0). Stub the hidden view scroll
-            # so no real JS runs.
-            panel.translation_view.scroll_to = lambda bid, frac: None
-            bid = panel.original_document.block_ids[1]
-            panel._sync_from(panel.original_view, bid, 0.25)
-            self.assertIsNotNone(panel._translation_sync_target)
-            self.assertEqual(panel._translation_sync_target[0], bid)
-            # The cache holds the same mapped target, so close persists it.
+            calls = []
+            panel.translation_view.scroll_to_section = (
+                lambda k, s: calls.append((k, s))
+            )
+            panel._sync_from(panel.original_view, "b1", 0.25, 1, 0.3)
+            self.assertEqual(calls, [(1, 0.3)])
+            self.assertEqual(panel._translation_sync_target, (1, 0.3))
             self.assertEqual(
-                panel._translation_scroll, panel._translation_sync_target
+                panel._translation_scroll,
+                panel.section_map.paragraph_at(TRANSLATION_SIDE, 1, 0.3),
             )
 
-    def test_switch_reapplies_the_mapped_target_over_a_drifted_cache(self):
-        # Even if the scroll cache somehow held a wrong (drifted) value, the
-        # switch must prefer the mapped sync target.
+    def test_a_position_without_a_section_is_not_mirrored(self):
+        # A restored position, or a report from a page whose starts have not
+        # arrived, is cached but has nothing to pass on.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            calls = []
+            panel.translation_view.scroll_to_section = (
+                lambda k, s: calls.append((k, s))
+            )
+            panel._sync_from(panel.original_view, "b1", 0.25)
+            panel._sync_from(panel.original_view, "b1", 0.25, 99, 0.5)
+            self.assertEqual(calls, [])
+            self.assertEqual(panel._original_scroll, ("b1", 0.25))
+
+    def test_switch_reapplies_the_section_target_over_a_drifted_cache(self):
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = self._panel(_config(d), profile)
-            panel._translation_sync_target = ("b3", 0.25)
+            panel._translation_sync_target = (1, 0.25)
             panel._translation_scroll = ("b99", 0.99)  # a drifted/wrong cache
-            calls = []
+            sections, paragraphs = [], []
+            panel.translation_view.reapply_section = (
+                lambda k, s: sections.append((k, s))
+            )
             panel.translation_view.reapply_scroll = (
-                lambda b, f: calls.append((b, f))
+                lambda b, f: paragraphs.append((b, f))
             )
             panel.tabs.setCurrentIndex(1)
-            self.assertEqual(calls, [("b3", 0.25)])  # mapped target wins
+            self.assertEqual(sections, [(1, 0.25)])  # the section target wins
+            self.assertEqual(paragraphs, [])
 
     def test_hidden_view_drift_echo_is_ignored(self):
-        # A scroll reported by the hidden tab while it has a pending mapped
-        # target is a drift echo; it must not corrupt the cache or the target.
+        # A scroll reported by the hidden tab while it has a pending target is
+        # a drift echo; it must not corrupt the cache or the target.
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = self._panel(_config(d), profile)
-            # Original is current; arm a pending target for the hidden
-            # Translation and a correct cache.
-            panel._translation_sync_target = ("b3", 0.25)
+            panel._translation_sync_target = (1, 0.25)
             panel._translation_scroll = ("b3", 0.25)
-            # The hidden Translation drifts and reports a wrong end position.
-            panel._sync_from(panel.translation_view, "b99", 0.99)
-            self.assertEqual(panel._translation_scroll, ("b3", 0.25))  # untouched
-            self.assertEqual(panel._translation_sync_target, ("b3", 0.25))
+            panel._sync_from(panel.translation_view, "b99", 0.99, 2, 0.9)
+            self.assertEqual(panel._translation_scroll, ("b3", 0.25))
+            self.assertEqual(panel._translation_sync_target, (1, 0.25))
 
     def test_user_scrolling_active_tab_clears_its_sync_target(self):
-        # Once the user moves the active tab themselves, its mapped target is
-        # stale and must be cleared, so a later switch back honours the user's
-        # real position, not an old mapped one.
         with tempfile.TemporaryDirectory() as d:
             profile = QWebEngineProfile()
             panel = self._panel(_config(d), profile)
-            panel.original_view.scroll_to = lambda bid, frac: None
-            panel.translation_view.scroll_to = lambda bid, frac: None
-            panel._original_sync_target = ("b0", 0.0)  # a stale mapped target
-            bid = panel.original_document.block_ids[2]
-            panel._sync_from(panel.original_view, bid, 0.5)  # user scrolls
+            panel.translation_view.scroll_to_section = lambda k, s: None
+            panel._original_sync_target = (1, 0.0)  # a stale target
+            panel._sync_from(panel.original_view, "b2", 0.5, 1, 0.5)
             self.assertIsNone(panel._original_sync_target)
 
 
@@ -871,11 +890,25 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             panel = self._panel(_config(d), profile)
             marks = self._stub_marks(panel)
             panel.translation_document.block_ids = []
+            panel.section_map = panel._build_section_map()
             bid = panel.original_document.block_ids[1]
             panel._on_matched_block(
                 panel.original_view, panel.translation_view, bid
             )  # must not raise
             self.assertEqual(marks["trans"], [None])
+
+    def test_a_match_in_a_group_marks_the_whole_group_in_the_other(self):
+        # b1 is anchored to b1 and to b2, so it matches both.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            marks = self._stub_marks(panel)
+            panel.anchor_store.anchors = [("b1", "b1"), ("b1", "b2")]
+            panel.section_map = panel._build_section_map()
+            panel._on_matched_block(
+                panel.original_view, panel.translation_view, "b1"
+            )
+            self.assertEqual(marks["orig"], [["b1"]])
+            self.assertEqual(marks["trans"], [["b1", "b2"]])
 
     def test_zero_active_match_clears_marks(self):
         # A find that reports no active match (active=0) clears both marks rather
@@ -1041,23 +1074,45 @@ class BookPanelNormaliseTests(unittest.TestCase):
 
 
 class BookPanelEditorTests(unittest.TestCase):
-    def test_open_anchor_editor_is_callable_and_reseeds_sync(self):
+    def test_an_anchor_change_rebuilds_the_sections_and_pushes_them(self):
         with tempfile.TemporaryDirectory() as d:
-            profile = QWebEngineProfile()
-            panel = BookPanel(_config(d), profile)
+            panel = BookPanel(_config(d), QWebEngineProfile())
             self.addCleanup(panel.anchor_store.shutdown)
-            self.assertTrue(callable(panel.open_anchor_editor))
-            # Simulate an anchor change and confirm sync re-seeds without error.
-            panel.anchor_store.anchors = [
-                (
-                    panel.original_document.block_ids[0],
-                    panel.translation_document.block_ids[0],
+            panel.anchor_store.anchors = [("b1", "b1")]
+            panel._rebuild_sections()
+            expected = ["top", "b0", "b1", "b2", "end"]
+            self.assertEqual(panel.section_map.section_starts(ORIGINAL_SIDE), expected)
+            self.assertEqual(panel.original_view._section_starts, expected)
+            self.assertEqual(panel.translation_view._section_starts, expected)
+
+    def test_a_rebuild_drops_section_targets_from_the_old_map(self):
+        with tempfile.TemporaryDirectory() as d:
+            panel = BookPanel(_config(d), QWebEngineProfile())
+            self.addCleanup(panel.anchor_store.shutdown)
+            panel._original_sync_target = (2, 0.5)
+            panel._translation_sync_target = (1, 0.5)
+            panel._rebuild_sections()
+            self.assertIsNone(panel._original_sync_target)
+            self.assertIsNone(panel._translation_sync_target)
+
+    def test_a_rebuild_hands_the_new_map_to_the_open_editor(self):
+        # Closed inside the `with` block: closeEvent writes to the store, and
+        # after the directory is gone that write would recreate it.
+        with tempfile.TemporaryDirectory() as d:
+            panel = BookPanel(_config(d), QWebEngineProfile())
+            panel.open_anchor_editor()
+            try:
+                self.assertIs(panel.anchor_editor.section_map, panel.section_map)
+                panel.anchor_store.anchors = [("b1", "b1")]
+                panel._rebuild_sections()
+                self.assertIs(panel.anchor_editor.section_map, panel.section_map)
+                self.assertEqual(
+                    panel.anchor_editor.original_view._section_starts,
+                    ["top", "b0", "b1", "b2", "end"],
                 )
-            ]
-            panel._reseed_sync()
-            self.assertIn(
-                (0, 0), panel.book_sync.get_anchors()
-            )
+            finally:
+                panel.anchor_editor.close()
+                panel.anchor_store.shutdown()
 
 
 class BookPanelNormaliseSpecTests(unittest.TestCase):
@@ -1178,11 +1233,11 @@ class BookPanelLayoutTests(unittest.TestCase):
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.sync_enabled = True
             calls = []
-            panel.original_view.scroll_to = (
-                lambda bid, frac: calls.append((bid, frac))
+            panel.original_view.scroll_to_section = (
+                lambda k, s: calls.append((k, s))
             )
-            panel._sync_from(panel.translation_view, "b3", 0.25)
-            self.assertEqual(len(calls), 1)
+            panel._sync_from(panel.translation_view, "b3", 0.25, 1, 0.8)
+            self.assertEqual(calls, [(1, 0.8)])
 
     def test_normal_view_ignores_a_scroll_from_the_hidden_edition(self):
         # The control for the test above: with tabs, only the front edition
@@ -1191,10 +1246,10 @@ class BookPanelLayoutTests(unittest.TestCase):
             panel = self._panel(_config(d), QWebEngineProfile())
             panel.sync_enabled = True
             calls = []
-            panel.original_view.scroll_to = (
-                lambda bid, frac: calls.append((bid, frac))
+            panel.original_view.scroll_to_section = (
+                lambda k, s: calls.append((k, s))
             )
-            panel._sync_from(panel.translation_view, "b3", 0.25)
+            panel._sync_from(panel.translation_view, "b3", 0.25, 1, 0.8)
             self.assertEqual(calls, [])
 
     def test_book_view_ignores_the_echo_of_its_own_mirror(self):
@@ -1205,60 +1260,55 @@ class BookPanelLayoutTests(unittest.TestCase):
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.sync_enabled = True
             to_original, to_translation = [], []
-            panel.original_view.scroll_to = (
-                lambda bid, frac: to_original.append((bid, frac))
+            panel.original_view.scroll_to_section = (
+                lambda k, s: to_original.append((k, s))
             )
-            panel.translation_view.scroll_to = (
-                lambda bid, frac: to_translation.append((bid, frac))
+            panel.translation_view.scroll_to_section = (
+                lambda k, s: to_translation.append((k, s))
             )
-            panel._sync_from(panel.original_view, "b2", 0.5)
-            panel._sync_from(panel.translation_view, "b2", 0.5)
+            panel._sync_from(panel.original_view, "b2", 0.5, 1, 0.5)
+            panel._sync_from(panel.translation_view, "b2", 0.5, 1, 0.5)
             self.assertEqual(len(to_translation), 1)
             self.assertEqual(to_original, [])
 
     def test_book_view_ignores_the_echo_when_the_translation_drives(self):
-        # The same guard the other way round: the reader scrolls the
-        # translation, and the original's echo must not pull it back.
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.sync_enabled = True
             to_original, to_translation = [], []
-            panel.original_view.scroll_to = (
-                lambda bid, frac: to_original.append((bid, frac))
+            panel.original_view.scroll_to_section = (
+                lambda k, s: to_original.append((k, s))
             )
-            panel.translation_view.scroll_to = (
-                lambda bid, frac: to_translation.append((bid, frac))
+            panel.translation_view.scroll_to_section = (
+                lambda k, s: to_translation.append((k, s))
             )
-            panel._sync_from(panel.translation_view, "b2", 0.5)
-            panel._sync_from(panel.original_view, "b2", 0.5)
+            panel._sync_from(panel.translation_view, "b2", 0.5, 1, 0.5)
+            panel._sync_from(panel.original_view, "b2", 0.5, 1, 0.5)
             self.assertEqual(len(to_original), 1)
             self.assertEqual(to_translation, [])
 
     def test_book_view_hands_over_once_the_mirror_settles(self):
-        # Grabbing the other edition after a pause makes it the one that drives.
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.sync_enabled = True
             to_original = []
-            panel.original_view.scroll_to = (
-                lambda bid, frac: to_original.append((bid, frac))
+            panel.original_view.scroll_to_section = (
+                lambda k, s: to_original.append((k, s))
             )
-            panel.translation_view.scroll_to = lambda bid, frac: None
-            panel._sync_from(panel.original_view, "b2", 0.5)
+            panel.translation_view.scroll_to_section = lambda k, s: None
+            panel._sync_from(panel.original_view, "b2", 0.5, 1, 0.5)
             panel._gesture.settle()
-            panel._sync_from(panel.translation_view, "b1", 0.0)
+            panel._sync_from(panel.translation_view, "b1", 0.0, 1, 0.2)
             self.assertEqual(len(to_original), 1)
 
     def test_book_view_still_records_where_the_echoing_edition_is(self):
-        # An ignored echo still reports where that edition really is, and that
-        # is the position close persists.
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.sync_enabled = True
-            panel.original_view.scroll_to = lambda bid, frac: None
-            panel.translation_view.scroll_to = lambda bid, frac: None
-            panel._sync_from(panel.original_view, "b2", 0.5)
-            panel._sync_from(panel.translation_view, "b1", 0.75)
+            panel.original_view.scroll_to_section = lambda k, s: None
+            panel.translation_view.scroll_to_section = lambda k, s: None
+            panel._sync_from(panel.original_view, "b2", 0.5, 1, 0.5)
+            panel._sync_from(panel.translation_view, "b1", 0.75, 1, 0.3)
             self.assertEqual(panel._translation_scroll, ("b1", 0.75))
 
     def test_normal_view_has_no_gesture_guard(self):
@@ -1279,28 +1329,23 @@ class BookPanelLayoutTests(unittest.TestCase):
             self.assertIs(panel.current_view(), panel.original_view)
 
     def test_sync_from_with_no_translation_paragraphs_does_not_raise(self):
-        # A scanned or image-only PDF loads with no paragraphs at all, so
-        # there is nothing for a scroll on the original to map onto.
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d), QWebEngineProfile())
             panel.translation_document.block_ids = []
             calls = []
-            panel.translation_view.scroll_to = (
-                lambda bid, frac: calls.append((bid, frac))
+            panel.translation_view.scroll_to_section = (
+                lambda k, s: calls.append((k, s))
             )
-            panel._sync_from(panel.original_view, "b1", 0.5)  # must not raise
+            panel._sync_from(panel.original_view, "b1", 0.5, 1, 0.5)
             self.assertEqual(calls, [])
 
     def test_sync_from_with_no_original_paragraphs_does_not_raise(self):
-        # The mirror case: the original edition has no paragraphs, driven
-        # from the translation. Book view layout so the translation counts as
-        # active (a hidden tab would return before reaching the mapping).
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             panel.original_document.block_ids = []
             calls = []
-            panel.original_view.scroll_to = (
-                lambda bid, frac: calls.append((bid, frac))
+            panel.original_view.scroll_to_section = (
+                lambda k, s: calls.append((k, s))
             )
-            panel._sync_from(panel.translation_view, "b1", 0.5)  # must not raise
+            panel._sync_from(panel.translation_view, "b1", 0.5, 1, 0.5)
             self.assertEqual(calls, [])

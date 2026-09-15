@@ -203,19 +203,6 @@ class AnchorStore:
         self.anchors = [a for a in self.anchors if a[0] != original_id]
         self.save()
 
-    def resolve(
-        self, original_ids: list[str], translation_ids: list[str]
-    ) -> list[tuple[int, int]]:
-        """Convert stored id pairs to index pairs against the current id lists,
-        dropping any pair whose id is no longer present."""
-        orig_index = {bid: i for i, bid in enumerate(original_ids)}
-        trans_index = {bid: i for i, bid in enumerate(translation_ids)}
-        pairs = []
-        for original_id, translation_id in self.anchors:
-            if original_id in orig_index and translation_id in trans_index:
-                pairs.append((orig_index[original_id], trans_index[translation_id]))
-        return pairs
-
     def get_scroll(self, surface: str) -> _ScrollPair:
         """Return a surface's saved (original, translation) positions, each or
         None if not stored."""

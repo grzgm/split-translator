@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from .anchor_book_view import AnchorBookView
 from .anchor_store import EDITOR_SURFACE, AnchorStore
 from .book_loader import BookDocument, resolve_position
-from .book_sync import BookSync
+from .book_sync import SectionMap
 from .normalise_panel import NormalisePanel
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
 from .sync_gesture import SyncGesture
@@ -89,7 +89,7 @@ class AnchorEditor(QWidget):
         original_document: BookDocument,
         translation_document: BookDocument,
         anchor_store: AnchorStore,
-        book_sync: BookSync,
+        section_map: SectionMap,
         profile: QWebEngineProfile,
         on_changed,
         on_spec_changed=None,
@@ -99,7 +99,7 @@ class AnchorEditor(QWidget):
         self.original_document = original_document
         self.translation_document = translation_document
         self.anchor_store = anchor_store
-        self.book_sync = book_sync
+        self.section_map = section_map
         self._profile_ref = profile
         self._on_changed = on_changed
         # Called with (side, NormaliseSpec) whenever a multiplier changes, so
@@ -148,6 +148,7 @@ class AnchorEditor(QWidget):
         self._spec_save_timer.timeout.connect(self._save_specs)
 
         self.init_ui()
+        self._push_sections()
         self.refresh()
         self._refresh_highlights()
 
@@ -178,17 +179,17 @@ class AnchorEditor(QWidget):
         )
         self.original_view.block_clicked.connect(self._on_original_clicked)
         self.translation_view.block_clicked.connect(self._on_translation_clicked)
-        # Optional synced scrolling between the two sides (anchor-based, like the
-        # main reader). The `scrolled` signal is separate from `block_clicked`,
-        # so syncing never interferes with click-to-select.
+        # Optional synced scrolling between the two sides, by section, like the
+        # main reader. The scrolled signal is separate from block_clicked, so
+        # syncing never interferes with click-to-select.
         self.original_view.scrolled.connect(
-            lambda bid, frac, _section, _share: self._sync_from(
-                self.original_view, bid, frac
+            lambda bid, frac, section, share: self._sync_from(
+                self.original_view, bid, frac, section, share
             )
         )
         self.translation_view.scrolled.connect(
-            lambda bid, frac, _section, _share: self._sync_from(
-                self.translation_view, bid, frac
+            lambda bid, frac, section, share: self._sync_from(
+                self.translation_view, bid, frac, section, share
             )
         )
         # Each edition gets its own find bar above it. The two are independent:
@@ -324,6 +325,20 @@ class AnchorEditor(QWidget):
     def toggle_sync(self, state) -> None:
         self.sync_enabled = state == Qt.CheckState.Checked.value
 
+    def set_section_map(self, section_map: SectionMap) -> None:
+        """The owner rebuilt the sections after an anchor change. Use the new
+        map and give both views its starts."""
+        self.section_map = section_map
+        self._push_sections()
+
+    def _push_sections(self) -> None:
+        self.original_view.set_sections(
+            self.section_map.section_starts(ORIGINAL_SIDE)
+        )
+        self.translation_view.set_sections(
+            self.section_map.section_starts(TRANSLATION_SIDE)
+        )
+
     def toggle_normalise(self, state) -> None:
         # Flip paragraph-spacing normalisation on both editor views live (no
         # reload, so scroll positions are kept) and persist for this book pair
@@ -367,8 +382,16 @@ class AnchorEditor(QWidget):
         self._spec_save_timer.stop()
         self.anchor_store.set_normalise_specs(*self.normalise_panel.specs())
 
-    def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
-        """Mirror a scroll on one side to the other through the anchor mapping.
+    def _sync_from(
+        self,
+        source_view,
+        block_id: str,
+        fraction: float,
+        section: int = -1,
+        share: float = 0.0,
+    ) -> None:
+        """Mirror a scroll on one side to the other: same section, same share
+        of its height.
 
         Only the side the user last touched drives sync. A scroll from the other
         side while a mirror settles is that mirror's echo; ignoring it keeps the
@@ -384,36 +407,23 @@ class AnchorEditor(QWidget):
             return
         if not self._gesture.allow(source_view):
             return
+        # No section, or one from before the sections were rebuilt: nothing to
+        # pass on (see BookPanel._sync_from).
+        if section < 0 or section >= self.section_map.section_count:
+            return
         if source_view is self.original_view:
-            if not self.translation_document.block_ids:
-                # The translation has no text paragraphs (a scanned PDF, say),
-                # so there is nothing to map this scroll onto.
-                return
-            try:
-                index = self.original_document.block_ids.index(block_id)
-            except ValueError:
-                return
-            dst_index, dst_fraction = self.book_sync.original_to_translation(
-                index, fraction
+            other_view, other_document = (
+                self.translation_view,
+                self.translation_document,
             )
-            target_id = self.translation_document.block_ids[dst_index]
-            self._gesture.begin_mirror()
-            self.translation_view.scroll_to(target_id, dst_fraction)
         else:
-            if not self.original_document.block_ids:
-                # The original has no text paragraphs (a scanned PDF, say), so
-                # there is nothing to map this scroll onto.
-                return
-            try:
-                index = self.translation_document.block_ids.index(block_id)
-            except ValueError:
-                return
-            dst_index, dst_fraction = self.book_sync.translation_to_original(
-                index, fraction
-            )
-            target_id = self.original_document.block_ids[dst_index]
-            self._gesture.begin_mirror()
-            self.original_view.scroll_to(target_id, dst_fraction)
+            other_view, other_document = self.original_view, self.original_document
+        if not other_document.block_ids:
+            # The other edition has no text paragraphs (a scanned PDF, say),
+            # so there is nothing to follow this scroll.
+            return
+        self._gesture.begin_mirror()
+        other_view.scroll_to_section(section, share)
 
     def _on_original_clicked(self, block_id: str) -> None:
         self._selected_original = block_id

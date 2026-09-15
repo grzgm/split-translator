@@ -32,7 +32,13 @@ from pathlib import Path
 
 from split_translator.anchor_editor import AnchorEditor
 from split_translator.anchor_store import AnchorStore
-from split_translator.book_sync import BookSync
+from split_translator.book_sync import SectionMap
+
+
+def _sections(original_doc, translation_doc):
+    return SectionMap(
+        original_doc.block_ids, [], translation_doc.block_ids, [], []
+    )
 
 
 class AnchorEditorTests(unittest.TestCase):
@@ -46,14 +52,12 @@ class AnchorEditorTests(unittest.TestCase):
 
         original_doc = _doc("b")
         translation_doc = _doc("b")
-        book_sync = BookSync(
-            len(original_doc.block_ids), len(translation_doc.block_ids)
-        )
+        section_map = _sections(original_doc, translation_doc)
         editor = AnchorEditor(
             original_doc,
             translation_doc,
             store,
-            book_sync,
+            section_map,
             QWebEngineProfile(),
             on_changed,
         )
@@ -255,14 +259,12 @@ class AnchorEditorSelectionTests(unittest.TestCase):
 
         original_doc = _doc("b")
         translation_doc = _doc("b")
-        book_sync = BookSync(
-            len(original_doc.block_ids), len(translation_doc.block_ids)
-        )
+        section_map = _sections(original_doc, translation_doc)
         editor = AnchorEditor(
             original_doc,
             translation_doc,
             store,
-            book_sync,
+            section_map,
             QWebEngineProfile(),
             on_changed,
         )
@@ -326,9 +328,9 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         ids = [f"b{i}" for i in range(120)]
         html = "".join(f"<p data-stid='{x}'>p</p>" for x in ids)
         doc = BookDocument(html=html, block_ids=ids, title="T")
-        book_sync = BookSync(len(ids), len(ids))
+        section_map = _sections(doc, doc)
         editor = AnchorEditor(
-            doc, doc, store, book_sync, QWebEngineProfile(), lambda: None
+            doc, doc, store, section_map, QWebEngineProfile(), lambda: None
         )
         self.addCleanup(tmp.cleanup)
         self.addCleanup(store.shutdown)
@@ -362,6 +364,34 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         # A block id absent from the document is guarded by try/except ValueError.
         editor._sync_from(editor.original_view, "nonexistent", 0.0)
 
+    def test_the_views_are_given_their_section_starts(self):
+        editor, _ = self._editor()
+        self.assertEqual(
+            editor.original_view._section_starts, ["top", "b0", "end"]
+        )
+
+    def test_set_section_map_pushes_the_new_starts(self):
+        from split_translator.anchor_groups import build_groups
+
+        editor, _ = self._editor()
+        ids = ["b0", "b1"]
+        groups = build_groups([("b1", "b1")], ids, ids)
+        new_map = SectionMap(ids, [], ids, [], groups)
+        editor.set_section_map(new_map)
+        self.assertIs(editor.section_map, new_map)
+        self.assertEqual(
+            editor.translation_view._section_starts, ["top", "b0", "b1", "end"]
+        )
+
+    def test_a_position_without_a_section_is_not_mirrored(self):
+        editor, _ = self._editor()
+        calls = []
+        editor.translation_view.scroll_to_section = (
+            lambda k, s: calls.append((k, s))
+        )
+        editor._sync_from(editor.original_view, "b0", 0.5)
+        self.assertEqual(calls, [])
+
     def test_sync_from_with_no_translation_paragraphs_does_not_raise(self):
         # A scanned or image-only translation has no paragraphs at all, so
         # there is nothing to map a scroll on the original onto.
@@ -371,23 +401,21 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         self.addCleanup(store.shutdown)
         original_doc = _doc("b")
         translation_doc = BookDocument(html="", block_ids=[], title="T")
-        book_sync = BookSync(
-            len(original_doc.block_ids), len(translation_doc.block_ids)
-        )
+        section_map = _sections(original_doc, translation_doc)
         editor = AnchorEditor(
             original_doc,
             translation_doc,
             store,
-            book_sync,
+            section_map,
             QWebEngineProfile(),
             lambda: None,
         )
         editor.sync_enabled = True
         calls = []
-        editor.translation_view.scroll_to = (
-            lambda bid, frac: calls.append((bid, frac))
+        editor.translation_view.scroll_to_section = (
+            lambda k, s: calls.append((k, s))
         )
-        editor._sync_from(editor.original_view, "b0", 0.5)  # must not raise
+        editor._sync_from(editor.original_view, "b0", 0.5, 1, 0.5)  # must not raise
         self.assertEqual(calls, [])
 
     def test_follower_echo_does_not_reverse_drive_the_source(self):
@@ -400,23 +428,23 @@ class AnchorEditorSelectionTests(unittest.TestCase):
 
         original_calls = []
         translation_calls = []
-        editor.original_view.scroll_to = (
-            lambda bid, frac: original_calls.append((bid, frac))
+        editor.original_view.scroll_to_section = (
+            lambda k, s: original_calls.append((k, s))
         )
-        editor.translation_view.scroll_to = (
-            lambda bid, frac: translation_calls.append((bid, frac))
+        editor.translation_view.scroll_to_section = (
+            lambda k, s: translation_calls.append((k, s))
         )
 
         # Genuine user scroll on the original: it becomes the gesture owner and
         # mirrors to the translation.
-        editor._sync_from(editor.original_view, "b0", 0.0)
+        editor._sync_from(editor.original_view, "b0", 0.0, 1, 0.0)
         self.assertEqual(len(translation_calls), 1)  # mirrored to follower
         self.assertEqual(original_calls, [])  # owner not scrolled
 
         # The mirror's echo: the translation reports a scroll it did not initiate.
         # It is the follower, not the owner, so it must be ignored: the original
         # (owner) must not be scrolled back.
-        editor._sync_from(editor.translation_view, "b0", 0.0)
+        editor._sync_from(editor.translation_view, "b0", 0.0, 1, 0.0)
         self.assertEqual(original_calls, [])  # owner still never reverse-driven
 
     def test_follower_echo_is_ignored_when_the_translation_drives(self):
@@ -427,17 +455,17 @@ class AnchorEditorSelectionTests(unittest.TestCase):
 
         original_calls = []
         translation_calls = []
-        editor.original_view.scroll_to = (
-            lambda bid, frac: original_calls.append((bid, frac))
+        editor.original_view.scroll_to_section = (
+            lambda k, s: original_calls.append((k, s))
         )
-        editor.translation_view.scroll_to = (
-            lambda bid, frac: translation_calls.append((bid, frac))
+        editor.translation_view.scroll_to_section = (
+            lambda k, s: translation_calls.append((k, s))
         )
 
-        editor._sync_from(editor.translation_view, "b0", 0.0)
+        editor._sync_from(editor.translation_view, "b0", 0.0, 1, 0.0)
         self.assertEqual(len(original_calls), 1)  # mirrored to the original
 
-        editor._sync_from(editor.original_view, "b0", 0.0)
+        editor._sync_from(editor.original_view, "b0", 0.0, 1, 0.0)
         self.assertEqual(translation_calls, [])  # the driver is not scrolled back
 
     def test_touching_the_other_view_transfers_ownership(self):
@@ -449,14 +477,14 @@ class AnchorEditorSelectionTests(unittest.TestCase):
 
         original_calls = []
         translation_calls = []
-        editor.original_view.scroll_to = (
-            lambda bid, frac: original_calls.append((bid, frac))
+        editor.original_view.scroll_to_section = (
+            lambda k, s: original_calls.append((k, s))
         )
-        editor.translation_view.scroll_to = (
-            lambda bid, frac: translation_calls.append((bid, frac))
+        editor.translation_view.scroll_to_section = (
+            lambda k, s: translation_calls.append((k, s))
         )
 
-        editor._sync_from(editor.original_view, "b0", 0.0)
+        editor._sync_from(editor.original_view, "b0", 0.0, 1, 0.0)
         self.assertEqual(len(translation_calls), 1)
 
         # Simulate the in-flight window having elapsed (the user paused, then
@@ -464,7 +492,7 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         editor._gesture.settle()
 
         # Now a genuine scroll on the translation must mirror to the original.
-        editor._sync_from(editor.translation_view, "b1", 0.0)
+        editor._sync_from(editor.translation_view, "b1", 0.0, 1, 0.0)
         self.assertEqual(len(original_calls), 1)  # new owner mirrors to original
 
 
@@ -475,14 +503,12 @@ class AnchorEditorScrollMemoryTests(unittest.TestCase):
     def _editor_with_store(self, store):
         original_doc = _doc("b")
         translation_doc = _doc("b")
-        book_sync = BookSync(
-            len(original_doc.block_ids), len(translation_doc.block_ids)
-        )
+        section_map = _sections(original_doc, translation_doc)
         editor = AnchorEditor(
             original_doc,
             translation_doc,
             store,
-            book_sync,
+            section_map,
             QWebEngineProfile(),
             lambda: None,
         )
@@ -576,7 +602,7 @@ class AnchorEditorNormalisePanelTests(unittest.TestCase):
             original_doc,
             translation_doc,
             store,
-            BookSync(len(original_doc.block_ids), len(translation_doc.block_ids)),
+            _sections(original_doc, translation_doc),
             QWebEngineProfile(),
             lambda: None,
             on_spec_changed=lambda side, spec: self.announced.append((side, spec)),

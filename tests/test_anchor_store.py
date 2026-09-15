@@ -42,19 +42,6 @@ class AnchorStoreTests(unittest.TestCase):
         store.remove("b1")
         self.assertEqual(store.anchors, [("b3", "b4")])
 
-    def test_resolve_converts_ids_to_indices(self):
-        store = self._store()
-        store.add("b1", "b2")
-        pairs = store.resolve(["b0", "b1"], ["b0", "b1", "b2"])
-        # b1 is index 1 in original; b2 is index 2 in translation.
-        self.assertEqual(pairs, [(1, 2)])
-
-    def test_resolve_drops_anchor_with_missing_id(self):
-        store = self._store()
-        store.add("b9", "b2")  # b9 not in the original id list below
-        pairs = store.resolve(["b0", "b1"], ["b0", "b1", "b2"])
-        self.assertEqual(pairs, [])
-
     def test_load_malformed_starts_empty(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

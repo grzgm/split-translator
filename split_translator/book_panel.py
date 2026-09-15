@@ -1,5 +1,5 @@
 """Tabbed book panel showing original and translation editions in web views, with
-native full-text search and content-anchor scroll sync."""
+native full-text search and section-based scroll sync."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWebEngineCore import QWebEngineProfile
@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
 )
 
 from .anchor_editor import AnchorEditor
+from .anchor_groups import resolve_manual
 from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
 from .book_loader import load_book, resolve_position
-from .book_sync import BookSync
+from .book_sync import SectionMap
 from .book_view import BookView
 from .config import Config
 from .layout import LAYOUT_BOOK, normalise_layout
-from .normalise_spec import ORIGINAL_SIDE, NormaliseSpec
+from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
 from .sync_gesture import SyncGesture
 
 
@@ -62,16 +63,7 @@ class BookPanel(QFrame):
                 config.original_path,
                 config.translation_path,
             )
-            self.book_sync = BookSync(
-                len(self.original_document.block_ids),
-                len(self.translation_document.block_ids),
-            )
-            self.book_sync.set_anchors(
-                self.anchor_store.resolve(
-                    self.original_document.block_ids,
-                    self.translation_document.block_ids,
-                )
-            )
+            self.section_map = self._build_section_map()
         else:
             # No anchor store either: its file is keyed on a hash of the two
             # book paths, so building one here would leave a junk file keyed on
@@ -79,7 +71,7 @@ class BookPanel(QFrame):
             self.original_document = None
             self.translation_document = None
             self.anchor_store = None
-            self.book_sync = None
+            self.section_map = None
 
         self.anchor_editor = None
 
@@ -116,15 +108,17 @@ class BookPanel(QFrame):
             else (NormaliseSpec(), NormaliseSpec())
         )
 
-        # The anchor-mapped target the hidden tab SHOULD be at, set when a scroll
+        # The section position the hidden tab SHOULD be at, set when a scroll
         # on the active tab is mirrored. This is the source of truth for the
-        # hidden side on a tab switch: it is layout-independent (block id +
-        # fraction) and correct, unlike the hidden view's own self-reported
-        # scroll, which drifts because a hidden page lays out at a provisional
-        # width. None until the first mirror. Cleared once the user scrolls the
-        # tab themselves (their position then supersedes the mapped one).
-        self._original_sync_target: tuple[str, float] | None = None
-        self._translation_sync_target: tuple[str, float] | None = None
+        # hidden side on a tab switch: a section position is re-measured
+        # against the shown layout, unlike the hidden view's own
+        # self-reported scroll, which drifts because a hidden page lays out at a
+        # provisional width. None until the first mirror. Cleared once the
+        # user scrolls the tab themselves (their position then supersedes the
+        # mirrored one), and when the sections are rebuilt (the numbers belonged
+        # to the old sections).
+        self._original_sync_target: tuple[int, float] | None = None
+        self._translation_sync_target: tuple[int, float] | None = None
 
         # Which arrangement the two editions sit in. Set before init_ui because
         # it decides what init_ui builds, and fixed for the life of the window:
@@ -221,15 +215,16 @@ class BookPanel(QFrame):
         layout.addWidget(self._build_views(), 1)
 
         self.original_view.scrolled.connect(
-            lambda bid, frac, _section, _share: self._sync_from(
-                self.original_view, bid, frac
+            lambda bid, frac, section, share: self._sync_from(
+                self.original_view, bid, frac, section, share
             )
         )
         self.translation_view.scrolled.connect(
-            lambda bid, frac, _section, _share: self._sync_from(
-                self.translation_view, bid, frac
+            lambda bid, frac, section, share: self._sync_from(
+                self.translation_view, bid, frac, section, share
             )
         )
+        self._push_sections()
 
     def _build_views(self):
         """The container holding the two editions, in this window's layout."""
@@ -259,21 +254,26 @@ class BookPanel(QFrame):
     def _on_tab_changed(self, _index: int) -> None:
         self._update_position_label()
         # The tab that just became visible was laid out against a provisional
-        # (hidden) height, so any scroll mirrored into it while hidden baked a
-        # wrong pixel offset, and the view's own self-reported position drifted
-        # to that wrong spot. Re-apply the right block-and-fraction against the
+        # (hidden) height, so any scroll mirrored into it while hidden landed at
+        # a wrong pixel offset, and the view's own self-reported position
+        # drifted to that wrong spot. Re-apply the right position against the
         # now-visible layout; BookView re-runs it as the layout settles.
         #
-        # Prefer the anchor-mapped sync target (what sync DECIDED this tab should
-        # show) over the view's drifted scroll cache: the mapped target is
-        # layout-independent and correct, whereas the cache can hold the hidden
-        # view's wrong landing. Fall back to the cache when there is no pending
-        # mapped target (sync off, or the user last moved this tab themselves).
+        # Prefer the section target (where sync DECIDED this tab should be) over
+        # the view's drifted scroll cache. Fall back to the cache when there is
+        # no pending target (sync off, the user last moved this tab themselves,
+        # or the sections were rebuilt since).
         view = self.current_view()
         if view is self.original_view:
-            position = self._original_sync_target or self._original_scroll
+            target, position = self._original_sync_target, self._original_scroll
         else:
-            position = self._translation_sync_target or self._translation_scroll
+            target, position = (
+                self._translation_sync_target,
+                self._translation_scroll,
+            )
+        if target is not None:
+            view.reapply_section(*target)
+            return
         if position is None:
             return
         block_id, fraction = position
@@ -291,13 +291,20 @@ class BookPanel(QFrame):
             return True
         return view is self.current_view()
 
-    def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
+    def _sync_from(
+        self,
+        source_view,
+        block_id: str,
+        fraction: float,
+        section: int = -1,
+        share: float = 0.0,
+    ) -> None:
         self._update_position_label()
-        # A scroll reported by the HIDDEN tab while it has a pending mapped sync
-        # target is a drift echo of the mirrored scroll: the hidden page laid out
-        # at a provisional width, so the position it reports is wrong. Ignore it
+        # A scroll reported by the HIDDEN tab while it has a pending sync target
+        # is a drift echo of the mirrored scroll: the hidden page laid out at a
+        # provisional width, so the position it reports is wrong. Ignore it
         # entirely, so it neither corrupts the persisted cache nor bounces back
-        # as a reverse sync. The correct position is the mapped target, already
+        # as a reverse sync. The correct position is the target, already
         # recorded and re-applied on the next tab switch.
         is_hidden = not self._is_active(source_view)
         if source_view is self.original_view:
@@ -323,54 +330,46 @@ class BookPanel(QFrame):
         # the reader is scrolling.
         if self._gesture is not None and not self._gesture.allow(source_view):
             return
-        # The active tab is the one the user is moving, so its own mapped sync
-        # target is now stale: their position supersedes it. Clear it so a later
-        # switch back re-applies the user's real spot, not an old mapped one.
+        # The active tab is the one the user is moving, so its own sync target
+        # is now stale: their position supersedes it. Clear it so a later
+        # switch back re-applies the user's real spot, not an old mirrored one.
         if source_view is self.original_view:
             self._original_sync_target = None
         else:
             self._translation_sync_target = None
+        # No section: a restored position, or a page whose section starts have
+        # not arrived yet. A section this map does not have: a report measured
+        # against starts from before a rebuild. Neither can be passed on.
+        if section < 0 or section >= self.section_map.section_count:
+            return
 
         if source_view is self.original_view:
-            if not self.translation_document.block_ids:
-                # The translation has no text paragraphs (a scanned PDF, say),
-                # so there is nothing to map this scroll onto.
-                return
-            try:
-                index = self.original_document.block_ids.index(block_id)
-            except ValueError:
-                return
-            dst_index, dst_fraction = self.book_sync.original_to_translation(
-                index, fraction
-            )
-            target_id = self.translation_document.block_ids[dst_index]
-            # Record the intended (mapped) target for the hidden translation and
-            # scroll it there. The scroll itself may land wrong because the tab
-            # is hidden (provisional layout); the recorded target is what the
-            # switch re-applies against the settled layout, so it is correct.
-            # Also cache it as the side's scroll position so close-time
-            # persistence saves the right spot, not the hidden view's drift.
-            self._translation_sync_target = (target_id, dst_fraction)
-            self._translation_scroll = (target_id, dst_fraction)
-            self._begin_mirror()
-            self.translation_view.scroll_to(target_id, dst_fraction)
+            other_view = self.translation_view
+            other_side = TRANSLATION_SIDE
+            other_document = self.translation_document
         else:
-            if not self.original_document.block_ids:
-                # The original has no text paragraphs (a scanned PDF, say), so
-                # there is nothing to map this scroll onto.
-                return
-            try:
-                index = self.translation_document.block_ids.index(block_id)
-            except ValueError:
-                return
-            dst_index, dst_fraction = self.book_sync.translation_to_original(
-                index, fraction
-            )
-            target_id = self.original_document.block_ids[dst_index]
-            self._original_sync_target = (target_id, dst_fraction)
-            self._original_scroll = (target_id, dst_fraction)
-            self._begin_mirror()
-            self.original_view.scroll_to(target_id, dst_fraction)
+            other_view = self.original_view
+            other_side = ORIGINAL_SIDE
+            other_document = self.original_document
+        if not other_document.block_ids:
+            # The other edition has no text paragraphs (a scanned PDF, say), so
+            # there is nothing to follow this scroll.
+            return
+        # The same section at the same share of its height, passed unchanged:
+        # both editions measure their own sections, so no mapping runs here.
+        # Record it as the other side's target (re-applied on a tab switch,
+        # since a hidden tab's scroll can land wrong) and cache the paragraph it
+        # falls in, so close persists the right spot and not a hidden drift.
+        target = (section, share)
+        position = self.section_map.paragraph_at(other_side, section, share)
+        if other_view is self.translation_view:
+            self._translation_sync_target = target
+            self._translation_scroll = position
+        else:
+            self._original_sync_target = target
+            self._original_scroll = position
+        self._begin_mirror()
+        other_view.scroll_to_section(section, share)
 
     def _begin_mirror(self) -> None:
         """Open the echo window just before scrolling the other edition. Only
@@ -521,45 +520,58 @@ class BookPanel(QFrame):
             other.clear_search_mark()
             return
         active.mark_search_blocks([block_id])
-        # Mirror the mark to the anchor-equivalent block in the other edition.
-        # Marking is a layout-independent CSS toggle, so it is safe on the hidden
-        # tab (unlike a scroll, it cannot drift); the mark is already in place
+        # Mark the counterpart paragraphs in the other edition. Marking is a
+        # layout-independent CSS toggle, so it is safe on the hidden tab
+        # (unlike a scroll, it cannot drift); the mark is already in place
         # when the user switches to it. Only mirror when sync is on, consistent
         # with scroll sync; otherwise clear the other side's stale mark.
         if not self.sync_enabled:
             other.clear_search_mark()
             return
-        if active is self.original_view:
-            src_ids = self.original_document.block_ids
-            dst_ids = self.translation_document.block_ids
-            mapper = self.book_sync.original_block_to_translation
+        side = ORIGINAL_SIDE if active is self.original_view else TRANSLATION_SIDE
+        # A paragraph in a group marks the whole group on the other side;
+        # elsewhere, the paragraph at the same share of the section's text.
+        counterpart = self.section_map.counterpart(side, block_id)
+        if counterpart:
+            other.mark_search_blocks(counterpart)
         else:
-            src_ids = self.translation_document.block_ids
-            dst_ids = self.original_document.block_ids
-            mapper = self.book_sync.translation_block_to_original
-        if not dst_ids:
-            # The other edition has no text paragraphs (a scanned PDF, say),
-            # so there is nothing to mark there.
             other.clear_search_mark()
-            return
-        try:
-            index = src_ids.index(block_id)
-        except ValueError:
-            other.clear_search_mark()
-            return
-        # Map whole-block to whole-block (centre + round), so the marked
-        # translation section is the one the original section overlaps, not the
-        # block before it that a top-edge + truncate mapping would pick.
-        dst_index = mapper(index)
-        other.mark_search_blocks([dst_ids[dst_index]])
 
-    def _reseed_sync(self) -> None:
-        self.book_sync.set_anchors(
-            self.anchor_store.resolve(
-                self.original_document.block_ids,
-                self.translation_document.block_ids,
-            )
+    def _build_section_map(self) -> SectionMap:
+        """Sections from the anchors as they stand. An anchor that overlaps or
+        crosses earlier ones is left out of sync (the anchor editor lists it)."""
+        original = self.original_document
+        translation = self.translation_document
+        groups, _conflicting = resolve_manual(
+            self.anchor_store.anchors, original.block_ids, translation.block_ids
         )
+        return SectionMap(
+            original.block_ids,
+            original.block_texts,
+            translation.block_ids,
+            translation.block_texts,
+            groups,
+        )
+
+    def _push_sections(self) -> None:
+        """Hand each view its section starts, live, with no reload."""
+        self.original_view.set_sections(
+            self.section_map.section_starts(ORIGINAL_SIDE)
+        )
+        self.translation_view.set_sections(
+            self.section_map.section_starts(TRANSLATION_SIDE)
+        )
+
+    def _rebuild_sections(self) -> None:
+        """The anchors changed in the editor. Rebuild the sections, push them to
+        the reader's views and to the open editor, which uses the same map."""
+        self.section_map = self._build_section_map()
+        # Section numbers from the old map point at the wrong place now.
+        self._original_sync_target = None
+        self._translation_sync_target = None
+        self._push_sections()
+        if self.anchor_editor is not None:
+            self.anchor_editor.set_section_map(self.section_map)
 
     def open_anchor_editor(self) -> None:
         if not self.has_books:
@@ -569,9 +581,9 @@ class BookPanel(QFrame):
                 self.original_document,
                 self.translation_document,
                 self.anchor_store,
-                self.book_sync,
+                self.section_map,
                 self.profile,
-                self._reseed_sync,
+                self._rebuild_sections,
                 on_spec_changed=self._apply_normalise_spec,
             )
             self.anchor_editor.setWindowTitle("Anchor editor")
