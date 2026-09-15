@@ -56,7 +56,7 @@ _IMAGE_TAGS = frozenset({"img", "svg", "image"})
 
 # Characters that take no room on the page: zero-width spaces and joiners, the
 # byte order mark and the soft hyphen.
-_ZERO_WIDTH_RE = re.compile("[​‌‍⁠﻿­]")
+_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 

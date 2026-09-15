@@ -116,7 +116,7 @@ class ParagraphIdTests(unittest.TestCase):
         html = (
             "<p>Tom &amp; <i>Jerry</i>\n  here</p>"
             "<p>line one<br/>line two</p>"
-            "<p>soft­hyphen</p>"
+            "<p>soft\u00adhyphen</p>"
         )
         _out, _ids, texts = assign_block_ids(html)
         self.assertEqual(
