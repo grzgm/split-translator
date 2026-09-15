@@ -64,13 +64,14 @@ class BookViewConstructionTests(unittest.TestCase):
         # scroll_to suppresses its echoed scrollPositionChanged, so the restore
         # must re-announce the position; otherwise the only thing a listener
         # sees from load is the document top, which would be persisted on close.
+        # A restored position has no section, so it is never mirrored.
         profile = QWebEngineProfile()
         view = BookView(_doc(), profile, initial_scroll=("b1", 0.5))
         view.scroll_to = lambda bid, frac: None  # stub out the JS scroll
         emitted = []
-        view.scrolled.connect(lambda bid, frac: emitted.append((bid, frac)))
+        view.scrolled.connect(lambda *args: emitted.append(args))
         view._restore_initial_scroll(True)
-        self.assertEqual(emitted, [("b1", 0.5)])
+        self.assertEqual(emitted, [("b1", 0.5, -1, 0.0)])
 
     def test_restore_waits_for_a_successful_load(self):
         # A failed first load (ok=False) must not consume the one-shot: a later
@@ -164,18 +165,102 @@ class BookViewReapplyScrollTests(unittest.TestCase):
         self.assertEqual(view._pending_reapply, ("b1", 0.5))
 
 
+class BookViewSectionTests(unittest.TestCase):
+    def test_a_scroll_report_carries_both_positions(self):
+        import json
+
+        view = BookView(_doc(), QWebEngineProfile())
+        emitted = []
+        view.scrolled.connect(lambda *args: emitted.append(args))
+        view._on_scroll_state(
+            json.dumps({"id": "b1", "fraction": 0.5, "section": 2, "share": 0.25})
+        )
+        self.assertEqual(emitted, [("b1", 0.5, 2, 0.25)])
+
+    def test_a_report_without_a_section_says_minus_one(self):
+        import json
+
+        view = BookView(_doc(), QWebEngineProfile())
+        emitted = []
+        view.scrolled.connect(lambda *args: emitted.append(args))
+        view._on_scroll_state(json.dumps({"id": "b1", "fraction": 0.5}))
+        self.assertEqual(emitted, [("b1", 0.5, -1, 0.0)])
+
+    def test_set_sections_sends_the_starts_and_remembers_them(self):
+        view = BookView(_doc(), QWebEngineProfile())
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view.set_sections(["top", "b0", "end"])
+        self.assertEqual(view._section_starts, ["top", "b0", "end"])
+        self.assertIn('["top", "b0", "end"]', calls[-1])
+
+    def test_a_load_reapplies_the_sections(self):
+        # Starts pushed before the page has loaded would be lost with it.
+        view = BookView(_doc(), QWebEngineProfile())
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view.set_sections(["top", "b0", "end"])
+        calls.clear()
+        view._inject_search_mark(True)
+        self.assertTrue(any('["top", "b0", "end"]' in js for js in calls))
+
+    def test_scroll_to_section_sends_the_position_and_suppresses_the_echo(self):
+        view = BookView(_doc(), QWebEngineProfile())
+        calls = []
+        view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
+        view.scroll_to_section(2, 0.25)
+        self.assertTrue(view._suppress_scroll)
+        self.assertIn("(2, 0.25)", calls[-1])
+
+    def test_reapply_section_scrolls_now_and_arms_a_pending_reapply(self):
+        view = BookView(_doc(), QWebEngineProfile())
+        calls = []
+        view.scroll_to_section = lambda k, s: calls.append((k, s))
+        view._pending_reapply = ("b1", 0.5)
+        view.reapply_section(2, 0.25)
+        self.assertEqual(calls, [(2, 0.25)])
+        self.assertEqual(view._pending_section, (2, 0.25))
+        self.assertIsNone(view._pending_reapply)
+
+    def test_reapply_scroll_drops_a_pending_section(self):
+        view = BookView(_doc(), QWebEngineProfile())
+        view.scroll_to = lambda bid, frac: None
+        view._pending_section = (2, 0.25)
+        view.reapply_scroll("b1", 0.5)
+        self.assertIsNone(view._pending_section)
+
+    def test_a_reflow_reruns_the_pending_section_when_visible(self):
+        from PySide6.QtCore import QSizeF
+
+        view = BookView(_doc(), QWebEngineProfile())
+        view.isVisible = lambda: True
+        view._pending_section = (2, 0.25)
+        calls = []
+        view.scroll_to_section = lambda k, s: calls.append((k, s))
+        view._on_contents_size_changed(QSizeF(800, 1000))
+        self.assertEqual(calls, [(2, 0.25)])
+
+    def test_a_user_scroll_clears_the_pending_section(self):
+        view = BookView(_doc(), QWebEngineProfile())
+        view.page().runJavaScript = lambda *a, **k: None
+        view._pending_section = (2, 0.25)
+        view._suppress_scroll = False
+        view.request_scroll_state()
+        self.assertIsNone(view._pending_section)
+
+
 class BookViewSearchMarkTests(unittest.TestCase):
-    def test_mark_search_block_runs_the_toggle_js_with_the_id(self):
+    def test_mark_search_blocks_runs_the_toggle_js_with_the_ids(self):
         profile = QWebEngineProfile()
         view = BookView(_doc(), profile)
         calls = []
         view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
-        view.mark_search_block("b1")
+        view.mark_search_blocks(["b0", "b1"])
         self.assertEqual(len(calls), 1)
         self.assertIn("st-search-block", calls[0])
-        self.assertIn('"b1"', calls[0])  # id JSON-quoted into the IIFE arg
+        self.assertIn('["b0", "b1"]', calls[0])
 
-    def test_clear_search_mark_runs_the_toggle_js_with_empty_id(self):
+    def test_clear_search_mark_runs_the_toggle_js_with_no_ids(self):
         profile = QWebEngineProfile()
         view = BookView(_doc(), profile)
         calls = []
@@ -183,7 +268,7 @@ class BookViewSearchMarkTests(unittest.TestCase):
         view.clear_search_mark()
         self.assertEqual(len(calls), 1)
         self.assertIn("st-search-block", calls[0])
-        self.assertIn('("")', calls[0])  # cleared: empty id passed to the IIFE
+        self.assertIn("([])", calls[0])
 
     def test_matched_block_id_forwards_the_blocks_id_to_the_callback(self):
         # The occurrence-count JS returns the block id; matched_block_id forwards
@@ -675,8 +760,8 @@ class BookPanelSearchMarkTests(unittest.TestCase):
         # Record mark/clear calls per view; stub matched_block_id so the active
         # view reports a canned block without running real page JS.
         marks = {"orig": [], "trans": []}
-        panel.original_view.mark_search_block = lambda bid: marks["orig"].append(bid)
-        panel.translation_view.mark_search_block = lambda bid: marks["trans"].append(bid)
+        panel.original_view.mark_search_blocks = lambda ids: marks["orig"].append(ids)
+        panel.translation_view.mark_search_blocks = lambda ids: marks["trans"].append(ids)
         panel.original_view.clear_search_mark = lambda: marks["orig"].append(None)
         panel.translation_view.clear_search_mark = lambda: marks["trans"].append(None)
         return marks
@@ -695,8 +780,8 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             )
             panel.search_term = "needle"
             panel._mark_current_match(1, 1)
-            self.assertEqual(marks["orig"], [bid])
-            self.assertEqual(marks["trans"], [bid])  # identity mapping
+            self.assertEqual(marks["orig"], [[bid]])
+            self.assertEqual(marks["trans"], [[bid]])  # identity mapping
 
     def test_no_match_clears_both_marks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -733,7 +818,7 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             )
             panel.search_term = "needle"
             panel._mark_current_match(1, 1)
-            self.assertEqual(marks["orig"], [bid])
+            self.assertEqual(marks["orig"], [[bid]])
             self.assertEqual(marks["trans"], [None])  # other side cleared, not marked
 
     def test_blank_search_clears_both_marks(self):
@@ -828,8 +913,8 @@ class BookPanelForceOriginalSearchTests(unittest.TestCase):
             lambda term, forward, cb: finds["trans"].append((term, forward))
         )
         panel.original_view.matched_block_id = lambda term, index, cb: cb("")
-        panel.original_view.mark_search_block = lambda bid: None
-        panel.translation_view.mark_search_block = lambda bid: None
+        panel.original_view.mark_search_blocks = lambda ids: None
+        panel.translation_view.mark_search_blocks = lambda ids: None
         panel.original_view.clear_search_mark = lambda: None
         panel.translation_view.clear_search_mark = lambda: None
         return finds

@@ -11,19 +11,83 @@ from .book_loader import BookDocument
 from .book_render import RenderedBook
 from .normalise_spec import NormaliseSpec
 
-# Reports the block at the viewport CENTRE and how far the centre has scrolled
-# through it (0.0 at its top, approaching 1.0 at the next block). The centre, not
-# the top edge, is the reading position: aligning what the reader is looking at
-# (mid-screen) keeps the two editions matched even though their paragraphs differ
-# in length, whereas aligning the top edge only ever lines up the top line.
-# Returns a JSON string: runJavaScript delivers a bare JS object as an empty
-# string, so the payload must be stringified and parsed back in Python.
+# Shared by the section scripts. A section start is a paragraph element or one
+# of two markers: 'top' for the document top and 'end' for the document end.
+# Positions are read live from the layout, so a resize or a Normalise change
+# needs nothing extra. getBoundingClientRect plus scrollY is the element's
+# document position even inside a positioned wrapper, where offsetTop is not.
+_SECTION_GEOMETRY_JS = """
+    function __stTop(mark) {
+        if (mark === 'top') return 0;
+        if (mark === 'end') return document.documentElement.scrollHeight;
+        return mark.getBoundingClientRect().top + window.scrollY;
+    }
+    function __stHeight(marks, k) {
+        var next = k + 1 < marks.length
+            ? __stTop(marks[k + 1])
+            : document.documentElement.scrollHeight;
+        return Math.max(0, next - __stTop(marks[k]));
+    }
+"""
+
+# Stores the section starts, in document order, for the two scripts below. The
+# ids are looked up once here, through one pass over the paragraphs, rather
+# than once per scroll. %(starts)s is a JSON list of paragraph ids and markers.
+_SET_SECTIONS_JS = """
+(function(starts) {
+    var byId = {};
+    var blocks = document.querySelectorAll('[data-stid]');
+    for (var i = 0; i < blocks.length; i++) {
+        byId[blocks[i].getAttribute('data-stid')] = blocks[i];
+    }
+    var marks = [];
+    for (var j = 0; j < starts.length; j++) {
+        var start = starts[j];
+        marks.push(start === 'top' || start === 'end'
+            ? start : (byId[start] || 'end'));
+    }
+    window.__stSections = marks;
+})(%(starts)s);
+"""
+
+# Reports the viewport CENTRE twice. The paragraph position is the paragraph the
+# centre is in and how far the centre has passed through the span to the next
+# paragraph (0.0 at its top); saved reading positions use it. The section
+# position is the section the centre is in (the last start at or above it, so
+# a section with no height is passed over) and the share of that section's
+# height the centre has passed; sync hands it to the other edition unchanged.
+# The section is -1 until the section starts have been set.
+# The centre, not the top edge, is the reading position: aligning what the
+# reader is looking at keeps the editions matched even though their paragraphs
+# differ in length. Returns a JSON string: runJavaScript delivers a bare JS
+# object as an empty string.
 _SCROLL_STATE_JS = """
 (function() {
+    __SECTION_GEOMETRY__
+    var anchorY = window.scrollY + window.innerHeight / 2;
+    var section = -1;
+    var share = 0;
+    var marks = window.__stSections;
+    if (marks && marks.length) {
+        var lo = 0;
+        var hi = marks.length - 1;
+        while (lo < hi) {
+            var mid = Math.ceil((lo + hi) / 2);
+            if (__stTop(marks[mid]) <= anchorY) lo = mid;
+            else hi = mid - 1;
+        }
+        section = lo;
+        var height = __stHeight(marks, lo);
+        share = height > 0 ? (anchorY - __stTop(marks[lo])) / height : 0;
+        if (share < 0) share = 0;
+        if (share > 1) share = 1;
+    }
     var blocks = Array.prototype.slice.call(
         document.querySelectorAll('[data-stid]'));
-    if (!blocks.length) return JSON.stringify({id: "", fraction: 0});
-    var anchorY = window.scrollY + window.innerHeight / 2;
+    if (!blocks.length) {
+        return JSON.stringify(
+            {id: "", fraction: 0, section: section, share: share});
+    }
     var current = blocks[0];
     for (var i = 0; i < blocks.length; i++) {
         if (blocks[i].offsetTop <= anchorY) current = blocks[i];
@@ -39,10 +103,24 @@ _SCROLL_STATE_JS = """
     if (fraction < 0) fraction = 0;
     if (fraction > 1) fraction = 1;
     return JSON.stringify({
-        id: current.getAttribute("data-stid"), fraction: fraction
+        id: current.getAttribute("data-stid"), fraction: fraction,
+        section: section, share: share
     });
 })();
-"""
+""".replace("__SECTION_GEOMETRY__", _SECTION_GEOMETRY_JS)
+
+# Scrolls so a section position sits at the viewport centre, the inverse of
+# the section half of _SCROLL_STATE_JS. Does nothing until the section starts
+# are set, or for a section the page does not have.
+_SCROLL_TO_SECTION_JS = """
+(function(section, share) {
+    __SECTION_GEOMETRY__
+    var marks = window.__stSections;
+    if (!marks || section < 0 || section >= marks.length) return;
+    var point = __stTop(marks[section]) + share * __stHeight(marks, section);
+    window.scrollTo(0, point - window.innerHeight / 2);
+})(%(section)s, %(share)s);
+""".replace("__SECTION_GEOMETRY__", _SECTION_GEOMETRY_JS)
 
 # Scrolls so the given block-and-fraction point sits at the viewport CENTRE, the
 # inverse of _SCROLL_STATE_JS: the point that was mid-screen in the source is put
@@ -80,8 +158,8 @@ _TOPMOST_ID_JS = """
 """
 
 # Injected once per load: adds the search-block overlay style. The reader marks
-# the section holding the current find match (and its anchor-equivalent in the
-# other edition) by toggling this class. The class name is distinct from the
+# the section holding the current find match (and its counterpart paragraphs in
+# the other edition) by toggling this class. The class name is distinct from the
 # anchor editor's classes so the two never clash if a view ever carries both.
 _SEARCH_STYLE_JS = """
 (function() {
@@ -120,20 +198,23 @@ _NORMALISE_STYLE_JS = """
 })(%(css)s, %(enabled)s);
 """
 
-# Toggles the search-block class. Self-contained (no dependency on a pre-injected
-# helper), so a mark or clear issued before the style injection still works; it
-# just lacks the colour until the style lands on load. %(id)s is a JSON-quoted
-# block id, or '""' to only clear.
-_MARK_BLOCK_JS = """
-(function(id) {
+# Toggles the search-block class: clears every mark, then marks each given
+# paragraph. Self-contained (no dependency on a pre-injected helper), so a mark
+# or clear issued before the style injection still works; it just lacks the
+# colour until the style lands on load. %(ids)s is a JSON list of paragraph
+# ids, empty to only clear.
+_MARK_BLOCKS_JS = """
+(function(ids) {
     var els = document.querySelectorAll('.st-search-block');
     for (var i = 0; i < els.length; i++) {
         els[i].classList.remove('st-search-block');
     }
-    if (!id) return;
-    var el = document.querySelector('[data-stid=' + JSON.stringify(id) + ']');
-    if (el) el.classList.add('st-search-block');
-})(%(id)s);
+    for (var j = 0; j < ids.length; j++) {
+        var el = document.querySelector(
+            '[data-stid=' + JSON.stringify(ids[j]) + ']');
+        if (el) el.classList.add('st-search-block');
+    }
+})(%(ids)s);
 """
 
 # The text a search match can be counted in, split into *runs*. A run is a
@@ -311,9 +392,11 @@ _MATCH_SENTENCE_JS = """
 
 
 class BookView(QWebEngineView):
-    """Renders one edition's HTML; exposes scroll position as (block_id, fraction)."""
+    """Renders one edition's HTML; reports scroll positions as a paragraph position and a section position."""
 
-    scrolled = Signal(str, float)
+    # Paragraph id, share of the span to the next paragraph, section index
+    # (-1 when unknown), share of that section's height. See _SCROLL_STATE_JS.
+    scrolled = Signal(str, float, int, float)
 
     def __init__(
         self,
@@ -339,6 +422,12 @@ class BookView(QWebEngineView):
         # hidden tab lays out against a provisional height, so a scroll computed
         # then bakes a wrong pixel offset; this is re-run on the next reflow.
         self._pending_reapply: tuple[str, float] | None = None
+        # A pending section position to re-apply once the layout settles, the
+        # section counterpart of _pending_reapply. At most one of the two is set.
+        self._pending_section: tuple[int, float] | None = None
+        # The section starts this page measures against, re-sent on every load
+        # because a page forgets them when it reloads. Empty until set.
+        self._section_starts: list[str] = []
         # The book HTML is loaded from a temp file, not setHtml: a full novel's
         # HTML is larger than setHtml's ~2 MB data-URL cap and would silently
         # fail to render (loadFinished ok=False, blank view). See book_render.
@@ -378,7 +467,9 @@ class BookView(QWebEngineView):
         # listener (the panel's scroll cache) ever sees from load is the top of
         # the document, which would then be persisted on close, wiping the saved
         # spot. Emitting here keeps that cache at the genuine restored position.
-        self.scrolled.emit(block_id, fraction)
+        # A restored position has no section (-1), so it is recorded but never
+        # mirrored.
+        self.scrolled.emit(block_id, fraction, -1, 0.0)
 
     def request_scroll_state(self) -> None:
         """Read the current scroll position and emit `scrolled`."""
@@ -388,6 +479,7 @@ class BookView(QWebEngineView):
         # pending re-apply is stale: drop it rather than yank the user back on
         # the next reflow.
         self._pending_reapply = None
+        self._pending_section = None
         self.page().runJavaScript(_SCROLL_STATE_JS, self._on_scroll_state)
 
     def _on_scroll_state(self, payload) -> None:
@@ -396,7 +488,12 @@ class BookView(QWebEngineView):
         data = json.loads(payload)
         block_id = data.get("id", "")
         if block_id:
-            self.scrolled.emit(block_id, float(data.get("fraction", 0.0)))
+            self.scrolled.emit(
+                block_id,
+                float(data.get("fraction", 0.0)),
+                int(data.get("section", -1)),
+                float(data.get("share", 0.0)),
+            )
 
     def scroll_to(self, block_id: str, fraction: float) -> None:
         """Scroll so the viewport top sits `fraction` from `block_id` toward the
@@ -411,19 +508,38 @@ class BookView(QWebEngineView):
     def _release_suppress(self) -> None:
         self._suppress_scroll = False
 
+    def scroll_to_section(self, section: int, share: float) -> None:
+        """Scroll so `share` of section `section`'s height sits at the viewport
+        centre. Suppresses the echoed scroll event briefly, like scroll_to."""
+        self._suppress_scroll = True
+        js = _SCROLL_TO_SECTION_JS % {
+            "section": int(section),
+            "share": float(share),
+        }
+        self.page().runJavaScript(js, lambda _=None: self._release_suppress())
+
     def reapply_scroll(self, block_id: str, fraction: float) -> None:
         """Re-scroll to a cached position once this view is shown. Scrolls now
         as a best effort and re-runs on the next reflow, so the final offset is
         computed against the settled (visible) layout, not a stale hidden one."""
         self._pending_reapply = (block_id, fraction)
+        self._pending_section = None
         self.scroll_to(block_id, fraction)
+
+    def reapply_section(self, section: int, share: float) -> None:
+        """Re-scroll to a section position once this view is shown: now as a
+        best effort, and again on the next reflow, like reapply_scroll."""
+        self._pending_section = (section, share)
+        self._pending_reapply = None
+        self.scroll_to_section(section, share)
 
     def _on_contents_size_changed(self, _size) -> None:
         # Fires whenever the page height changes, including the reflow when a
-        # hidden tab is shown. Re-run the pending scroll against the now-settled
-        # layout. Cleared on the matching scrollPositionChanged, not here, so a
-        # multi-step settle keeps re-applying until the height stops changing.
-        if self._pending_reapply is None:
+        # hidden tab is shown. Re-run the pending scroll or section position
+        # against the now-settled layout. Cleared on the matching
+        # scrollPositionChanged, not here, so a multi-step settle keeps
+        # re-applying until the height stops changing.
+        if self._pending_reapply is None and self._pending_section is None:
             return
         # Only scroll while this view is the visible tab. A reflow can fire on a
         # hidden tab (a window resize, or the tab being hidden again mid-settle);
@@ -432,8 +548,12 @@ class BookView(QWebEngineView):
         # stays armed, so the next time the tab is shown it is re-applied.
         if not self.isVisible():
             return
-        block_id, fraction = self._pending_reapply
-        self.scroll_to(block_id, fraction)
+        if self._pending_reapply is not None:
+            block_id, fraction = self._pending_reapply
+            self.scroll_to(block_id, fraction)
+        else:
+            section, share = self._pending_section
+            self.scroll_to_section(section, share)
 
     def _inject_search_mark(self, ok: bool) -> None:
         # Add the overlay style on every successful load (idempotent: the style
@@ -446,6 +566,9 @@ class BookView(QWebEngineView):
         # the initial load) keeps the setting rather than reverting to the book's
         # raw spacing.
         self._apply_normalise()
+        # A load replaces the page, and the section starts with it.
+        if self._section_starts:
+            self._apply_sections()
 
     def _apply_normalise(self) -> None:
         # Inject (once) the normalisation style element, set its text from this
@@ -474,14 +597,28 @@ class BookView(QWebEngineView):
         self._normalise_spec = spec
         self._apply_normalise()
 
-    def mark_search_block(self, block_id: str) -> None:
-        """Highlight the block holding the current search match (clears any prior
-        mark first). An empty id just clears."""
-        self.page().runJavaScript(_MARK_BLOCK_JS % {"id": json.dumps(block_id)})
+    def set_sections(self, starts: list[str]) -> None:
+        """Give the page the section starts it measures against (see
+        book_sync.SectionMap.section_starts). Live, no reload; remembered and
+        re-sent on the next load."""
+        self._section_starts = list(starts)
+        self._apply_sections()
+
+    def _apply_sections(self) -> None:
+        self.page().runJavaScript(
+            _SET_SECTIONS_JS % {"starts": json.dumps(self._section_starts)}
+        )
+
+    def mark_search_blocks(self, block_ids: list[str]) -> None:
+        """Highlight the given paragraphs (clears any prior mark first). An
+        empty list just clears."""
+        self.page().runJavaScript(
+            _MARK_BLOCKS_JS % {"ids": json.dumps(list(block_ids))}
+        )
 
     def clear_search_mark(self) -> None:
         """Remove the search-block highlight."""
-        self.page().runJavaScript(_MARK_BLOCK_JS % {"id": '""'})
+        self.page().runJavaScript(_MARK_BLOCKS_JS % {"ids": "[]"})
 
     def matched_block_id(self, term: str, index: int, callback) -> None:
         """Find the block holding the `index`-th (1-based) match for `term` and

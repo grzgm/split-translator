@@ -182,10 +182,14 @@ class AnchorEditor(QWidget):
         # main reader). The `scrolled` signal is separate from `block_clicked`,
         # so syncing never interferes with click-to-select.
         self.original_view.scrolled.connect(
-            lambda bid, frac: self._sync_from(self.original_view, bid, frac)
+            lambda bid, frac, _section, _share: self._sync_from(
+                self.original_view, bid, frac
+            )
         )
         self.translation_view.scrolled.connect(
-            lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
+            lambda bid, frac, _section, _share: self._sync_from(
+                self.translation_view, bid, frac
+            )
         )
         # Each edition gets its own find bar above it. The two are independent:
         # one searches the original, the other the translation.

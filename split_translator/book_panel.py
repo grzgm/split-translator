@@ -221,10 +221,14 @@ class BookPanel(QFrame):
         layout.addWidget(self._build_views(), 1)
 
         self.original_view.scrolled.connect(
-            lambda bid, frac: self._sync_from(self.original_view, bid, frac)
+            lambda bid, frac, _section, _share: self._sync_from(
+                self.original_view, bid, frac
+            )
         )
         self.translation_view.scrolled.connect(
-            lambda bid, frac: self._sync_from(self.translation_view, bid, frac)
+            lambda bid, frac, _section, _share: self._sync_from(
+                self.translation_view, bid, frac
+            )
         )
 
     def _build_views(self):
@@ -516,7 +520,7 @@ class BookPanel(QFrame):
             active.clear_search_mark()
             other.clear_search_mark()
             return
-        active.mark_search_block(block_id)
+        active.mark_search_blocks([block_id])
         # Mirror the mark to the anchor-equivalent block in the other edition.
         # Marking is a layout-independent CSS toggle, so it is safe on the hidden
         # tab (unlike a scroll, it cannot drift); the mark is already in place
@@ -547,7 +551,7 @@ class BookPanel(QFrame):
         # translation section is the one the original section overlaps, not the
         # block before it that a top-edge + truncate mapping would pick.
         dst_index = mapper(index)
-        other.mark_search_block(dst_ids[dst_index])
+        other.mark_search_blocks([dst_ids[dst_index]])
 
     def _reseed_sync(self) -> None:
         self.book_sync.set_anchors(
