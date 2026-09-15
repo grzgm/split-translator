@@ -391,6 +391,27 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         editor._sync_from(editor.translation_view, "b0", 0.0)
         self.assertEqual(original_calls, [])  # owner still never reverse-driven
 
+    def test_follower_echo_is_ignored_when_the_translation_drives(self):
+        # The same guard the other way round: the user drives the translation,
+        # and the original's echo of the mirror must not scroll it back.
+        editor, _ = self._editor()
+        editor.sync_enabled = True
+
+        original_calls = []
+        translation_calls = []
+        editor.original_view.scroll_to = (
+            lambda bid, frac: original_calls.append((bid, frac))
+        )
+        editor.translation_view.scroll_to = (
+            lambda bid, frac: translation_calls.append((bid, frac))
+        )
+
+        editor._sync_from(editor.translation_view, "b0", 0.0)
+        self.assertEqual(len(original_calls), 1)  # mirrored to the original
+
+        editor._sync_from(editor.original_view, "b0", 0.0)
+        self.assertEqual(translation_calls, [])  # the driver is not scrolled back
+
     def test_touching_the_other_view_transfers_ownership(self):
         # "Last view the user touched" owns the gesture. After the in-flight
         # window expires, a genuine scroll on the other side becomes the new owner

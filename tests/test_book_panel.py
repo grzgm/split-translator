@@ -1137,6 +1137,24 @@ class BookPanelLayoutTests(unittest.TestCase):
             self.assertEqual(len(to_translation), 1)
             self.assertEqual(to_original, [])
 
+    def test_book_view_ignores_the_echo_when_the_translation_drives(self):
+        # The same guard the other way round: the reader scrolls the
+        # translation, and the original's echo must not pull it back.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
+            panel.sync_enabled = True
+            to_original, to_translation = [], []
+            panel.original_view.scroll_to = (
+                lambda bid, frac: to_original.append((bid, frac))
+            )
+            panel.translation_view.scroll_to = (
+                lambda bid, frac: to_translation.append((bid, frac))
+            )
+            panel._sync_from(panel.translation_view, "b2", 0.5)
+            panel._sync_from(panel.original_view, "b2", 0.5)
+            self.assertEqual(len(to_original), 1)
+            self.assertEqual(to_translation, [])
+
     def test_book_view_hands_over_once_the_mirror_settles(self):
         # Grabbing the other edition after a pause makes it the one that drives.
         with tempfile.TemporaryDirectory() as d:
