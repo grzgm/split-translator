@@ -22,6 +22,7 @@ from .book_view import BookView
 from .config import Config
 from .layout import LAYOUT_BOOK, normalise_layout
 from .normalise_spec import ORIGINAL_SIDE, NormaliseSpec
+from .sync_gesture import SyncGesture
 
 
 class BookPanel(QFrame):
@@ -123,6 +124,11 @@ class BookPanel(QFrame):
         # it decides what init_ui builds, and fixed for the life of the window:
         # choosing the other view rebuilds it (see layout.py).
         self._layout = normalise_layout(config.layout)
+
+        # With both editions on screen, a mirrored scroll echoes back from the
+        # edition it moved, so only the edition last touched may drive (see
+        # sync_gesture). Tabs need no guard: a hidden tab never mirrors.
+        self._gesture = SyncGesture(self) if self._layout == LAYOUT_BOOK else None
 
         self.init_ui()
 
@@ -302,6 +308,11 @@ class BookPanel(QFrame):
         # Only mirror from an edition the reader can see.
         if not self._is_active(source_view):
             return
+        # In the book view the edition just mirrored into reports the scroll
+        # back a moment later. Mirrored again, that echo would pull the edition
+        # the reader is scrolling.
+        if self._gesture is not None and not self._gesture.allow(source_view):
+            return
         # The active tab is the one the user is moving, so its own mapped sync
         # target is now stale: their position supersedes it. Clear it so a later
         # switch back re-applies the user's real spot, not an old mapped one.
@@ -327,6 +338,7 @@ class BookPanel(QFrame):
             # persistence saves the right spot, not the hidden view's drift.
             self._translation_sync_target = (target_id, dst_fraction)
             self._translation_scroll = (target_id, dst_fraction)
+            self._begin_mirror()
             self.translation_view.scroll_to(target_id, dst_fraction)
         else:
             try:
@@ -339,7 +351,14 @@ class BookPanel(QFrame):
             target_id = self.original_document.block_ids[dst_index]
             self._original_sync_target = (target_id, dst_fraction)
             self._original_scroll = (target_id, dst_fraction)
+            self._begin_mirror()
             self.original_view.scroll_to(target_id, dst_fraction)
+
+    def _begin_mirror(self) -> None:
+        """Open the echo window just before scrolling the other edition. Only
+        the book view has a guard; with tabs this does nothing."""
+        if self._gesture is not None:
+            self._gesture.begin_mirror()
 
     def _update_position_label(self) -> None:
         view = self.current_view()

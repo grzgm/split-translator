@@ -1118,6 +1118,58 @@ class BookPanelLayoutTests(unittest.TestCase):
             panel._sync_from(panel.translation_view, "b3", 0.25)
             self.assertEqual(calls, [])
 
+    def test_book_view_ignores_the_echo_of_its_own_mirror(self):
+        # Mirroring into the translation makes it report a scroll a moment
+        # later. Mirrored back, that echo would pull the original the reader is
+        # scrolling: offscreen, a slow 3000px scroll moved 24px.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
+            panel.sync_enabled = True
+            to_original, to_translation = [], []
+            panel.original_view.scroll_to = (
+                lambda bid, frac: to_original.append((bid, frac))
+            )
+            panel.translation_view.scroll_to = (
+                lambda bid, frac: to_translation.append((bid, frac))
+            )
+            panel._sync_from(panel.original_view, "b2", 0.5)
+            panel._sync_from(panel.translation_view, "b2", 0.5)
+            self.assertEqual(len(to_translation), 1)
+            self.assertEqual(to_original, [])
+
+    def test_book_view_hands_over_once_the_mirror_settles(self):
+        # Grabbing the other edition after a pause makes it the one that drives.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
+            panel.sync_enabled = True
+            to_original = []
+            panel.original_view.scroll_to = (
+                lambda bid, frac: to_original.append((bid, frac))
+            )
+            panel.translation_view.scroll_to = lambda bid, frac: None
+            panel._sync_from(panel.original_view, "b2", 0.5)
+            panel._gesture.settle()
+            panel._sync_from(panel.translation_view, "b1", 0.0)
+            self.assertEqual(len(to_original), 1)
+
+    def test_book_view_still_records_where_the_echoing_edition_is(self):
+        # An ignored echo still reports where that edition really is, and that
+        # is the position close persists.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
+            panel.sync_enabled = True
+            panel.original_view.scroll_to = lambda bid, frac: None
+            panel.translation_view.scroll_to = lambda bid, frac: None
+            panel._sync_from(panel.original_view, "b2", 0.5)
+            panel._sync_from(panel.translation_view, "b1", 0.75)
+            self.assertEqual(panel._translation_scroll, ("b1", 0.75))
+
+    def test_normal_view_has_no_gesture_guard(self):
+        # A hidden tab never mirrors, so the tabbed view needs no guard.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            self.assertIsNone(panel._gesture)
+
     def test_search_targets_the_original_without_tabs(self):
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
