@@ -381,6 +381,10 @@ class AnchorEditor(QWidget):
         if not self._gesture.allow(source_view):
             return
         if source_view is self.original_view:
+            if not self.translation_document.block_ids:
+                # The translation has no text paragraphs (a scanned PDF, say),
+                # so there is nothing to map this scroll onto.
+                return
             try:
                 index = self.original_document.block_ids.index(block_id)
             except ValueError:
@@ -392,6 +396,10 @@ class AnchorEditor(QWidget):
             self._gesture.begin_mirror()
             self.translation_view.scroll_to(target_id, dst_fraction)
         else:
+            if not self.original_document.block_ids:
+                # The original has no text paragraphs (a scanned PDF, say), so
+                # there is nothing to map this scroll onto.
+                return
             try:
                 index = self.translation_document.block_ids.index(block_id)
             except ValueError:

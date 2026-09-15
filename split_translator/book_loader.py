@@ -91,6 +91,10 @@ class _BlockClassifier(HTMLParser):
             return
         index = None
         if tag in BLOCK_TAGS:
+            # A space keeps text before this nested block apart from text
+            # after it in the enclosing block's own text (see handle_endtag
+            # for the closing half); invisible, so it never marks content.
+            self._add_text(" ")
             index = len(self.own_text)
             self.own_text.append([])
             self.has_content.append(False)
@@ -111,6 +115,7 @@ class _BlockClassifier(HTMLParser):
         for position in range(len(self._stack) - 1, -1, -1):
             if self._stack[position][0] != tag:
                 continue
+            closed_a_block = False
             for _tag, index in reversed(self._stack[position:]):
                 if (
                     index is not None
@@ -118,7 +123,13 @@ class _BlockClassifier(HTMLParser):
                     and self._open_blocks[-1] == index
                 ):
                     self._open_blocks.pop()
+                    closed_a_block = True
             del self._stack[position:]
+            if closed_a_block:
+                # The other half of the space added in handle_starttag: keeps
+                # text after this block apart from the enclosing block's own
+                # text.
+                self._add_text(" ")
             return
 
     def handle_data(self, data):
@@ -238,7 +249,10 @@ def resolve_block_id(
     back to the other direction at either end of the book. A stored id stops
     being a paragraph when the block it names has no text of its own (a spacer
     lost its id). None when there are no paragraphs or the id is not of the bN
-    form."""
+    form.
+
+    Relies on `block_ids` being in document order, so ascending by number,
+    which `assign_block_ids` guarantees."""
     if wanted in block_ids:
         return wanted
     match = _BLOCK_ID_RE.fullmatch(wanted or "")
@@ -257,10 +271,13 @@ def resolve_position(
 ) -> tuple[str, float] | None:
     """A saved (block id, fraction) position that points at a paragraph.
 
-    Unchanged while its block is still a paragraph. When the position moves to
-    the next paragraph, the fraction belonged to the old block and is dropped,
-    so it starts at the top of the new one. None when there is no position or
-    it cannot be resolved."""
+    Unchanged while its block is still a paragraph. When the block has stopped
+    being a paragraph, this reopens at the nearest following paragraph, or the
+    last paragraph when none follows (see resolve_block_id); the fraction
+    belonged to the old block and is dropped, so the new block's own top
+    (fraction 0.0) is used. The view still centres that point on screen, so
+    the restored position sits at mid-screen, not the top of the viewport.
+    None when there is no position or it cannot be resolved."""
     if position is None:
         return None
     block_id, fraction = position
@@ -388,8 +405,8 @@ def _load_pdf(path: str) -> tuple[str, str, dict[str, bytes]]:
 
 
 def load_book(path: str) -> BookDocument:
-    """Load a book file to normalised HTML with block ids. Raises ValueError on
-    an unsupported or unreadable file."""
+    """Load a book file to normalised HTML with paragraph ids. Raises
+    ValueError on an unsupported or unreadable file."""
     suffix = Path(path).suffix.lower()
     if suffix == ".epub":
         body, title, images = _load_epub(path)

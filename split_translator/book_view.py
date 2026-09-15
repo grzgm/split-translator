@@ -139,7 +139,9 @@ _MARK_BLOCK_JS = """
 # The text a search match can be counted in, split into *runs*. A run is a
 # stretch of text belonging to one tagged block: it starts where that block's
 # text starts and ends where a nested block interrupts it. Every character of
-# the page belongs to exactly one run, the run of its nearest tagged ancestor.
+# the page belongs to exactly one run, the run of its nearest tagged ancestor;
+# text with no tagged ancestor at all forms a run with an empty id, which
+# marks nothing.
 #
 # That one-character-one-run property is the whole point, because the running
 # count has to track Chromium's activeMatch. Book markup nests block elements (a

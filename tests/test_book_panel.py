@@ -779,6 +779,19 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             panel._on_find_result(active=1, count=4)  # wrapped to the first match
             self.assertEqual(seen, [1])  # located by index 1, not by scroll
 
+    def test_matched_block_with_no_translation_paragraphs_clears_and_does_not_raise(self):
+        # A scanned or image-only translation has no paragraphs to mark.
+        with tempfile.TemporaryDirectory() as d:
+            profile = QWebEngineProfile()
+            panel = self._panel(_config(d), profile)
+            marks = self._stub_marks(panel)
+            panel.translation_document.block_ids = []
+            bid = panel.original_document.block_ids[1]
+            panel._on_matched_block(
+                panel.original_view, panel.translation_view, bid
+            )  # must not raise
+            self.assertEqual(marks["trans"], [None])
+
     def test_zero_active_match_clears_marks(self):
         # A find that reports no active match (active=0) clears both marks rather
         # than trying to locate a 0th block.
@@ -1179,3 +1192,30 @@ class BookPanelLayoutTests(unittest.TestCase):
             panel.search("wieczor")
             self.assertEqual(found, ["wieczor"])
             self.assertIs(panel.current_view(), panel.original_view)
+
+    def test_sync_from_with_no_translation_paragraphs_does_not_raise(self):
+        # A scanned or image-only PDF loads with no paragraphs at all, so
+        # there is nothing for a scroll on the original to map onto.
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            panel.translation_document.block_ids = []
+            calls = []
+            panel.translation_view.scroll_to = (
+                lambda bid, frac: calls.append((bid, frac))
+            )
+            panel._sync_from(panel.original_view, "b1", 0.5)  # must not raise
+            self.assertEqual(calls, [])
+
+    def test_sync_from_with_no_original_paragraphs_does_not_raise(self):
+        # The mirror case: the original edition has no paragraphs, driven
+        # from the translation. Book view layout so the translation counts as
+        # active (a hidden tab would return before reaching the mapping).
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
+            panel.original_document.block_ids = []
+            calls = []
+            panel.original_view.scroll_to = (
+                lambda bid, frac: calls.append((bid, frac))
+            )
+            panel._sync_from(panel.translation_view, "b1", 0.5)  # must not raise
+            self.assertEqual(calls, [])

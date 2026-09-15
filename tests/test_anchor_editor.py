@@ -362,6 +362,34 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         # A block id absent from the document is guarded by try/except ValueError.
         editor._sync_from(editor.original_view, "nonexistent", 0.0)
 
+    def test_sync_from_with_no_translation_paragraphs_does_not_raise(self):
+        # A scanned or image-only translation has no paragraphs at all, so
+        # there is nothing to map a scroll on the original onto.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        original_doc = _doc("b")
+        translation_doc = BookDocument(html="", block_ids=[], title="T")
+        book_sync = BookSync(
+            len(original_doc.block_ids), len(translation_doc.block_ids)
+        )
+        editor = AnchorEditor(
+            original_doc,
+            translation_doc,
+            store,
+            book_sync,
+            QWebEngineProfile(),
+            lambda: None,
+        )
+        editor.sync_enabled = True
+        calls = []
+        editor.translation_view.scroll_to = (
+            lambda bid, frac: calls.append((bid, frac))
+        )
+        editor._sync_from(editor.original_view, "b0", 0.5)  # must not raise
+        self.assertEqual(calls, [])
+
     def test_follower_echo_does_not_reverse_drive_the_source(self):
         # The jitter bug: a genuine scroll on one side mirrors to the other, and
         # the mirrored scroll echoes back a scrollPositionChanged. That echo must

@@ -108,6 +108,34 @@ class ParagraphIdTests(unittest.TestCase):
         self.assertEqual(ids, ["b0", "b1"])
         self.assertEqual(texts, ["His fingers moved.", "A song."])
 
+    def test_text_either_side_of_a_nested_block_does_not_join(self):
+        # Without a separating space "moved." and "And" would run together as
+        # "moved.And", which reads as one word to a search or a flashcard grab.
+        html = "<div>His fingers moved.<div>A song.</div>And then.</div>"
+        _out, ids, texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b0", "b1"])
+        self.assertEqual(texts, ["His fingers moved. And then.", "A song."])
+
+    def test_misnested_markup_still_closes_its_blocks(self):
+        # An inline element left unclosed must not stop the div from closing.
+        html = "<div>unclosed <span>inline</div><p>after</p>"
+        out, ids, texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b0", "b1"])
+        self.assertEqual(texts, ["unclosed inline", "after"])
+
+    def test_block_tags_inside_a_comment_or_script_are_not_counted(self):
+        # Neither pass parses tags inside a comment or a script: HTMLParser
+        # treats both as opaque text, so the div and p written there must not
+        # advance the block counter or receive an id of their own.
+        html = (
+            '<!-- <div>x</div> -->'
+            '<script>var s = "<p>no</p>";</script>'
+            "<p>Text</p>"
+        )
+        out, ids, _texts = assign_block_ids(html)
+        self.assertEqual(ids, ["b0"])
+        self.assertEqual(out.count("data-stid"), 1)
+
     def test_a_wrapper_around_spacers_only_is_itself_a_spacer(self):
         html = "<div><p>&nbsp;</p></div><p>Text</p>"
         out, ids, _texts = assign_block_ids(html)
