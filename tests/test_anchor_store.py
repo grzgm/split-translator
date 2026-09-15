@@ -35,12 +35,41 @@ class AnchorStoreTests(unittest.TestCase):
         self.addCleanup(reloaded.shutdown)
         self.assertEqual(reloaded.anchors, [("b3", "b5")])
 
-    def test_remove_drops_pair_by_original_id(self):
+    def test_remove_drops_exactly_that_pair(self):
+        # b1 is matched to two translation paragraphs; removing one keeps the
+        # other.
         store = self._store()
         store.add("b1", "b2")
-        store.add("b3", "b4")
-        store.remove("b1")
-        self.assertEqual(store.anchors, [("b3", "b4")])
+        store.add("b1", "b3")
+        store.add("b4", "b5")
+        store.remove("b1", "b3")
+        self.assertEqual(store.anchors, [("b1", "b2"), ("b4", "b5")])
+
+    def test_add_skips_an_exact_duplicate(self):
+        store = self._store()
+        store.add("b1", "b2")
+        store.add("b1", "b2")
+        self.assertEqual(store.anchors, [("b1", "b2")])
+
+    def test_exact_duplicates_are_dropped_on_load(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "anchors": [
+                        {"original": "b1", "translation": "b2"},
+                        {"original": "b3", "translation": "b4"},
+                        {"original": "b1", "translation": "b2"},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        self.assertEqual(store.anchors, [("b1", "b2"), ("b3", "b4")])
 
     def test_load_malformed_starts_empty(self):
         tmp = tempfile.TemporaryDirectory()

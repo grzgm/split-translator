@@ -1,6 +1,7 @@
 """Side-by-side anchor editor: click a paragraph in each edition to select it,
 then bind the two selections into an anchor. Saved anchors stay highlighted in
-both views; clicking an anchor in the list jumps both views to it."""
+both views, over every paragraph their group covers; clicking an anchor in the
+list jumps both views to it."""
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWebEngineCore import QWebEngineProfile
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .anchor_book_view import AnchorBookView
+from .anchor_groups import add_conflict, group_paragraphs, resolve_manual
 from .anchor_store import EDITOR_SURFACE, AnchorStore
 from .book_loader import BookDocument, resolve_position
 from .book_sync import SectionMap
@@ -244,6 +246,11 @@ class AnchorEditor(QWidget):
         controls.addStretch()
         bottom.addLayout(controls)
 
+        # Explains a refused anchor. Empty otherwise.
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        bottom.addWidget(self.status_label)
+
         self.anchor_list = QListWidget()
         self.anchor_list.itemClicked.connect(self._on_anchor_clicked)
 
@@ -444,26 +451,76 @@ class AnchorEditor(QWidget):
     def _on_add_clicked(self) -> None:
         if self._selected_original is None or self._selected_translation is None:
             return
-        self.anchor_store.add(self._selected_original, self._selected_translation)
+        original_id = self._selected_original
+        translation_id = self._selected_translation
+        if (original_id, translation_id) in self.anchor_store.anchors:
+            self.status_label.setText(
+                f"{original_id} = {translation_id} is already an anchor"
+            )
+            self._clear_selection()
+            return
+        # An anchor on a paragraph that is already anchored joins that group,
+        # which is how one paragraph is matched to several. One that would
+        # overlap or cross another group is refused, and the selection stays so
+        # either side can be moved and tried again.
+        blocking = add_conflict(
+            self.anchor_store.anchors,
+            (original_id, translation_id),
+            self.original_document.block_ids,
+            self.translation_document.block_ids,
+        )
+        if blocking is not None:
+            self.status_label.setText(
+                f"Not added: {original_id} = {translation_id} would overlap or "
+                f"cross the anchor {blocking[0]} = {blocking[1]}"
+            )
+            return
+        self.anchor_store.add(original_id, translation_id)
+        self.status_label.setText("")
         self.refresh()
         self._on_changed()
+        # The just-bound paragraphs now show as anchored.
+        self._clear_selection()
+        self._refresh_highlights()
 
-        # Clear both selections; the just-bound blocks now show as anchored.
+    def _clear_selection(self) -> None:
         self._selected_original = None
         self._selected_translation = None
         self.original_view.set_selected("")
         self.translation_view.set_selected("")
         self._update_add_enabled()
-        self._refresh_highlights()
 
     def _refresh_highlights(self) -> None:
-        original_ids = [pair[0] for pair in self.anchor_store.anchors]
-        translation_ids = [pair[1] for pair in self.anchor_store.anchors]
+        # Every paragraph a group covers is highlighted, the ones between its
+        # first and last included, so a paragraph matched to several shows the
+        # whole run it matches. Anchors ignored on load are not drawn.
+        groups, _conflicting = resolve_manual(
+            self.anchor_store.anchors,
+            self.original_document.block_ids,
+            self.translation_document.block_ids,
+        )
+        original_ids: list[str] = []
+        translation_ids: list[str] = []
+        for group in groups:
+            originals, translations = group_paragraphs(
+                group,
+                self.original_document.block_ids,
+                self.translation_document.block_ids,
+            )
+            original_ids.extend(originals)
+            translation_ids.extend(translations)
         self.original_view.set_anchored(original_ids)
         self.translation_view.set_anchored(translation_ids)
 
     def refresh(self) -> None:
         self.anchor_list.clear()
+        # An anchor that overlaps or crosses earlier ones (only possible in a
+        # hand-edited or older file) is kept but ignored for sync; say so.
+        _groups, conflicting = resolve_manual(
+            self.anchor_store.anchors,
+            self.original_document.block_ids,
+            self.translation_document.block_ids,
+        )
         # Show the anchors lowest-first by the original block's position in the
         # document. Sorting by block index (not the id string) keeps "b100" after
         # "b7". Anchors whose id is no longer in the document sort to the end.
@@ -476,7 +533,10 @@ class AnchorEditor(QWidget):
             key=lambda pair: block_index.get(pair[0], len(block_index)),
         )
         for original_id, translation_id in ordered:
-            item = QListWidgetItem(f"{original_id}  =  {translation_id}")
+            label = f"{original_id}  =  {translation_id}"
+            if (original_id, translation_id) in conflicting:
+                label += "  (conflicts)"
+            item = QListWidgetItem(label)
             item.setData(_ORIGINAL_ID_ROLE, original_id)
             item.setData(_TRANSLATION_ID_ROLE, translation_id)
             self.anchor_list.addItem(item)
@@ -495,8 +555,10 @@ class AnchorEditor(QWidget):
         item = self.anchor_list.currentItem()
         if item is None:
             return
-        original_id = item.data(_ORIGINAL_ID_ROLE)
-        self.anchor_store.remove(original_id)
+        self.anchor_store.remove(
+            item.data(_ORIGINAL_ID_ROLE), item.data(_TRANSLATION_ID_ROLE)
+        )
+        self.status_label.setText("")
         self.refresh()
         self._refresh_highlights()
         self._on_changed()

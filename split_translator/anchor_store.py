@@ -37,13 +37,17 @@ def _load_raw(filepath: Path) -> dict:
 
 
 def load_anchors(filepath: Path) -> list[tuple[str, str]]:
-    """Load anchor pairs, tolerating a missing or malformed file by returning []."""
+    """Load anchor pairs, tolerating a missing or malformed file by returning [].
+    An exact duplicate is dropped, keeping the first, so a file that holds one
+    pair twice is rewritten without it on the next save."""
     raw = _load_raw(filepath)
-    return [
-        (pair["original"], pair["translation"])
-        for pair in raw.get("anchors", [])
-        if "original" in pair and "translation" in pair
-    ]
+    anchors: list[tuple[str, str]] = []
+    for pair in raw.get("anchors", []):
+        if "original" in pair and "translation" in pair:
+            anchor = (pair["original"], pair["translation"])
+            if anchor not in anchors:
+                anchors.append(anchor)
+    return anchors
 
 
 def _parse_scroll(value) -> tuple[str, float] | None:
@@ -196,11 +200,21 @@ class AnchorStore:
         )
 
     def add(self, original_id: str, translation_id: str) -> None:
-        self.anchors.append((original_id, translation_id))
+        """Store an anchor and persist. An exact duplicate is not stored twice.
+        Whether the anchor may join the others is decided by the caller (see
+        anchor_groups.add_conflict); this store is plain storage."""
+        anchor = (original_id, translation_id)
+        if anchor in self.anchors:
+            return
+        self.anchors.append(anchor)
         self.save()
 
-    def remove(self, original_id: str) -> None:
-        self.anchors = [a for a in self.anchors if a[0] != original_id]
+    def remove(self, original_id: str, translation_id: str) -> None:
+        """Remove exactly this anchor and persist. Other anchors on the same
+        paragraph stay, so one match of a split paragraph can be undone alone."""
+        self.anchors = [
+            a for a in self.anchors if a != (original_id, translation_id)
+        ]
         self.save()
 
     def get_scroll(self, surface: str) -> _ScrollPair:

@@ -496,6 +496,111 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         self.assertEqual(len(original_calls), 1)  # new owner mirrors to original
 
 
+class AnchorEditorGroupTests(unittest.TestCase):
+    """Anchors sharing a paragraph form groups: the editor grows them, refuses
+    an anchor that would overlap or cross another group, and draws each group
+    over its whole extent."""
+
+    def _editor(self, anchors=()):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        store.anchors = list(anchors)
+        ids = [f"b{i}" for i in range(8)]
+        html = "".join(f"<p data-stid='{x}'>p</p>" for x in ids)
+        doc = BookDocument(html=html, block_ids=ids, title="T")
+        self.changed = 0
+
+        def on_changed():
+            self.changed += 1
+
+        editor = AnchorEditor(
+            doc, doc, store, _sections(doc, doc), QWebEngineProfile(), on_changed
+        )
+        return editor, store
+
+    def _select(self, editor, original_id, translation_id):
+        editor._on_original_clicked(original_id)
+        editor._on_translation_clicked(translation_id)
+
+    def test_the_status_line_starts_empty(self):
+        editor, _ = self._editor()
+        self.assertEqual(editor.status_label.text(), "")
+
+    def test_an_anchor_on_an_anchored_paragraph_grows_its_group(self):
+        editor, store = self._editor([("b1", "b1")])
+        self._select(editor, "b1", "b2")
+        editor._on_add_clicked()
+        self.assertEqual(store.anchors, [("b1", "b1"), ("b1", "b2")])
+        self.assertEqual(editor.status_label.text(), "")
+        self.assertEqual(self.changed, 1)
+
+    def test_a_crossing_anchor_is_refused_and_names_the_anchor_it_crosses(self):
+        editor, store = self._editor([("b1", "b5")])
+        self._select(editor, "b3", "b2")
+        editor._on_add_clicked()
+        self.assertEqual(store.anchors, [("b1", "b5")])
+        self.assertEqual(
+            editor.status_label.text(),
+            "Not added: b3 = b2 would overlap or cross the anchor b1 = b5",
+        )
+        self.assertEqual(self.changed, 0)
+        # The selection stays, so either side can be moved and tried again.
+        self.assertEqual(editor._selected_original, "b3")
+        self.assertEqual(editor._selected_translation, "b2")
+
+    def test_an_existing_anchor_is_not_added_twice(self):
+        editor, store = self._editor([("b1", "b1")])
+        self._select(editor, "b1", "b1")
+        editor._on_add_clicked()
+        self.assertEqual(store.anchors, [("b1", "b1")])
+        self.assertEqual(editor.status_label.text(), "b1 = b1 is already an anchor")
+        self.assertEqual(self.changed, 0)
+
+    def test_a_successful_add_clears_an_earlier_refusal(self):
+        editor, _ = self._editor([("b1", "b5")])
+        self._select(editor, "b3", "b2")
+        editor._on_add_clicked()
+        self._select(editor, "b6", "b6")
+        editor._on_add_clicked()
+        self.assertEqual(editor.status_label.text(), "")
+
+    def test_remove_selected_removes_only_that_anchor(self):
+        editor, store = self._editor([("b1", "b1"), ("b1", "b2")])
+        editor.refresh()
+        editor.anchor_list.setCurrentRow(1)
+        editor._remove_selected()
+        self.assertEqual(store.anchors, [("b1", "b1")])
+
+    def test_anchors_ignored_on_load_are_labelled_as_conflicts(self):
+        editor, _ = self._editor([("b1", "b5"), ("b3", "b2")])
+        editor.refresh()
+        labels = [
+            editor.anchor_list.item(i).text()
+            for i in range(editor.anchor_list.count())
+        ]
+        self.assertEqual(labels, ["b1  =  b5", "b3  =  b2  (conflicts)"])
+
+    def test_highlights_cover_every_paragraph_of_a_group(self):
+        editor, _ = self._editor([("b1", "b1"), ("b1", "b3")])
+        seen = {}
+        editor.original_view.set_anchored = lambda ids: seen.update(orig=ids)
+        editor.translation_view.set_anchored = lambda ids: seen.update(trans=ids)
+        editor._refresh_highlights()
+        self.assertEqual(seen["orig"], ["b1"])
+        self.assertEqual(seen["trans"], ["b1", "b2", "b3"])
+
+    def test_highlights_leave_out_anchors_ignored_on_load(self):
+        editor, _ = self._editor([("b1", "b5"), ("b3", "b2")])
+        seen = {}
+        editor.original_view.set_anchored = lambda ids: seen.update(orig=ids)
+        editor.translation_view.set_anchored = lambda ids: seen.update(trans=ids)
+        editor._refresh_highlights()
+        self.assertEqual(seen["orig"], ["b1"])
+        self.assertEqual(seen["trans"], ["b5"])
+
+
 from split_translator.anchor_store import EDITOR_SURFACE, READER_SURFACE
 
 
