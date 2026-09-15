@@ -23,6 +23,7 @@ from .book_loader import BookDocument
 from .book_sync import BookSync
 from .normalise_panel import NormalisePanel
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
+from .sync_gesture import SyncGesture
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
 _TRANSLATION_ID_ROLE = 257  # Qt.UserRole + 1
@@ -111,26 +112,10 @@ class AnchorEditor(QWidget):
         self._selected_translation: str | None = None
         self.sync_enabled = True
 
-        # Scroll-sync gesture ownership. Both editions are visible at once (unlike
-        # the reader's tabs), so a mirrored scroll on the follower echoes back a
-        # scrollPositionChanged that, unguarded, reverse-maps and snaps the side
-        # the user is driving: both views jitter. The cure is to let only the side
-        # the user last touched (the gesture owner) drive sync; the follower's
-        # mirrored-scroll echo is ignored while the gesture is in flight.
-        #
-        # _sync_owner is that side; _sync_in_flight is True from the moment a
-        # mirror is issued until a short timer fires, the window in which the
-        # echo arrives. A genuine scroll on the other side while NOT in flight
-        # transfers ownership (last-touched wins).
-        self._sync_owner = None
-        self._sync_in_flight = False
-        self._sync_gesture_timer = QTimer(self)
-        self._sync_gesture_timer.setSingleShot(True)
-        # 150ms comfortably covers the echo and its settle chain (a few ms in
-        # practice) without blocking the user from grabbing the other view after
-        # a brief pause.
-        self._sync_gesture_timer.setInterval(150)
-        self._sync_gesture_timer.timeout.connect(self._end_sync_gesture)
+        # Both editions are visible at once (unlike the reader's tabs), so a
+        # mirrored scroll echoes back from the view it moved. Only the side the
+        # user last touched drives sync; see sync_gesture.
+        self._gesture = SyncGesture(self)
 
         # The editor remembers its own scroll position, separate from the
         # reader. Seed from the editor surface and write it back on close.
@@ -375,10 +360,9 @@ class AnchorEditor(QWidget):
     def _sync_from(self, source_view, block_id: str, fraction: float) -> None:
         """Mirror a scroll on one side to the other through the anchor mapping.
 
-        Only the gesture owner (the side the user last touched) drives sync. A
-        scroll from the other side while a mirror is in flight is the follower's
-        echo of that mirror; ignoring it keeps the scrolled side smooth instead
-        of both sides snapping. See the _sync_owner notes in __init__."""
+        Only the side the user last touched drives sync. A scroll from the other
+        side while a mirror settles is that mirror's echo; ignoring it keeps the
+        scrolled side smooth instead of both sides snapping (see sync_gesture)."""
         # Remember the latest position of whichever side moved so the editor
         # reopens here next time (independent of the reader). Cache before any
         # early return so positions are tracked even with sync off or on an echo.
@@ -388,19 +372,8 @@ class AnchorEditor(QWidget):
             self._translation_scroll = (block_id, fraction)
         if not self.sync_enabled:
             return
-        # Echo guard: a scroll from the non-owner side while a mirror is settling
-        # is that mirror bouncing back. Drop it so it cannot reverse-drive the
-        # owner (the jitter). The owner keeps driving; the follower may snap.
-        if (
-            self._sync_in_flight
-            and self._sync_owner is not None
-            and source_view is not self._sync_owner
-        ):
+        if not self._gesture.allow(source_view):
             return
-        # A genuine scroll: the source becomes (or stays) the gesture owner.
-        # Last-touched wins, so grabbing the other side after a pause hands it
-        # ownership and sync flows the other way.
-        self._sync_owner = source_view
         if source_view is self.original_view:
             try:
                 index = self.original_document.block_ids.index(block_id)
@@ -410,7 +383,7 @@ class AnchorEditor(QWidget):
                 index, fraction
             )
             target_id = self.translation_document.block_ids[dst_index]
-            self._arm_sync_gesture()
+            self._gesture.begin_mirror()
             self.translation_view.scroll_to(target_id, dst_fraction)
         else:
             try:
@@ -421,20 +394,8 @@ class AnchorEditor(QWidget):
                 index, fraction
             )
             target_id = self.original_document.block_ids[dst_index]
-            self._arm_sync_gesture()
+            self._gesture.begin_mirror()
             self.original_view.scroll_to(target_id, dst_fraction)
-
-    def _arm_sync_gesture(self) -> None:
-        """Open the in-flight window in which the follower's echo is ignored, and
-        (re)start the timer that closes it. Re-arming on each mirror keeps
-        ownership while the user keeps scrolling one side."""
-        self._sync_in_flight = True
-        self._sync_gesture_timer.start()
-
-    def _end_sync_gesture(self) -> None:
-        """Close the in-flight window. The next genuine scroll on either side now
-        claims ownership, so the user can drive whichever view they grab."""
-        self._sync_in_flight = False
 
     def _on_original_clicked(self, block_id: str) -> None:
         self._selected_original = block_id

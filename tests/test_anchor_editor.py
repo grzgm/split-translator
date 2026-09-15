@@ -411,8 +411,8 @@ class AnchorEditorSelectionTests(unittest.TestCase):
         self.assertEqual(len(translation_calls), 1)
 
         # Simulate the in-flight window having elapsed (the user paused, then
-        # grabbed the translation): clear the guard the timer would clear.
-        editor._end_sync_gesture()
+        # grabbed the translation): close the window the timer would close.
+        editor._gesture.settle()
 
         # Now a genuine scroll on the translation must mirror to the original.
         editor._sync_from(editor.translation_view, "b1", 0.0)
