@@ -571,7 +571,11 @@ class AnchorEditor(QWidget):
         if worker.error is not None:
             self.status_label.setText(f"Alignment failed: {worker.error}")
             return
-        replaced = set(batch_anchors(self._resolve(), start, count))
+        replaced = set(
+            batch_anchors(
+                self._resolve(), start, count, self.original_document.block_ids
+            )
+        )
         kept = [a for a in self.anchor_store.auto_anchors if a not in replaced]
         # A manual anchor added while the batch was aligned wins: new anchors
         # that now touch it are left out rather than stored to be ignored.
@@ -599,7 +603,11 @@ class AnchorEditor(QWidget):
         to the batch."""
         if self._align_worker is not None:
             return
-        gone = set(batch_anchors(self._resolve(), start, count))
+        gone = set(
+            batch_anchors(
+                self._resolve(), start, count, self.original_document.block_ids
+            )
+        )
         if not gone:
             self.status_label.setText(
                 f"No automatic anchors for {self._batch_text(start, count)}"

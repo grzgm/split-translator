@@ -1226,6 +1226,33 @@ class AnchorEditorAutomaticTests(unittest.TestCase):
         )
         self.assertEqual(self.changed, 1)
 
+    def test_remove_automatic_clears_an_ignored_automatic_anchor_in_the_batch(self):
+        # b3 = b4 shares b3 with the manual anchor and is ignored for sync,
+        # but it still belongs to the batch and must be cleared with it.
+        editor, store = self._editor(
+            anchors=[("b3", "b3")], automatic=[("b3", "b4"), ("b6", "b6")]
+        )
+        editor.auto_panel.set_start(0)
+        editor.auto_panel.count_box.setValue(4)
+        editor.auto_panel.remove_button.click()
+        self.assertEqual(store.auto_anchors, [("b6", "b6")])
+        self.assertEqual(
+            editor.status_label.text(),
+            "Removed 1 automatic anchors for paragraphs 1 to 4",
+        )
+
+    def test_a_finished_batch_replaces_an_ignored_automatic_anchor_in_its_range(self):
+        editor, store = self._editor(
+            anchors=[("b3", "b3")], automatic=[("b3", "b4"), ("b6", "b6")]
+        )
+        self._generate(editor, 0, 4)
+        worker = self.workers[0]
+        worker.anchors = [("b0", "b0"), ("b1", "b1")]
+        worker.finished.emit()
+        self.assertEqual(
+            store.auto_anchors, [("b6", "b6"), ("b0", "b0"), ("b1", "b1")]
+        )
+
     def test_remove_with_nothing_in_the_batch_says_so(self):
         editor, store = self._editor(automatic=[("b6", "b6")])
         editor.auto_panel.set_start(0)

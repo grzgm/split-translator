@@ -283,15 +283,30 @@ def _in_batch(group: Group, start: int, count: int) -> bool:
     return start <= group.original_first < start + count
 
 
-def batch_anchors(resolved: Resolved, start: int, count: int) -> list[Anchor]:
+def batch_anchors(
+    resolved: Resolved, start: int, count: int, original_ids: list[str]
+) -> list[Anchor]:
     """The automatic anchors a batch replaces: those of every automatic group
-    that belongs to it."""
-    return [
+    that belongs to it, in their current order, followed by every ignored
+    automatic anchor (see Resolved.ignored) whose original id is a paragraph
+    at a position in start..start + count. An ignored anchor whose original
+    id is not a paragraph is never returned. Ignored anchors need checking
+    too: left behind, one can share a paragraph with a newly generated
+    anchor, join its group and get that new group ignored as well."""
+    from_groups = [
         anchor
         for group in resolved.automatic
         if _in_batch(group, start, count)
         for anchor in group.anchors
     ]
+    original_index = _index(original_ids)
+    from_ignored = [
+        anchor
+        for anchor in resolved.ignored
+        if anchor[0] in original_index
+        and start <= original_index[anchor[0]] < start + count
+    ]
+    return from_groups + from_ignored
 
 
 def fixed_groups(resolved: Resolved, start: int, count: int) -> list[Group]:

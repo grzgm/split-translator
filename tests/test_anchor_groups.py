@@ -212,8 +212,20 @@ class BatchTests(unittest.TestCase):
             automatic=[("b1", "b1"), ("b4", "b4"), ("b5", "b5"), ("b5", "b6"), ("b8", "b8")],
         )
         self.assertEqual(
-            batch_anchors(resolved, 4, 3), [("b4", "b4"), ("b5", "b5"), ("b5", "b6")]
+            batch_anchors(resolved, 4, 3, IDS),
+            [("b4", "b4"), ("b5", "b5"), ("b5", "b6")],
         )
+
+    def test_ignored_automatic_anchors_in_the_batch_are_returned_too(self):
+        # b1 is in the batch (positions 0..4), b5 is not, and x9 is not a
+        # paragraph at all: only b1 comes back, after the resolved groups.
+        resolved = Resolved(
+            manual=[],
+            conflicting=[],
+            automatic=[],
+            ignored=[("b1", "b1"), ("b5", "b5"), ("x9", "b2")],
+        )
+        self.assertEqual(batch_anchors(resolved, 0, 4, IDS), [("b1", "b1")])
 
     def test_a_batch_fits_around_manual_groups_and_automatic_ones_outside_it(self):
         resolved = _resolve(
