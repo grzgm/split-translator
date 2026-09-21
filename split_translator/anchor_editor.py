@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
 from .anchor_book_view import AnchorBookView
 from .anchor_groups import add_conflict, group_paragraphs, resolve_manual
 from .anchor_store import EDITOR_SURFACE, AnchorStore
-from .book_loader import BookDocument, resolve_position
+from .block_ids import resolve_position
+from .book_loader import BookDocument
 from .book_sync import SectionMap, kept_range
 from .normalise_panel import NormalisePanel
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec

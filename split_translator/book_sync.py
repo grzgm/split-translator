@@ -11,7 +11,7 @@ paragraph-level logic, with no Qt import."""
 from dataclasses import dataclass
 
 from .anchor_groups import Group
-from .book_loader import resolve_block_id
+from .block_ids import resolve_block_id
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE
 
 # Section starts that are not paragraphs: the top and the end of the document.

@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
 from .anchor_editor import AnchorEditor
 from .anchor_groups import resolve_manual
 from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
-from .book_loader import load_book, resolve_position
+from .block_ids import resolve_position
+from .book_loader import load_book
 from .book_sync import SectionMap, kept_range
 from .book_view import BookView
 from .config import Config
