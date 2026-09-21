@@ -6,7 +6,7 @@ anchors of both kinds stay highlighted in both views, over every paragraph
 their group covers; clicking an anchor in the list jumps both views to it."""
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -69,6 +69,11 @@ class _EditorSearch:
         self._term = ""
         self._count = 0
         self._current = 0
+
+    @property
+    def term(self) -> str:
+        """The term being stepped through, empty before the first search."""
+        return self._term
 
     def search(self, term: str) -> None:
         self._term = term.strip()
@@ -187,7 +192,19 @@ class AnchorEditor(QWidget):
         self._align_worker = None
         self._align_batch = (0, 0)
 
+        # The find bars as (box, search) pairs, and the one F3 steps: the bar
+        # last used, the original's until one is.
+        self._search_boxes: list = []
         self.init_ui()
+        self._active_search = self.original_search
+        # The main window's F3 belongs to the reader and never reaches this
+        # window, so the editor has its own.
+        QShortcut(QKeySequence("F3"), self).activated.connect(
+            lambda: self._step_search(True)
+        )
+        QShortcut(QKeySequence("Shift+F3"), self).activated.connect(
+            lambda: self._step_search(False)
+        )
         self._push_sections()
         self.refresh()
         self._refresh_highlights()
@@ -269,6 +286,12 @@ class AnchorEditor(QWidget):
         self.add_button.clicked.connect(self._on_add_clicked)
         self.remove_button = QPushButton("Remove selected")
         self.remove_button.clicked.connect(self._remove_selected)
+        self.find_in_list_button = QPushButton("Find in list")
+        self.find_in_list_button.setToolTip(
+            "Select the anchor on the selected paragraph in the list; press "
+            "again for the next one"
+        )
+        self.find_in_list_button.clicked.connect(self._find_in_list)
         self.sync_checkbox = QCheckBox("Sync")
         self.sync_checkbox.setChecked(True)
         self.sync_checkbox.stateChanged.connect(self.toggle_sync)
@@ -279,6 +302,7 @@ class AnchorEditor(QWidget):
         self.normalise_checkbox.stateChanged.connect(self.toggle_normalise)
         controls.addWidget(self.add_button)
         controls.addWidget(self.remove_button)
+        controls.addWidget(self.find_in_list_button)
         controls.addWidget(self.normalise_checkbox)
         controls.addWidget(self.sync_checkbox)
         # The list shows the manual anchors; the automatic ones, which can
@@ -291,10 +315,11 @@ class AnchorEditor(QWidget):
         controls.addStretch()
         bottom.addLayout(controls)
 
-        # Explains a refused anchor. Empty otherwise.
+        # Reports what the last action did or why it was refused (anchors,
+        # batches, skip fields). Empty otherwise. It sits under the list and
+        # the tabs, added below.
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
-        bottom.addWidget(self.status_label)
 
         self.anchor_list = QListWidget()
         self.anchor_list.itemClicked.connect(self._on_anchor_clicked)
@@ -345,6 +370,7 @@ class AnchorEditor(QWidget):
         self.bottom_splitter.setStretchFactor(1, 1)
         self.bottom_splitter.setSizes([400, 400])
         bottom.addWidget(self.bottom_splitter)
+        bottom.addWidget(self.status_label)
         splitter.addWidget(bottom_container)
 
         # Give the book views most of the height by default; both stay resizable.
@@ -368,13 +394,16 @@ class AnchorEditor(QWidget):
         bar = QHBoxLayout()
         box = QLineEdit()
         box.setPlaceholderText(placeholder)
-        box.returnPressed.connect(lambda: search.search(box.text()))
+        box.returnPressed.connect(lambda: self._use_search(search).search(box.text()))
         search_button = QPushButton("Search")
-        search_button.clicked.connect(lambda: search.search(box.text()))
+        search_button.clicked.connect(
+            lambda: self._use_search(search).search(box.text())
+        )
         prev_button = QPushButton("Prev")
-        prev_button.clicked.connect(search.prev)
+        prev_button.clicked.connect(lambda: self._use_search(search).prev())
         next_button = QPushButton("Next")
-        next_button.clicked.connect(search.next)
+        next_button.clicked.connect(lambda: self._use_search(search).next())
+        self._search_boxes.append((box, search))
         label = QLabel("")
         # The box takes the horizontal slack; the buttons and counter stay at
         # their natural width so the bar does not sprawl on a wide screen.
@@ -418,6 +447,25 @@ class AnchorEditor(QWidget):
         self.translation_selection_label.setText(
             self._selection_text(self._selected_translation, TRANSLATION_SIDE)
         )
+
+    def _use_search(self, search: "_EditorSearch") -> "_EditorSearch":
+        """Make a find bar the one F3 steps, and hand it back."""
+        self._active_search = search
+        return search
+
+    def _step_search(self, forward: bool) -> None:
+        """F3 / Shift+F3: step the find bar being typed in, or else the one
+        last used. Text typed but not searched yet is searched first."""
+        for box, search in self._search_boxes:
+            if box.hasFocus():
+                self._active_search = search
+                if box.text().strip() != search.term:
+                    search.search(box.text())
+                    return
+        if forward:
+            self._active_search.next()
+        else:
+            self._active_search.prev()
 
     def _set_original_match_label(self, text: str) -> None:
         self._original_match_label.setText(text)
@@ -933,6 +981,48 @@ class AnchorEditor(QWidget):
         self.translation_view.scroll_to(translation_id, 0.0)
         self._select(ORIGINAL_SIDE, original_id)
         self._select(TRANSLATION_SIDE, translation_id)
+
+    def _find_in_list(self) -> None:
+        """Select, in the list, an anchor on a selected paragraph (either
+        side). Pressing again moves to the next such anchor, wrapping round.
+        An automatic anchor there ticks Show automatic so its row exists."""
+        original_id = self._selected_original
+        translation_id = self._selected_translation
+        if original_id is None and translation_id is None:
+            self.status_label.setText("Select a paragraph first")
+            return
+
+        def uses(anchor) -> bool:
+            return anchor[0] == original_id or anchor[1] == translation_id
+
+        if not self.show_automatic_checkbox.isChecked() and any(
+            uses(a) for a in self.anchor_store.auto_anchors
+        ):
+            self.show_automatic_checkbox.setChecked(True)
+        rows = [
+            row
+            for row in range(self.anchor_list.count())
+            if uses(
+                (
+                    self.anchor_list.item(row).data(_ORIGINAL_ID_ROLE),
+                    self.anchor_list.item(row).data(_TRANSLATION_ID_ROLE),
+                )
+            )
+        ]
+        if not rows:
+            self.status_label.setText("No anchor uses the selected paragraph")
+            return
+        current = self.anchor_list.currentRow()
+        row = next((r for r in rows if r > current), rows[0])
+        self.anchor_list.setCurrentRow(row)
+        self.anchor_list.scrollToItem(
+            self.anchor_list.item(row), QListWidget.ScrollHint.PositionAtCenter
+        )
+        self.status_label.setText(
+            f"Anchor {rows.index(row) + 1} of {len(rows)} on the selected paragraph"
+            if len(rows) > 1
+            else ""
+        )
 
     def _remove_selected(self) -> None:
         item = self.anchor_list.currentItem()

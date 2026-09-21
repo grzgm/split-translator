@@ -1,5 +1,6 @@
 import unittest
 
+from PySide6.QtGui import QShortcut
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import QApplication
 
@@ -748,6 +749,48 @@ class AnchorEditorGroupTests(unittest.TestCase):
         self.assertEqual(store.anchors, [("b3", "b4")])
         self.assertEqual(store.auto_anchors, [])
 
+    def _current_label(self, editor):
+        item = editor.anchor_list.currentItem()
+        return item.text() if item is not None else None
+
+    def test_find_in_list_selects_the_anchor_on_the_selected_paragraph(self):
+        editor, _ = self._editor([("b1", "b1"), ("b3", "b4"), ("b3", "b5")])
+        editor._on_original_clicked("b3")
+        editor.find_in_list_button.click()
+        self.assertEqual(self._current_label(editor), "4 = 5")
+        self.assertEqual(
+            editor.status_label.text(), "Anchor 1 of 2 on the selected paragraph"
+        )
+        editor.find_in_list_button.click()
+        self.assertEqual(self._current_label(editor), "4 = 6")
+        editor.find_in_list_button.click()  # wraps round
+        self.assertEqual(self._current_label(editor), "4 = 5")
+
+    def test_find_in_list_uses_the_translation_selection_too(self):
+        editor, _ = self._editor([("b1", "b1"), ("b3", "b4")])
+        editor._on_translation_clicked("b4")
+        editor.find_in_list_button.click()
+        self.assertEqual(self._current_label(editor), "4 = 5")
+        self.assertEqual(editor.status_label.text(), "")
+
+    def test_find_in_list_shows_automatic_anchors_to_reach_one(self):
+        editor, _ = self._editor([("b1", "b1")], automatic=[("b5", "b5")])
+        editor._on_original_clicked("b5")
+        editor.find_in_list_button.click()
+        self.assertTrue(editor.show_automatic_checkbox.isChecked())
+        self.assertEqual(self._current_label(editor), "6 = 6  (automatic)")
+
+    def test_find_in_list_without_an_anchor_or_a_selection_says_so(self):
+        editor, _ = self._editor([("b1", "b1")])
+        editor.find_in_list_button.click()
+        self.assertEqual(editor.status_label.text(), "Select a paragraph first")
+        editor._on_original_clicked("b6")
+        editor.find_in_list_button.click()
+        self.assertEqual(
+            editor.status_label.text(), "No anchor uses the selected paragraph"
+        )
+        self.assertFalse(editor.show_automatic_checkbox.isChecked())
+
     def test_remove_selected_removes_an_automatic_anchor(self):
         editor, store = self._editor([("b3", "b3")], automatic=[("b3", "b3"), ("b5", "b5")])
         editor.show_automatic_checkbox.setChecked(True)
@@ -756,6 +799,61 @@ class AnchorEditorGroupTests(unittest.TestCase):
         editor._remove_selected()
         self.assertEqual(store.anchors, [("b3", "b3")])
         self.assertEqual(store.auto_anchors, [("b5", "b5")])
+
+
+class AnchorEditorFindShortcutTests(unittest.TestCase):
+    """F3 and Shift+F3 step the editor's find bars: the bar being typed in,
+    or else the one last used."""
+
+    def _editor(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        doc = _doc("b")
+        editor = AnchorEditor(
+            doc, doc, store, _sections(doc, doc), QWebEngineProfile(), lambda: None
+        )
+        self.calls = []
+        for name, search in (
+            ("original", editor.original_search),
+            ("translation", editor.translation_search),
+        ):
+            search.search = lambda term, n=name: self.calls.append((n, "search", term))
+            search.next = lambda n=name: self.calls.append((n, "next"))
+            search.prev = lambda n=name: self.calls.append((n, "prev"))
+        return editor
+
+    def test_the_editor_has_its_own_f3_and_shift_f3(self):
+        editor = self._editor()
+        keys = {s.key().toString() for s in editor.findChildren(QShortcut)}
+        self.assertTrue({"F3", "Shift+F3"} <= keys)
+
+    def test_f3_steps_the_original_bar_until_another_is_used(self):
+        editor = self._editor()
+        editor._step_search(True)
+        editor._step_search(False)
+        self.assertEqual(self.calls, [("original", "next"), ("original", "prev")])
+
+    def test_f3_steps_the_bar_last_used(self):
+        editor = self._editor()
+        box, search = editor._search_boxes[1]
+        editor._use_search(search)
+        editor._step_search(True)
+        self.assertEqual(self.calls, [("translation", "next")])
+
+    def test_f3_in_a_box_with_new_text_searches_it_first(self):
+        editor = self._editor()
+        editor.show()
+        self.addCleanup(editor.hide)
+        box, _search = editor._search_boxes[1]
+        box.setText("word")
+        box.setFocus()
+        QApplication.processEvents()
+        if not box.hasFocus():
+            self.skipTest("no keyboard focus in this environment")
+        editor._step_search(True)
+        self.assertEqual(self.calls, [("translation", "search", "word")])
 
 
 class AnchorEditorNumberingTests(unittest.TestCase):
@@ -1102,6 +1200,14 @@ class AnchorEditorNormalisePanelTests(unittest.TestCase):
             ["Automatic anchors", "Skip", "Spacing"],
         )
         self.assertIs(editor.side_tabs.widget(2), editor.normalise_panel)
+
+    def test_the_status_line_sits_under_the_list_and_the_tabs(self):
+        editor, _ = self._editor()
+        layout = editor.bottom_splitter.parentWidget().layout()
+        widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
+        self.assertLess(
+            widgets.index(editor.bottom_splitter), widgets.index(editor.status_label)
+        )
 
     def test_the_splitter_starts_even(self):
         # The tabs are wide enough that its minimum
