@@ -2,10 +2,15 @@ import unittest
 
 from split_translator.anchor_groups import (
     Group,
+    Resolved,
     add_conflict,
+    batch_anchors,
     build_groups,
+    displaced_automatic,
     first_conflict,
+    fixed_groups,
     group_paragraphs,
+    resolve,
     resolve_manual,
 )
 
@@ -148,3 +153,100 @@ class WithinTests(unittest.TestCase):
         (group,) = _groups([("b2", "b3"), ("b2", "b4")])
         self.assertFalse(group.within(range(3, 10), range(0, 10)))
         self.assertFalse(group.within(range(0, 10), range(0, 4)))
+
+
+def _resolve(manual=(), automatic=()):
+    return resolve(list(manual), list(automatic), IDS, IDS)
+
+
+class ResolveTests(unittest.TestCase):
+    def test_automatic_anchors_form_groups_of_their_own(self):
+        resolved = _resolve(automatic=[("b1", "b1"), ("b1", "b2"), ("b4", "b5")])
+        self.assertEqual(
+            [(g.original_first, g.translation_first, g.translation_last) for g in resolved.automatic],
+            [(1, 1, 2), (4, 5, 5)],
+        )
+        self.assertEqual(resolved.manual, [])
+        self.assertEqual(resolved.ignored, [])
+
+    def test_groups_hold_both_kinds_in_reading_order(self):
+        resolved = _resolve(manual=[("b3", "b3")], automatic=[("b1", "b1"), ("b6", "b6")])
+        self.assertEqual([g.original_first for g in resolved.groups], [1, 3, 6])
+
+    def test_an_automatic_group_sharing_a_paragraph_with_a_manual_one_is_ignored(self):
+        resolved = _resolve(manual=[("b3", "b3")], automatic=[("b3", "b4"), ("b5", "b5")])
+        self.assertEqual(resolved.ignored, [("b3", "b4")])
+        self.assertEqual([g.original_first for g in resolved.automatic], [5])
+
+    def test_an_automatic_group_crossing_a_manual_one_is_ignored(self):
+        resolved = _resolve(manual=[("b3", "b3")], automatic=[("b2", "b6"), ("b7", "b7")])
+        self.assertEqual(resolved.ignored, [("b2", "b6")])
+
+    def test_an_automatic_group_crossing_a_distant_manual_one_is_ignored(self):
+        # Between b2 and b4 on the original side, but after b8 on the other.
+        resolved = _resolve(
+            manual=[("b2", "b2"), ("b4", "b4"), ("b6", "b6"), ("b8", "b8")],
+            automatic=[("b3", "b9")],
+        )
+        self.assertEqual(resolved.ignored, [("b3", "b9")])
+
+    def test_automatic_groups_that_cross_each_other_keep_the_first(self):
+        resolved = _resolve(automatic=[("b1", "b5"), ("b2", "b3"), ("b6", "b6")])
+        self.assertEqual(resolved.ignored, [("b2", "b3")])
+        self.assertEqual([g.original_first for g in resolved.automatic], [1, 6])
+
+    def test_manual_conflicts_are_reported_as_before(self):
+        resolved = _resolve(manual=[("b1", "b5"), ("b3", "b2")])
+        self.assertEqual(resolved.conflicting, [("b3", "b2")])
+
+    def test_unknown_ids_are_left_out_silently(self):
+        resolved = _resolve(automatic=[("b1", "x9"), ("b2", "b2")])
+        self.assertEqual(resolved.ignored, [])
+        self.assertEqual([g.original_first for g in resolved.automatic], [2])
+
+
+class BatchTests(unittest.TestCase):
+    def test_a_batch_holds_the_automatic_groups_that_start_in_it(self):
+        resolved = _resolve(
+            manual=[("b3", "b3")],
+            automatic=[("b1", "b1"), ("b4", "b4"), ("b5", "b5"), ("b5", "b6"), ("b8", "b8")],
+        )
+        self.assertEqual(
+            batch_anchors(resolved, 4, 3), [("b4", "b4"), ("b5", "b5"), ("b5", "b6")]
+        )
+
+    def test_a_batch_fits_around_manual_groups_and_automatic_ones_outside_it(self):
+        resolved = _resolve(
+            manual=[("b3", "b3")], automatic=[("b1", "b1"), ("b4", "b4"), ("b8", "b8")]
+        )
+        self.assertEqual(
+            [g.original_first for g in fixed_groups(resolved, 4, 3)], [1, 3, 8]
+        )
+
+
+class DisplacedAutomaticTests(unittest.TestCase):
+    def test_a_new_manual_anchor_pushes_out_what_it_touches_or_crosses(self):
+        automatic = [("b1", "b1"), ("b2", "b2"), ("b3", "b4"), ("b5", "b5")]
+        # b3 = b3 shares b3 with the automatic group b3 = b4 and crosses nothing else.
+        self.assertEqual(
+            displaced_automatic([], automatic, ("b3", "b3"), IDS, IDS), [("b3", "b4")]
+        )
+        # b2 = b5 crosses b3 = b4 and shares b2 and b5 with two more groups.
+        self.assertEqual(
+            displaced_automatic([], automatic, ("b2", "b5"), IDS, IDS),
+            [("b2", "b2"), ("b3", "b4"), ("b5", "b5")],
+        )
+
+    def test_a_new_anchor_that_grows_a_manual_group_uses_the_grown_extent(self):
+        automatic = [("b4", "b4"), ("b6", "b6")]
+        # b2 = b2 plus b2 = b5 makes one manual group covering b2..b5 on the
+        # translation side, which crosses b4 = b4.
+        self.assertEqual(
+            displaced_automatic([("b2", "b2")], automatic, ("b2", "b5"), IDS, IDS),
+            [("b4", "b4")],
+        )
+
+    def test_nothing_is_displaced_by_an_unknown_id(self):
+        self.assertEqual(
+            displaced_automatic([], [("b1", "b1")], ("b1", "x9"), IDS, IDS), []
+        )
