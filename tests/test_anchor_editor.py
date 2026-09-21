@@ -964,12 +964,12 @@ class AnchorEditorNormalisePanelTests(unittest.TestCase):
         self.assertIs(editor.bottom_splitter.widget(1), editor.side_tabs)
         self.assertEqual(
             [editor.side_tabs.tabText(i) for i in range(editor.side_tabs.count())],
-            ["Skip", "Spacing"],
+            ["Automatic anchors", "Skip", "Spacing"],
         )
-        self.assertIs(editor.side_tabs.widget(1), editor.normalise_panel)
+        self.assertIs(editor.side_tabs.widget(2), editor.normalise_panel)
 
     def test_the_splitter_starts_even(self):
-        # The Skip tab (the tabs' default) is wide enough that its minimum
+        # The tabs are wide enough that its minimum
         # width beats the requested 50/50 split while the widget has never
         # been given a real size, as in a headless construction; shown at a
         # realistic width the split is even, matching what setSizes asked for.
@@ -1065,3 +1065,207 @@ class AnchorEditorNormalisePanelTests(unittest.TestCase):
         )
         self.assertTrue(editor.original_view._normalise_spec.is_default)
         self.assertTrue(editor.translation_view._normalise_spec.is_default)
+
+
+from PySide6.QtCore import QObject, Signal
+
+# One invented name per paragraph, so the real aligner has something to match.
+_NAMES = [
+    "Zorander", "Quillon", "Mervash", "Tolvane", "Brisket",
+    "Kestrin", "Halbrook", "Yarrowby", "Durnhelm", "Fenwyck",
+]
+
+
+class _FakeWorker(QObject):
+    """Stands in for AlignWorker: records its arguments and never starts a
+    thread. The test sets the result and emits finished."""
+
+    finished = Signal()
+
+    def __init__(self, arguments):
+        super().__init__()
+        self.arguments = arguments
+        self.anchors = []
+        self.error = None
+        self.started = False
+        self.waited = False
+
+    def start(self):
+        self.started = True
+
+    def wait(self, *_args):
+        self.waited = True
+        return True
+
+
+class AnchorEditorAutomaticTests(unittest.TestCase):
+    """The Automatic anchors tab: a batch is aligned off the UI thread and its
+    result replaces the batch's earlier automatic anchors."""
+
+    def _editor(self, anchors=(), automatic=(), skip=None, fake=True):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        store.anchors = list(anchors)
+        store.auto_anchors = list(automatic)
+        for side, (first, last) in (skip or {}).items():
+            store.set_skip(side, first, last)
+        ids = [f"b{i}" for i in range(10)]
+        texts = [f"{name} walked along the winding road." for name in _NAMES]
+        html = "".join(f"<p data-stid='{x}'>{t}</p>" for x, t in zip(ids, texts))
+        doc = BookDocument(html=html, block_ids=ids, title="T", block_texts=texts)
+        self.changed = 0
+
+        def on_changed():
+            self.changed += 1
+
+        editor = AnchorEditor(
+            doc, doc, store, _sections(doc, doc), QWebEngineProfile(), on_changed
+        )
+        self.workers = []
+        if fake:
+
+            def factory(arguments):
+                worker = _FakeWorker(arguments)
+                self.workers.append(worker)
+                return worker
+
+            editor.align_worker_factory = factory
+        return editor, store
+
+    def _generate(self, editor, start, count):
+        editor.auto_panel.set_start(start)
+        editor.auto_panel.count_box.setValue(count)
+        editor.auto_panel.generate_button.click()
+
+    def test_the_automatic_anchors_tab_comes_first(self):
+        editor, _ = self._editor()
+        self.assertEqual(editor.side_tabs.tabText(0), "Automatic anchors")
+        self.assertIs(editor.side_tabs.widget(0), editor.auto_panel)
+
+    def test_the_start_defaults_to_the_first_kept_paragraph(self):
+        editor, _ = self._editor(skip={ORIGINAL_SIDE: ("b2", None)})
+        self.assertEqual(editor.auto_panel.start(), 2)
+
+    def test_generate_starts_a_worker_and_disables_the_buttons(self):
+        editor, _ = self._editor(skip={TRANSLATION_SIDE: ("b1", "b8")})
+        self._generate(editor, 0, 4)
+        (worker,) = self.workers
+        self.assertTrue(worker.started)
+        self.assertEqual(worker.arguments["start"], 0)
+        self.assertEqual(worker.arguments["count"], 4)
+        self.assertEqual(worker.arguments["original_kept"], range(0, 10))
+        self.assertEqual(worker.arguments["translation_kept"], range(1, 9))
+        self.assertEqual(worker.arguments["original_ids"], [f"b{i}" for i in range(10)])
+        self.assertEqual(len(worker.arguments["original_texts"]), 10)
+        self.assertFalse(editor.auto_panel.generate_button.isEnabled())
+        self.assertFalse(editor.auto_panel.remove_button.isEnabled())
+        self.assertEqual(editor.status_label.text(), "Aligning...")
+
+    def test_a_second_generate_while_aligning_is_ignored(self):
+        editor, _ = self._editor()
+        self._generate(editor, 0, 4)
+        editor._generate(4, 4)
+        self.assertEqual(len(self.workers), 1)
+
+    def test_the_batch_fits_around_manual_groups_and_automatic_ones_outside_it(self):
+        editor, _ = self._editor([("b5", "b5")], automatic=[("b1", "b1"), ("b8", "b8")])
+        self._generate(editor, 0, 4)
+        fixed = self.workers[0].arguments["fixed_groups"]
+        self.assertEqual([g.original_first for g in fixed], [5, 8])
+
+    def test_a_finished_batch_replaces_the_old_one_and_is_reported(self):
+        editor, store = self._editor(automatic=[("b1", "b1"), ("b8", "b8")])
+        self._generate(editor, 0, 4)
+        worker = self.workers[0]
+        worker.anchors = [("b0", "b0"), ("b1", "b1"), ("b2", "b2"), ("b3", "b3")]
+        worker.finished.emit()
+        self.assertEqual(
+            store.auto_anchors,
+            [("b8", "b8"), ("b0", "b0"), ("b1", "b1"), ("b2", "b2"), ("b3", "b3")],
+        )
+        self.assertEqual(
+            editor.status_label.text(), "Added 4 automatic anchors for paragraphs 1 to 4"
+        )
+        self.assertEqual(editor.auto_panel.start(), 4)
+        self.assertTrue(editor.auto_panel.generate_button.isEnabled())
+        self.assertEqual(self.changed, 1)
+
+    def test_a_failed_batch_changes_nothing(self):
+        editor, store = self._editor(automatic=[("b1", "b1")])
+        self._generate(editor, 0, 4)
+        worker = self.workers[0]
+        worker.error = "boom"
+        worker.finished.emit()
+        self.assertEqual(store.auto_anchors, [("b1", "b1")])
+        self.assertEqual(editor.status_label.text(), "Alignment failed: boom")
+        self.assertTrue(editor.auto_panel.generate_button.isEnabled())
+        self.assertEqual(self.changed, 0)
+
+    def test_new_anchors_touching_a_manual_anchor_added_meanwhile_are_left_out(self):
+        editor, store = self._editor()
+        self._generate(editor, 0, 4)
+        store.anchors = [("b2", "b2")]
+        worker = self.workers[0]
+        worker.anchors = [("b0", "b0"), ("b1", "b1"), ("b2", "b3"), ("b3", "b4")]
+        worker.finished.emit()
+        self.assertEqual(store.auto_anchors, [("b0", "b0"), ("b1", "b1"), ("b3", "b4")])
+        self.assertEqual(
+            editor.status_label.text(), "Added 3 automatic anchors for paragraphs 1 to 4"
+        )
+
+    def test_remove_automatic_removes_the_batch(self):
+        editor, store = self._editor(automatic=[("b1", "b1"), ("b2", "b2"), ("b6", "b6")])
+        editor.auto_panel.set_start(0)
+        editor.auto_panel.count_box.setValue(4)
+        editor.auto_panel.remove_button.click()
+        self.assertEqual(store.auto_anchors, [("b6", "b6")])
+        self.assertEqual(
+            editor.status_label.text(), "Removed 2 automatic anchors for paragraphs 1 to 4"
+        )
+        self.assertEqual(self.changed, 1)
+
+    def test_remove_with_nothing_in_the_batch_says_so(self):
+        editor, store = self._editor(automatic=[("b6", "b6")])
+        editor.auto_panel.set_start(0)
+        editor.auto_panel.count_box.setValue(4)
+        editor.auto_panel.remove_button.click()
+        self.assertEqual(store.auto_anchors, [("b6", "b6")])
+        self.assertEqual(
+            editor.status_label.text(), "No automatic anchors for paragraphs 1 to 4"
+        )
+        self.assertEqual(self.changed, 0)
+
+    def test_from_selection_starts_the_batch_at_the_selected_paragraph(self):
+        editor, _ = self._editor()
+        editor._on_original_clicked("b5")
+        editor.auto_panel.from_selection_button.click()
+        self.assertEqual(editor.auto_panel.start(), 5)
+
+    def test_from_selection_without_a_selection_says_so(self):
+        editor, _ = self._editor()
+        editor.auto_panel.from_selection_button.click()
+        self.assertEqual(
+            editor.status_label.text(), "Select a paragraph in the original first"
+        )
+
+    def test_closing_while_aligning_waits_and_applies_the_result(self):
+        editor, store = self._editor()
+        self._generate(editor, 0, 2)
+        worker = self.workers[0]
+        worker.anchors = [("b0", "b0"), ("b1", "b1")]
+        editor.close()
+        self.assertTrue(worker.waited)
+        self.assertEqual(store.auto_anchors, [("b0", "b0"), ("b1", "b1")])
+        # The finished signal still arrives later; it must not apply twice.
+        store.auto_anchors = []
+        worker.finished.emit()
+        self.assertEqual(store.auto_anchors, [])
+
+    def test_the_real_worker_aligns_a_batch(self):
+        editor, store = self._editor(fake=False)
+        self._generate(editor, 0, 10)
+        self.assertTrue(editor._align_worker.wait(10000))
+        QApplication.processEvents()
+        self.assertEqual(store.auto_anchors, [(f"b{i}", f"b{i}") for i in range(10)])

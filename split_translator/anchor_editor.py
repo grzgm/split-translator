@@ -1,7 +1,9 @@
 """Side-by-side anchor editor: click a paragraph in each edition to select it,
-then bind the two selections into an anchor. Saved anchors stay highlighted in
-both views, over every paragraph their group covers; clicking an anchor in the
-list jumps both views to it."""
+then bind the two selections into an anchor. The editor also generates
+automatic anchors in batches, aligning a run of paragraphs off the UI thread
+and replacing that batch's earlier automatic anchors with the result. Saved
+anchors of both kinds stay highlighted in both views, over every paragraph
+their group covers; clicking an anchor in the list jumps both views to it."""
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWebEngineCore import QWebEngineProfile
@@ -19,15 +21,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .align_worker import AlignWorker
 from .anchor_book_view import AUTOMATIC_MARKS, MANUAL_MARK, AnchorBookView
 from .anchor_groups import (
     Resolved,
     add_conflict,
+    batch_anchors,
     displaced_automatic,
+    fixed_groups,
     group_paragraphs,
     resolve,
 )
 from .anchor_store import EDITOR_SURFACE, AnchorStore
+from .auto_panel import AutoAnchorPanel
 from .block_ids import resolve_position
 from .book_loader import BookDocument
 from .book_sync import SectionMap, kept_range
@@ -166,6 +172,13 @@ class AnchorEditor(QWidget):
         self._skip_save_timer.setSingleShot(True)
         self._skip_save_timer.timeout.connect(self._save_skip)
 
+        # The batch being aligned, if any, and which original paragraphs it
+        # covers. The worker comes from a factory so tests can stand in for
+        # the thread.
+        self.align_worker_factory = AlignWorker
+        self._align_worker = None
+        self._align_batch = (0, 0)
+
         self.init_ui()
         self._push_sections()
         self.refresh()
@@ -301,8 +314,18 @@ class AnchorEditor(QWidget):
         self.skip_panel.changed.connect(self._on_skip_changed)
         self.skip_panel.from_selection.connect(self._skip_from_selection)
 
+        # A batch of automatic anchors: a start and a count of original
+        # paragraphs. The start begins at the first kept paragraph, where the
+        # story begins.
+        self.auto_panel = AutoAnchorPanel(len(self.original_document.block_ids))
+        self.auto_panel.set_start(self._kept(ORIGINAL_SIDE).start)
+        self.auto_panel.generate.connect(self._generate)
+        self.auto_panel.remove.connect(self._remove_batch)
+        self.auto_panel.from_selection.connect(self._batch_from_selection)
+
         # One tab per tool, so the books above keep their height.
         self.side_tabs = QTabWidget()
+        self.side_tabs.addTab(self.auto_panel, "Automatic anchors")
         self.side_tabs.addTab(self.skip_panel, "Skip")
         self.side_tabs.addTab(self.normalise_panel, "Spacing")
 
@@ -501,6 +524,107 @@ class AnchorEditor(QWidget):
         """Write the skip fields. Called by the debounce timer."""
         self._skip_save_timer.stop()
         self.anchor_store.save()
+
+    def _batch_text(self, start: int, count: int) -> str:
+        """The batch's paragraphs as the Automatic anchors tab counts them."""
+        last = min(start + count, len(self.original_document.block_ids))
+        return f"paragraphs {start + 1} to {last}"
+
+    def _generate(self, start: int, count: int) -> None:
+        """Align a batch off the UI thread. The groups it must fit around and
+        the kept ranges are taken now; the result is applied when the worker
+        finishes (see _on_align_finished)."""
+        if self._align_worker is not None:
+            return
+        worker = self.align_worker_factory(
+            {
+                "original_ids": self.original_document.block_ids,
+                "original_texts": self.original_document.block_texts,
+                "translation_ids": self.translation_document.block_ids,
+                "translation_texts": self.translation_document.block_texts,
+                "fixed_groups": fixed_groups(self._resolve(), start, count),
+                "start": start,
+                "count": count,
+                "original_kept": self._kept(ORIGINAL_SIDE),
+                "translation_kept": self._kept(TRANSLATION_SIDE),
+            }
+        )
+        worker.finished.connect(self._on_align_finished)
+        self._align_worker = worker
+        self._align_batch = (start, count)
+        self.auto_panel.set_busy(True)
+        self.status_label.setText("Aligning...")
+        worker.start()
+
+    def _on_align_finished(self) -> None:
+        """Apply a finished batch: its earlier automatic anchors are replaced
+        by the new ones in one write, then the marks, the list and the
+        sections in both windows follow. Runs on the worker's finished signal,
+        or directly when the editor closes; whichever comes second does
+        nothing."""
+        worker = self._align_worker
+        if worker is None:
+            return
+        self._align_worker = None
+        self.auto_panel.set_busy(False)
+        start, count = self._align_batch
+        if worker.error is not None:
+            self.status_label.setText(f"Alignment failed: {worker.error}")
+            return
+        replaced = set(batch_anchors(self._resolve(), start, count))
+        kept = [a for a in self.anchor_store.auto_anchors if a not in replaced]
+        # A manual anchor added while the batch was aligned wins: new anchors
+        # that now touch it are left out rather than stored to be ignored.
+        trial = resolve(
+            self.anchor_store.anchors,
+            kept + worker.anchors,
+            self.original_document.block_ids,
+            self.translation_document.block_ids,
+        )
+        ignored = set(trial.ignored)
+        added = [a for a in worker.anchors if a not in ignored]
+        self.anchor_store.set_automatic(kept + added)
+        self.refresh()
+        self._refresh_highlights()
+        self._on_changed()
+        self.status_label.setText(
+            f"Added {len(added)} automatic anchors for "
+            f"{self._batch_text(start, count)}"
+        )
+        # Ready for the next batch.
+        self.auto_panel.set_start(start + count)
+
+    def _remove_batch(self, start: int, count: int) -> None:
+        """Remove the automatic anchors of every automatic group that belongs
+        to the batch."""
+        if self._align_worker is not None:
+            return
+        gone = set(batch_anchors(self._resolve(), start, count))
+        if not gone:
+            self.status_label.setText(
+                f"No automatic anchors for {self._batch_text(start, count)}"
+            )
+            return
+        self.anchor_store.set_automatic(
+            [a for a in self.anchor_store.auto_anchors if a not in gone]
+        )
+        self.refresh()
+        self._refresh_highlights()
+        self._on_changed()
+        self.status_label.setText(
+            f"Removed {len(gone)} automatic anchors for "
+            f"{self._batch_text(start, count)}"
+        )
+
+    def _batch_from_selection(self) -> None:
+        """Start the batch at the paragraph selected in the original."""
+        ids = self.original_document.block_ids
+        selected = self._selected_original
+        if selected is None or selected not in ids:
+            self.status_label.setText("Select a paragraph in the original first")
+            return
+        self.status_label.setText("")
+        self.auto_panel.set_start(ids.index(selected))
 
     def _sync_from(
         self,
@@ -729,6 +853,12 @@ class AnchorEditor(QWidget):
         self._on_changed()
 
     def closeEvent(self, event) -> None:
+        # A batch still being aligned is waited for and applied, so closing
+        # the editor never loses it. Its finished signal arrives later and
+        # then finds nothing to do.
+        if self._align_worker is not None:
+            self._align_worker.wait()
+            self._on_align_finished()
         # Flush a pending spec edit BEFORE the scroll write below, not after.
         # The scroll write always runs; the spec flush only runs when an edit
         # is still sitting in the debounce. AnchorStore.save() always dumps
