@@ -206,7 +206,9 @@ class EditorSearchTests(unittest.TestCase):
         self.assertEqual(view.find_calls, [])
 
 
-from split_translator.anchor_book_view import AnchorBookView
+import re
+
+from split_translator.anchor_book_view import _ANCHOR_JS, AnchorBookView
 
 
 class AnchorBookViewTests(unittest.TestCase):
@@ -245,6 +247,17 @@ class AnchorBookViewTests(unittest.TestCase):
         view.remember_marks({MANUAL_MARK: ["b0"]})
         view._on_load_finished(False)  # a failed load re-applies nothing
         self.assertEqual(calls, [])
+
+    def test_group_marks_match_the_python_side_class_names(self):
+        # The injected script repeats MANUAL_MARK and AUTOMATIC_MARKS in its
+        # own GROUP_MARKS array and style rules; renaming one side without the
+        # other silently breaks the marks, so check both stay in step.
+        match = re.search(r"GROUP_MARKS\s*=\s*\[(.*?)\]", _ANCHOR_JS)
+        self.assertIsNotNone(match)
+        names = re.findall(r"'([^']*)'", match.group(1))
+        self.assertEqual(names, [MANUAL_MARK, *AUTOMATIC_MARKS])
+        for name in names:
+            self.assertIn(f".{name} {{", _ANCHOR_JS)
 
 
 class AnchorEditorSelectionTests(unittest.TestCase):
