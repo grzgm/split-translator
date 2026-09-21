@@ -38,6 +38,7 @@ from .sync_gesture import SyncGesture
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
 _TRANSLATION_ID_ROLE = 257  # Qt.UserRole + 1
+_AUTOMATIC_ROLE = 258  # Qt.UserRole + 2
 
 
 class _EditorSearch:
@@ -259,6 +260,13 @@ class AnchorEditor(QWidget):
         controls.addWidget(self.remove_button)
         controls.addWidget(self.normalise_checkbox)
         controls.addWidget(self.sync_checkbox)
+        # The list shows the manual anchors; the automatic ones, which can
+        # number in the thousands, only on request.
+        self.show_automatic_checkbox = QCheckBox("Show automatic")
+        self.show_automatic_checkbox.stateChanged.connect(
+            lambda _state: self.refresh()
+        )
+        controls.addWidget(self.show_automatic_checkbox)
         controls.addStretch()
         bottom.addLayout(controls)
 
@@ -432,6 +440,10 @@ class AnchorEditor(QWidget):
         if side == ORIGINAL_SIDE:
             return self.original_view
         return self.translation_view
+
+    def _kept(self, side: str) -> range:
+        """Positions of that side's kept paragraphs, from the skip fields."""
+        return kept_range(self._ids(side), *self.anchor_store.get_skip(side))
 
     def _on_skip_changed(self, side: str, which: str) -> None:
         """A skip field changed. Store the first and last kept paragraphs (the
@@ -642,45 +654,53 @@ class AnchorEditor(QWidget):
 
     def refresh(self) -> None:
         self.anchor_list.clear()
-        # An anchor that overlaps or crosses earlier ones (only possible in a
-        # hand-edited or older file) is kept but ignored for sync; say so.
         resolved = self._resolve()
-        groups, conflicting = resolved.manual, resolved.conflicting
+        # Anchors that cannot hold are kept but ignored for sync; say so. A
+        # manual one overlaps or crosses earlier ones, an automatic one touches
+        # a manual group or an earlier automatic one (only possible in a
+        # hand-edited or older file, or a batch that finished after a manual
+        # edit).
+        conflicting = set(resolved.conflicting)
+        ignored = set(resolved.ignored)
         # Anchors in front or back matter are kept but ignored for sync.
-        original_kept = kept_range(
-            self.original_document.block_ids,
-            *self.anchor_store.get_skip(ORIGINAL_SIDE),
-        )
-        translation_kept = kept_range(
-            self.translation_document.block_ids,
-            *self.anchor_store.get_skip(TRANSLATION_SIDE),
-        )
+        original_kept = self._kept(ORIGINAL_SIDE)
+        translation_kept = self._kept(TRANSLATION_SIDE)
         skipped = {
             anchor
-            for group in groups
+            for group in resolved.manual + resolved.automatic
             if not group.within(original_kept, translation_kept)
             for anchor in group.anchors
         }
+        entries = [(anchor, False) for anchor in self.anchor_store.anchors]
+        if self.show_automatic_checkbox.isChecked():
+            entries += [(anchor, True) for anchor in self.anchor_store.auto_anchors]
         # Show the anchors lowest-first by the original block's position in the
-        # document. Sorting by block index (not the id string) keeps "b100" after
-        # "b7". Anchors whose id is no longer in the document sort to the end.
-        # This orders the display only; the stored order is untouched.
+        # document, a manual anchor before an automatic one on the same
+        # paragraph. Sorting by block index (not the id string) keeps "b100"
+        # after "b7". Anchors whose id is no longer in the document sort to the
+        # end. This orders the display only; the stored order is untouched.
         block_index = {
             bid: i for i, bid in enumerate(self.original_document.block_ids)
         }
-        ordered = sorted(
-            self.anchor_store.anchors,
-            key=lambda pair: block_index.get(pair[0], len(block_index)),
+        entries.sort(
+            key=lambda entry: (
+                block_index.get(entry[0][0], len(block_index)),
+                entry[1],
+            )
         )
-        for original_id, translation_id in ordered:
+        for (original_id, translation_id), automatic in entries:
+            anchor = (original_id, translation_id)
             label = f"{original_id}  =  {translation_id}"
-            if (original_id, translation_id) in conflicting:
+            if automatic:
+                label += "  (automatic)"
+            if anchor in (ignored if automatic else conflicting):
                 label += "  (conflicts)"
-            if (original_id, translation_id) in skipped:
+            if anchor in skipped:
                 label += "  (skipped)"
             item = QListWidgetItem(label)
             item.setData(_ORIGINAL_ID_ROLE, original_id)
             item.setData(_TRANSLATION_ID_ROLE, translation_id)
+            item.setData(_AUTOMATIC_ROLE, automatic)
             self.anchor_list.addItem(item)
 
     def _on_anchor_clicked(self, item: QListWidgetItem) -> None:
@@ -697,9 +717,12 @@ class AnchorEditor(QWidget):
         item = self.anchor_list.currentItem()
         if item is None:
             return
-        self.anchor_store.remove(
-            item.data(_ORIGINAL_ID_ROLE), item.data(_TRANSLATION_ID_ROLE)
-        )
+        original_id = item.data(_ORIGINAL_ID_ROLE)
+        translation_id = item.data(_TRANSLATION_ID_ROLE)
+        if item.data(_AUTOMATIC_ROLE):
+            self.anchor_store.remove_automatic(original_id, translation_id)
+        else:
+            self.anchor_store.remove(original_id, translation_id)
         self.status_label.setText("")
         self.refresh()
         self._refresh_highlights()

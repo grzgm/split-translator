@@ -644,8 +644,51 @@ class AnchorEditorGroupTests(unittest.TestCase):
         self.assertEqual(store.auto_anchors, [("b1", "b1")])
         self.assertEqual(editor.status_label.text(), "")
 
+    def _labels(self, editor):
+        return [editor.anchor_list.item(i).text() for i in range(editor.anchor_list.count())]
+
+    def test_the_list_shows_manual_anchors_only_by_default(self):
+        editor, _ = self._editor([("b3", "b3")], automatic=[("b1", "b1")])
+        self.assertFalse(editor.show_automatic_checkbox.isChecked())
+        self.assertEqual(self._labels(editor), ["b3  =  b3"])
+
+    def test_show_automatic_adds_them_labelled(self):
+        editor, _ = self._editor([("b3", "b3")], automatic=[("b1", "b1"), ("b5", "b5")])
+        editor.show_automatic_checkbox.setChecked(True)
+        self.assertEqual(
+            self._labels(editor),
+            ["b1  =  b1  (automatic)", "b3  =  b3", "b5  =  b5  (automatic)"],
+        )
+
+    def test_an_ignored_automatic_anchor_is_labelled_and_follows_the_manual_one(self):
+        editor, _ = self._editor([("b3", "b3")], automatic=[("b3", "b4")])
+        editor.show_automatic_checkbox.setChecked(True)
+        self.assertEqual(
+            self._labels(editor),
+            ["b3  =  b3", "b3  =  b4  (automatic)  (conflicts)"],
+        )
+
+    def test_an_automatic_anchor_outside_the_kept_range_is_labelled(self):
+        editor, store = self._editor(automatic=[("b1", "b1"), ("b4", "b4")])
+        store.set_skip(ORIGINAL_SIDE, "b2", None)
+        editor.show_automatic_checkbox.setChecked(True)
+        self.assertEqual(
+            self._labels(editor),
+            ["b1  =  b1  (automatic)  (skipped)", "b4  =  b4  (automatic)"],
+        )
+
+    def test_remove_selected_removes_an_automatic_anchor(self):
+        editor, store = self._editor([("b3", "b3")], automatic=[("b3", "b3"), ("b5", "b5")])
+        editor.show_automatic_checkbox.setChecked(True)
+        labels = self._labels(editor)
+        editor.anchor_list.setCurrentRow(labels.index("b3  =  b3  (automatic)  (conflicts)"))
+        editor._remove_selected()
+        self.assertEqual(store.anchors, [("b3", "b3")])
+        self.assertEqual(store.auto_anchors, [("b5", "b5")])
+
 
 from split_translator.skip_panel import AT_END, AT_START
+from split_translator.normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE
 
 
 class AnchorEditorSkipTests(unittest.TestCase):
