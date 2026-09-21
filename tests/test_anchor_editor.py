@@ -712,6 +712,39 @@ class AnchorEditorSkipTests(unittest.TestCase):
         )
         self.assertEqual(store.get_skip(ORIGINAL_SIDE), (None, None))
 
+    def test_from_selection_after_the_end_skip_is_refused(self):
+        editor, store = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_END).setValue(5)
+        editor._on_original_clicked("b6")
+        editor._skip_from_selection(ORIGINAL_SIDE, AT_START)
+        self.assertEqual(editor.skip_panel.skip(ORIGINAL_SIDE), (0, 5))
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), (None, "b2"))
+        self.assertEqual(
+            editor.status_label.text(),
+            "The selected paragraph is after the last kept paragraph",
+        )
+
+    def test_from_selection_before_the_start_skip_is_refused(self):
+        editor, store = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(4)
+        editor._on_original_clicked("b1")
+        editor._skip_from_selection(ORIGINAL_SIDE, AT_END)
+        self.assertEqual(editor.skip_panel.skip(ORIGINAL_SIDE), (4, 0))
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), ("b4", None))
+        self.assertEqual(
+            editor.status_label.text(),
+            "The selected paragraph is before the first kept paragraph",
+        )
+
+    def test_from_selection_on_the_boundary_itself_is_allowed(self):
+        editor, store = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_END).setValue(5)
+        editor._on_original_clicked("b2")
+        editor._skip_from_selection(ORIGINAL_SIDE, AT_START)
+        self.assertEqual(editor.skip_panel.skip(ORIGINAL_SIDE), (2, 5))
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), ("b2", "b2"))
+        self.assertEqual(editor.status_label.text(), "")
+
     def test_anchors_outside_the_kept_range_are_labelled(self):
         editor, _ = self._editor(
             {ORIGINAL_SIDE: ("b1", None)}, anchors=[("b0", "b0"), ("b3", "b3")]

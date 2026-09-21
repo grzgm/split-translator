@@ -26,7 +26,7 @@ from .book_loader import BookDocument, resolve_position
 from .book_sync import SectionMap, kept_range
 from .normalise_panel import NormalisePanel
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
-from .skip_panel import AT_START, SkipPanel
+from .skip_panel import AT_END, AT_START, SkipPanel
 from .sync_gesture import SyncGesture
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
@@ -449,8 +449,11 @@ class AnchorEditor(QWidget):
 
     def _skip_from_selection(self, side: str, which: str) -> None:
         """Skip everything before (at the start) or after (at the end) the
-        paragraph selected in that edition. The box clamps, so at least one
-        paragraph always stays kept."""
+        paragraph selected in that edition. A selection outside the kept range
+        (after the last kept paragraph for the start, before the first kept
+        paragraph for the end) is refused with a status message rather than
+        clamped, since clamping it would silently collapse the kept range
+        instead of doing what was asked."""
         if side == ORIGINAL_SIDE:
             selected = self._selected_original
         else:
@@ -459,8 +462,19 @@ class AnchorEditor(QWidget):
         if selected is None or selected not in ids:
             self.status_label.setText(f"Select a paragraph in the {side} first")
             return
-        self.status_label.setText("")
         position = ids.index(selected)
+        start, end = self.skip_panel.skip(side)
+        if which == AT_START and position > len(ids) - 1 - end:
+            self.status_label.setText(
+                "The selected paragraph is after the last kept paragraph"
+            )
+            return
+        if which == AT_END and position < start:
+            self.status_label.setText(
+                "The selected paragraph is before the first kept paragraph"
+            )
+            return
+        self.status_label.setText("")
         value = position if which == AT_START else len(ids) - 1 - position
         self.skip_panel.box(side, which).setValue(value)
 
