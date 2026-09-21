@@ -162,16 +162,20 @@ _TOPMOST_ID_JS = """
 # the paragraph holding the current find match (and its counterpart paragraphs in
 # the other edition) by toggling this class. The class name is distinct from the
 # anchor editor's classes so the two never clash if a view ever carries both.
+#: How the paragraph holding the current search match is marked, in the reader
+#: and in the anchor editor's find bars alike (see anchor_book_view).
+SEARCH_MARK_STYLE = "background: #fff3a8; outline: 2px solid #e0b400;"
+
 _SEARCH_STYLE_JS = """
 (function() {
     if (document.getElementById('st-search-style')) return;
     var style = document.createElement('style');
     style.id = 'st-search-style';
     style.textContent =
-        '.st-search-block { background: #fff3a8; outline: 2px solid #e0b400; }';
+        '.st-search-block { __SEARCH_MARK_STYLE__ }';
     (document.head || document.documentElement).appendChild(style);
 })();
-"""
+""".replace("__SEARCH_MARK_STYLE__", SEARCH_MARK_STYLE)
 
 # The paragraph-spacing normalisation rules live in normalise_spec, which builds
 # them from one edition's multipliers; see that module for why the app levels

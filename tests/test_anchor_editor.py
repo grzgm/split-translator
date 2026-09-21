@@ -4,7 +4,11 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import QApplication
 
 from split_translator.anchor_click_bridge import AnchorClickBridge
-from split_translator.anchor_book_view import AUTOMATIC_MARKS, MANUAL_MARK
+from split_translator.anchor_book_view import (
+    AUTOMATIC_MARKS,
+    MANUAL_MARK,
+    MARK_COLOURS,
+)
 from split_translator.book_loader import BookDocument
 from split_translator.book_view import BookView
 
@@ -132,7 +136,7 @@ from split_translator.anchor_editor import _EditorSearch
 
 
 class _FakeView:
-    """Stands in for an AnchorBookView: records finds and jump highlights, and
+    """Stands in for an AnchorBookView: records finds and search marks, and
     replays a scripted (active, count) for each find so the helper's counter and
     stepping logic can be driven without a live page."""
 
@@ -140,7 +144,7 @@ class _FakeView:
         # script: list of (active, count) tuples, consumed one per find() call.
         self._script = list(script)
         self.find_calls = []  # (term, forward)
-        self.jump_calls = []  # block ids passed to set_jump
+        self.marks = []  # paragraph lists marked; [] for a clear
         self.block_for_index = {}  # active index -> block id for matched_block_id
 
     def find(self, term, forward, callback):
@@ -151,8 +155,11 @@ class _FakeView:
     def matched_block_id(self, term, index, callback):
         callback(self.block_for_index.get(index, ""))
 
-    def set_jump(self, block_id):
-        self.jump_calls.append(block_id)
+    def mark_search_blocks(self, block_ids):
+        self.marks.append(list(block_ids))
+
+    def clear_search_mark(self):
+        self.marks.append([])
 
 
 class EditorSearchTests(unittest.TestCase):
@@ -167,25 +174,25 @@ class EditorSearchTests(unittest.TestCase):
         search.search("word")
         self.assertEqual(view.find_calls, [("word", True)])
         self.assertEqual(self.labels[-1], "3 / 12")
-        self.assertEqual(view.jump_calls[-1], "b5")  # match block highlighted
+        self.assertEqual(view.marks[-1], ["b5"])  # match paragraph marked
 
-    def test_empty_term_clears_the_jump_and_label(self):
+    def test_empty_term_clears_the_mark_and_label(self):
         view = _FakeView([(3, 12)])
         view.block_for_index = {3: "b5"}
         search = self._search(view)
         search.search("word")
-        view.jump_calls.clear()
+        view.marks.clear()
         search.search("   ")  # blank
         self.assertEqual(view.find_calls, [("word", True)])  # no new find
-        self.assertEqual(view.jump_calls, [""])  # jump cleared
+        self.assertEqual(view.marks, [[]])  # mark cleared
         self.assertEqual(self.labels[-1], "")
 
-    def test_no_matches_reports_and_clears_jump(self):
+    def test_no_matches_reports_and_clears_the_mark(self):
         view = _FakeView([(0, 0)])
         search = self._search(view)
         search.search("zzz")
         self.assertEqual(self.labels[-1], "No matches")
-        self.assertEqual(view.jump_calls[-1], "")
+        self.assertEqual(view.marks[-1], [])
 
     def test_next_and_prev_step_the_active_term(self):
         view = _FakeView([(1, 3), (2, 3), (1, 3)])
@@ -217,7 +224,7 @@ class AnchorBookViewTests(unittest.TestCase):
         self.assertTrue(hasattr(view, "block_clicked"))
         self.assertTrue(callable(view.set_selected))
         self.assertTrue(callable(view.set_marks))
-        self.assertTrue(callable(view.set_jump))
+        self.assertFalse(hasattr(view, "set_jump"))
 
     def test_block_clicked_signal_relays_bridge(self):
         view = AnchorBookView(_doc(), QWebEngineProfile())
@@ -248,6 +255,19 @@ class AnchorBookViewTests(unittest.TestCase):
         view._on_load_finished(False)  # a failed load re-applies nothing
         self.assertEqual(calls, [])
 
+    def test_the_search_mark_is_the_readers_and_the_selection_outranks_it(self):
+        from split_translator.book_view import SEARCH_MARK_STYLE, _SEARCH_STYLE_JS
+
+        self.assertIn(f".st-search-block {{ {SEARCH_MARK_STYLE} }}", _SEARCH_STYLE_JS)
+        search_rule = f"body .st-search-block {{ {SEARCH_MARK_STYLE} }}"
+        self.assertIn(search_rule, _ANCHOR_JS)
+        # Later rules of equal weight win, so the selection shows on a paragraph
+        # that also holds the search match, and both show over group colours.
+        self.assertGreater(
+            _ANCHOR_JS.index("body .st-selected {"), _ANCHOR_JS.index(search_rule)
+        )
+        self.assertNotIn("st-jump", _ANCHOR_JS)
+
     def test_group_marks_match_the_python_side_class_names(self):
         # The injected script repeats MANUAL_MARK and AUTOMATIC_MARKS in its
         # own GROUP_MARKS array and style rules; renaming one side without the
@@ -257,7 +277,9 @@ class AnchorBookViewTests(unittest.TestCase):
         names = re.findall(r"'([^']*)'", match.group(1))
         self.assertEqual(names, [MANUAL_MARK, *AUTOMATIC_MARKS])
         for name in names:
-            self.assertIn(f".{name} {{", _ANCHOR_JS)
+            self.assertIn(
+                f".{name} {{ background: {MARK_COLOURS[name]}; }}", _ANCHOR_JS
+            )
 
 
 class AnchorEditorSelectionTests(unittest.TestCase):
@@ -690,6 +712,42 @@ class AnchorEditorGroupTests(unittest.TestCase):
             ["2 = 2  (automatic)  (skipped)", "5 = 5  (automatic)"],
         )
 
+    def test_rows_take_the_colour_of_their_paragraphs(self):
+        editor, _ = self._editor(
+            [("b3", "b3")], automatic=[("b1", "b1"), ("b5", "b5"), ("b3", "b4")]
+        )
+        editor.show_automatic_checkbox.setChecked(True)
+        colours = {
+            editor.anchor_list.item(i).text(): (
+                editor.anchor_list.item(i).background().color().name()
+            )
+            for i in range(editor.anchor_list.count())
+        }
+        self.assertEqual(
+            colours,
+            {
+                "2 = 2  (automatic)": MARK_COLOURS[AUTOMATIC_MARKS[0]],
+                "4 = 4": MARK_COLOURS[MANUAL_MARK],
+                "4 = 5  (automatic)  (conflicts)": MARK_COLOURS[AUTOMATIC_MARKS[0]],
+                "6 = 6  (automatic)": MARK_COLOURS[AUTOMATIC_MARKS[1]],
+            },
+        )
+
+    def test_clicking_an_anchor_selects_its_two_paragraphs(self):
+        editor, _ = self._editor([("b3", "b4")])
+        editor._on_anchor_clicked(editor.anchor_list.item(0))
+        self.assertEqual(editor._selected_original, "b3")
+        self.assertEqual(editor._selected_translation, "b4")
+        self.assertTrue(editor.add_button.isEnabled())
+
+    def test_adding_a_clicked_automatic_anchor_makes_it_manual(self):
+        editor, store = self._editor(automatic=[("b3", "b4")])
+        editor.show_automatic_checkbox.setChecked(True)
+        editor._on_anchor_clicked(editor.anchor_list.item(0))
+        editor._on_add_clicked()
+        self.assertEqual(store.anchors, [("b3", "b4")])
+        self.assertEqual(store.auto_anchors, [])
+
     def test_remove_selected_removes_an_automatic_anchor(self):
         editor, store = self._editor([("b3", "b3")], automatic=[("b3", "b3"), ("b5", "b5")])
         editor.show_automatic_checkbox.setChecked(True)
@@ -782,7 +840,9 @@ class AnchorEditorSkipTests(unittest.TestCase):
             view.scroll_to = lambda bid, frac, s=side: self.jumps[s].append(
                 ("scroll", bid)
             )
-            view.set_jump = lambda bid, s=side: self.jumps[s].append(("jump", bid))
+            view.set_selected = lambda bid, s=side: self.jumps[s].append(
+                ("select", bid)
+            )
         return editor, store
 
     def test_the_fields_are_seeded_from_the_store(self):
@@ -798,8 +858,9 @@ class AnchorEditorSkipTests(unittest.TestCase):
         self.assertEqual(store.get_skip(ORIGINAL_SIDE), ("b3", None))
         self.assertEqual(self.changed, 1)
         self.assertEqual(
-            self.jumps[ORIGINAL_SIDE], [("scroll", "b3"), ("jump", "b3")]
+            self.jumps[ORIGINAL_SIDE], [("scroll", "b3"), ("select", "b3")]
         )
+        self.assertEqual(editor._selected_original, "b3")
         self.assertEqual(self.jumps[TRANSLATION_SIDE], [])
         self.assertFalse(self.path.exists())  # written on the debounce
 
@@ -808,8 +869,9 @@ class AnchorEditorSkipTests(unittest.TestCase):
         editor.skip_panel.box(TRANSLATION_SIDE, AT_END).setValue(2)
         self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, "b5"))
         self.assertEqual(
-            self.jumps[TRANSLATION_SIDE], [("scroll", "b5"), ("jump", "b5")]
+            self.jumps[TRANSLATION_SIDE], [("scroll", "b5"), ("select", "b5")]
         )
+        self.assertEqual(editor._selected_translation, "b5")
 
     def test_skipping_nothing_again_clears_the_side(self):
         editor, store = self._editor()

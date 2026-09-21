@@ -1163,7 +1163,6 @@ class BookPanelEditorTests(unittest.TestCase):
             try:
                 editor = panel.anchor_editor
                 editor.original_view.scroll_to = lambda bid, frac: None
-                editor.original_view.set_jump = lambda bid: None
                 editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(1)
                 self.assertEqual(panel.section_map.kept(ORIGINAL_SIDE), range(1, 4))
                 self.assertEqual(

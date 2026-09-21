@@ -6,6 +6,7 @@ anchors of both kinds stay highlighted in both views, over every paragraph
 their group covers; clicking an anchor in the list jumps both views to it."""
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,7 +23,12 @@ from PySide6.QtWidgets import (
 )
 
 from .align_worker import AlignWorker
-from .anchor_book_view import AUTOMATIC_MARKS, MANUAL_MARK, AnchorBookView
+from .anchor_book_view import (
+    AUTOMATIC_MARKS,
+    MANUAL_MARK,
+    MARK_COLOURS,
+    AnchorBookView,
+)
 from .anchor_groups import (
     Resolved,
     add_conflict,
@@ -53,9 +59,9 @@ class _EditorSearch:
 
     Numbers come from Chromium's own activeMatch/numberOfMatches (like the
     reader's BookPanel), so the counter is the match's absolute position and
-    cannot disagree with the highlighted block. A hit is highlighted with the
-    same dashed jump outline the anchor-list click uses; a miss (or a cleared
-    box) clears it."""
+    cannot disagree with the highlighted block. The paragraph holding the hit
+    gets the reader's search mark; a miss (or a cleared box) clears it. The
+    selection is left alone."""
 
     def __init__(self, view, on_label):
         self._view = view
@@ -70,7 +76,7 @@ class _EditorSearch:
             # Clearing the box clears this side's match highlight and counter.
             self._count = 0
             self._current = 0
-            self._view.set_jump("")
+            self._view.clear_search_mark()
             self._on_label("")
             return
         self._current = 0
@@ -89,14 +95,16 @@ class _EditorSearch:
         self._current = active if count else 0
         if not count:
             self._on_label("No matches")
-            self._view.set_jump("")
+            self._view.clear_search_mark()
             return
         self._on_label(f"{self._current} / {self._count}")
         # Highlight the block holding the active match, located by its 1-based
         # index (not the scroll), matching the reader's approach.
-        self._view.matched_block_id(
-            self._term, self._current, self._view.set_jump
-        )
+        self._view.matched_block_id(self._term, self._current, self._mark)
+
+    def _mark(self, block_id: str) -> None:
+        # An empty id means the match could not be placed in a paragraph.
+        self._view.mark_search_blocks([block_id] if block_id else [])
 
 
 class AnchorEditor(QWidget):
@@ -485,9 +493,10 @@ class AnchorEditor(QWidget):
         self._on_changed()
         self.refresh()
         boundary = first_kept if which == AT_START else last_kept
-        view = self._view(side)
-        view.scroll_to(boundary, 0.0)
-        view.set_jump(boundary)
+        # The boundary becomes that side's selection, so it is easy to see
+        # and From selection starts from it.
+        self._view(side).scroll_to(boundary, 0.0)
+        self._select(side, boundary)
 
     def _skip_from_selection(self, side: str, which: str) -> None:
         """Skip everything before (at the start) or after (at the end) the
@@ -687,6 +696,13 @@ class AnchorEditor(QWidget):
         self.translation_view.set_selected(block_id)
         self._update_add_enabled()
 
+    def _select(self, side: str, block_id: str) -> None:
+        """Select a paragraph on one side, as clicking it does."""
+        if side == ORIGINAL_SIDE:
+            self._on_original_clicked(block_id)
+        else:
+            self._on_translation_clicked(block_id)
+
     def _update_add_enabled(self) -> None:
         self.add_button.setEnabled(
             self._selected_original is not None
@@ -843,6 +859,15 @@ class AnchorEditor(QWidget):
         }
         original_numbers = self._paragraph_numbers(ORIGINAL_SIDE)
         translation_numbers = self._paragraph_numbers(TRANSLATION_SIDE)
+        # Each row takes the colour its paragraphs have in the views: yellow
+        # for manual anchors, and for automatic ones the purple shade of their
+        # group, so a row and the paragraphs it names look alike. An automatic
+        # anchor sync ignores has no group and takes the first shade.
+        automatic_shade = {
+            anchor: AUTOMATIC_MARKS[k % 2]
+            for k, group in enumerate(resolved.automatic)
+            for anchor in group.anchors
+        }
         entries.sort(
             key=lambda entry: (
                 block_index.get(entry[0][0], len(block_index)),
@@ -861,6 +886,13 @@ class AnchorEditor(QWidget):
             if anchor in skipped:
                 label += "  (skipped)"
             item = QListWidgetItem(label)
+            if automatic:
+                mark = automatic_shade.get(anchor, AUTOMATIC_MARKS[0])
+            else:
+                mark = MANUAL_MARK
+            item.setBackground(QColor(MARK_COLOURS[mark]))
+            # Dark text, since the background is light even in a dark theme.
+            item.setForeground(QColor("#000000"))
             item.setData(_ORIGINAL_ID_ROLE, original_id)
             item.setData(_TRANSLATION_ID_ROLE, translation_id)
             item.setData(_AUTOMATIC_ROLE, automatic)
@@ -869,12 +901,13 @@ class AnchorEditor(QWidget):
     def _on_anchor_clicked(self, item: QListWidgetItem) -> None:
         original_id = item.data(_ORIGINAL_ID_ROLE)
         translation_id = item.data(_TRANSLATION_ID_ROLE)
-        # Jump both views to the pair and emphasise it; this does NOT change the
-        # selection state, so it cannot enable "Add anchor here".
+        # Jump both views to the pair and select it, so the pair is easy to
+        # see and From selection or Add anchor here act on it. Adding a
+        # selected automatic anchor turns it into a manual one.
         self.original_view.scroll_to(original_id, 0.0)
         self.translation_view.scroll_to(translation_id, 0.0)
-        self.original_view.set_jump(original_id)
-        self.translation_view.set_jump(translation_id)
+        self._select(ORIGINAL_SIDE, original_id)
+        self._select(TRANSLATION_SIDE, translation_id)
 
     def _remove_selected(self) -> None:
         item = self.anchor_list.currentItem()

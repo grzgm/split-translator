@@ -1,5 +1,6 @@
 """Editor-only book view: a BookView that reports paragraph clicks and can
-highlight blocks (the current selection, saved anchors, and a jumped-to anchor).
+highlight blocks (the current selection and saved anchors). The search mark
+comes from BookView, as in the reader.
 
 The read-only reading panel keeps using plain BookView, so it carries none of
 this overhead. Click reporting uses the same QWebChannel + bridge pattern as
@@ -13,15 +14,22 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 
 from .anchor_click_bridge import AnchorClickBridge
 from .book_loader import BookDocument
-from .book_view import BookView
+from .book_view import SEARCH_MARK_STYLE, BookView
 from .normalise_spec import NormaliseSpec
 
-#: The class a manual group's paragraphs get: a yellow background.
+#: The class a manual group's paragraphs get: a light blue background.
 MANUAL_MARK = "st-anchored"
 #: The classes automatic groups' paragraphs get, alternating from one group to
 #: the next so neighbours can be told apart: a light or a deeper purple
 #: background.
 AUTOMATIC_MARKS = ("st-auto-a", "st-auto-b")
+#: The background each mark gives, so the anchor list can colour its rows the
+#: same way. The injected style below repeats these values.
+MARK_COLOURS = {
+    MANUAL_MARK: "#e3f2fd",
+    AUTOMATIC_MARKS[0]: "#f1e4fa",
+    AUTOMATIC_MARKS[1]: "#dfc8f0",
+}
 
 
 def _qwebchannel_js() -> str:
@@ -37,8 +45,8 @@ def _qwebchannel_js() -> str:
 
 # Injected at load. Connects to the channel, grabs the bridge, attaches one
 # delegated click listener that reports the clicked block's data-stid, and
-# defines the helpers that set the selection, the jump outline and the group
-# marks, plus their styles. __CHANNEL_JS__ is replaced with the bundled
+# defines the helpers that set the selection and the group marks, plus their
+# styles. __CHANNEL_JS__ is replaced with the bundled
 # qwebchannel.js client (str.replace, not format, because that client text is
 # full of braces).
 _ANCHOR_JS = """
@@ -50,11 +58,14 @@ _ANCHOR_JS = """
         var style = document.createElement('style');
         style.id = 'st-anchor-style';
         style.textContent =
-            '.st-selected { outline: 2px solid #1a73e8; background: #e8f0fe; }' +
-            '.st-anchored { background: #fff3cd; }' +
+            '.st-anchored { background: #e3f2fd; }' +
             '.st-auto-a { background: #f1e4fa; }' +
             '.st-auto-b { background: #dfc8f0; }' +
-            '.st-jump { outline: 2px dashed #1a73e8; }';
+            // The search match and the selection outrank the group colours:
+            // "body" makes each rule more specific than a group's. The
+            // selection comes last, so it wins wherever marks stack.
+            'body .st-search-block { __SEARCH_MARK_STYLE__ }' +
+            'body .st-selected { outline: 2px solid #1e8e3e; background: #e6f4ea; }';
         (document.head || document.documentElement).appendChild(style);
     }
 
@@ -72,10 +83,6 @@ _ANCHOR_JS = """
     window.stSetSelected = function(id) {
         clearClass('st-selected');
         addClass(id, 'st-selected');
-    };
-    window.stSetJump = function(id) {
-        clearClass('st-jump');
-        addClass(id, 'st-jump');
     };
     var GROUP_MARKS = ['st-anchored', 'st-auto-a', 'st-auto-b'];
     window.stSetMarks = function(marksJson) {
@@ -113,6 +120,7 @@ _ANCHOR_JS = """
     start();
 })();
 """
+_ANCHOR_JS = _ANCHOR_JS.replace("__SEARCH_MARK_STYLE__", SEARCH_MARK_STYLE)
 
 
 class AnchorBookView(BookView):
@@ -168,9 +176,6 @@ class AnchorBookView(BookView):
 
     def set_selected(self, block_id: str) -> None:
         self.page().runJavaScript(f"window.stSetSelected({json.dumps(block_id)})")
-
-    def set_jump(self, block_id: str) -> None:
-        self.page().runJavaScript(f"window.stSetJump({json.dumps(block_id)})")
 
     def remember_marks(self, marks: dict[str, list[str]]) -> None:
         """Record the group marks without touching the page, so they can be
