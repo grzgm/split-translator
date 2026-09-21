@@ -789,6 +789,20 @@ class AnchorEditorNumberingTests(unittest.TestCase):
         editor, _ = self._editor([("b6", "b11")])
         self.assertEqual(self._labels(editor), ["? = 4"])
 
+    def test_each_book_shows_its_selected_paragraph_number(self):
+        editor, _ = self._editor([])
+        self.assertEqual(editor.original_selection_label.text(), "Selected: none")
+        self.assertEqual(editor.translation_selection_label.text(), "Selected: none")
+        editor._on_original_clicked("b9")
+        editor._on_translation_clicked("b13")
+        self.assertEqual(editor.original_selection_label.text(), "Selected: 3")
+        self.assertEqual(editor.translation_selection_label.text(), "Selected: 5")
+        editor._on_original_clicked("b6")  # not a paragraph
+        self.assertEqual(editor.original_selection_label.text(), "Selected: ?")
+        editor._clear_selection()
+        self.assertEqual(editor.original_selection_label.text(), "Selected: none")
+        self.assertEqual(editor.translation_selection_label.text(), "Selected: none")
+
     def test_the_status_line_uses_paragraph_numbers(self):
         editor, _ = self._editor([("b9", "b11")])
         editor._on_original_clicked("b9")

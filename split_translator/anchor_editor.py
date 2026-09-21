@@ -383,6 +383,10 @@ class AnchorEditor(QWidget):
         bar.addWidget(prev_button)
         bar.addWidget(next_button)
         bar.addWidget(label)
+        # Which paragraph is selected in this edition, by paragraph number, so
+        # it can be compared with the list, Start and the Skip fields.
+        selection_label = QLabel(self._selection_text(""))
+        bar.addWidget(selection_label)
         # Stretch 0 for the bar (natural height), 1 for the view (all the rest),
         # so on a 4K screen the book view grows instead of leaving empty space
         # around the controls.
@@ -392,9 +396,28 @@ class AnchorEditor(QWidget):
         # The label setter (passed into _EditorSearch) writes here.
         if view is self.original_view:
             self._original_match_label = label
+            self.original_selection_label = selection_label
         else:
             self._translation_match_label = label
+            self.translation_selection_label = selection_label
         return column
+
+    def _selection_text(self, block_id: str | None, side: str = ORIGINAL_SIDE) -> str:
+        """The selection label's text: "Selected: 1258", "?" for an id that
+        is not a paragraph, "none" without a selection."""
+        if not block_id:
+            return "Selected: none"
+        ids = self._ids(side)
+        number = ids.index(block_id) + 1 if block_id in ids else "?"
+        return f"Selected: {number}"
+
+    def _update_selection_labels(self) -> None:
+        self.original_selection_label.setText(
+            self._selection_text(self._selected_original, ORIGINAL_SIDE)
+        )
+        self.translation_selection_label.setText(
+            self._selection_text(self._selected_translation, TRANSLATION_SIDE)
+        )
 
     def _set_original_match_label(self, text: str) -> None:
         self._original_match_label.setText(text)
@@ -704,6 +727,8 @@ class AnchorEditor(QWidget):
             self._on_translation_clicked(block_id)
 
     def _update_add_enabled(self) -> None:
+        # Called whenever either selection changes, so the labels follow too.
+        self._update_selection_labels()
         self.add_button.setEnabled(
             self._selected_original is not None
             and self._selected_translation is not None
