@@ -2,14 +2,16 @@
 one edition to the other as a section and a share of it.
 
 Anchors cut the books: each anchor group is a section, and the stretches
-between groups are sections too, with front matter before the first paragraph
-and back matter after the last. A section may have no paragraphs on one side,
-and then no height there. The page measures sections by rendered height (see
-book_view); this module holds the paragraph-level logic, with no Qt import."""
+between groups are sections too, with front matter before the first kept
+paragraph and back matter after the last (see the skip fields). A section may
+have no paragraphs on one side, and then no height there. The page measures
+sections by rendered height (see book_view); this module holds the
+paragraph-level logic, with no Qt import."""
 
 from dataclasses import dataclass
 
 from .anchor_groups import Group
+from .book_loader import resolve_block_id
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE
 
 # Section starts that are not paragraphs: the top and the end of the document.
@@ -45,14 +47,49 @@ def _weights(ids: list[str], texts: list[str]) -> list[int]:
     ]
 
 
+def _checked(kept: range | None, count: int) -> range:
+    """The kept range, or every paragraph when none is given or it does not
+    fit the edition."""
+    if kept is None or kept.start < 0 or kept.stop > count or kept.start >= kept.stop:
+        return range(0, count)
+    return range(kept.start, kept.stop)
+
+
+def kept_range(
+    block_ids: list[str], first_id: str | None, last_id: str | None
+) -> range:
+    """Positions of the paragraphs kept between the skip fields.
+
+    An absent id keeps that end. A first id that is no longer a paragraph
+    resolves forward and a last id backward (see resolve_block_id), so the
+    boundary moves inward rather than letting skipped text back in. Everything
+    is kept when the resolved ends would leave no paragraph."""
+    count = len(block_ids)
+    position = {bid: i for i, bid in enumerate(block_ids)}
+    start, stop = 0, count
+    if first_id is not None:
+        resolved = resolve_block_id(block_ids, first_id, forward=True)
+        if resolved is not None:
+            start = position[resolved]
+    if last_id is not None:
+        resolved = resolve_block_id(block_ids, last_id, forward=False)
+        if resolved is not None:
+            stop = position[resolved] + 1
+    if start >= stop:
+        return range(0, count)
+    return range(start, stop)
+
+
 class SectionMap:
     """Both editions cut into the same sections, so a reading position can be
     passed from one edition to the other as a section and a share of it.
 
-    In order: front matter from the document top, then stretches between
-    anchor groups alternating with the groups, then back matter to the document
-    end. The page measures sections by their rendered height; this class knows
-    only paragraphs and their text, and answers the questions that need no page:
+    In order: front matter from the document top (the paragraphs before the
+    first kept one), then stretches between anchor groups alternating with the
+    groups, then back matter to the document end (the paragraphs after the
+    last kept one). Groups that reach outside the kept range are ignored. The
+    page measures sections by their rendered height; this class knows only
+    paragraphs and their text, and answers the questions that need no page:
     which paragraphs to mark, and which paragraph a position falls in."""
 
     def __init__(
@@ -62,6 +99,8 @@ class SectionMap:
         translation_ids: list[str],
         translation_texts: list[str],
         groups: list[Group],
+        original_kept: range | None = None,
+        translation_kept: range | None = None,
     ):
         self._ids = {
             ORIGINAL_SIDE: list(original_ids),
@@ -75,6 +114,10 @@ class SectionMap:
             side: {bid: i for i, bid in enumerate(ids)}
             for side, ids in self._ids.items()
         }
+        self._kept = {
+            ORIGINAL_SIDE: _checked(original_kept, len(original_ids)),
+            TRANSLATION_SIDE: _checked(translation_kept, len(translation_ids)),
+        }
         self._sections = self._build(groups)
         self._section_at = {}
         for side, ids in self._ids.items():
@@ -87,8 +130,16 @@ class SectionMap:
     def _build(self, groups: list[Group]) -> list[_Section]:
         original_count = len(self._ids[ORIGINAL_SIDE])
         translation_count = len(self._ids[TRANSLATION_SIDE])
-        sections = [_Section(_FRONT, range(0, 0), range(0, 0))]
-        original, translation = 0, 0
+        original_kept = self._kept[ORIGINAL_SIDE]
+        translation_kept = self._kept[TRANSLATION_SIDE]
+        sections = [
+            _Section(
+                _FRONT,
+                range(0, original_kept.start),
+                range(0, translation_kept.start),
+            )
+        ]
+        original, translation = original_kept.start, translation_kept.start
 
         def add_stretch(original_range: range, translation_range: range) -> None:
             if len(original_range) or len(translation_range):
@@ -97,6 +148,8 @@ class SectionMap:
                 )
 
         for group in groups:
+            if not group.within(original_kept, translation_kept):
+                continue
             add_stretch(
                 range(original, group.original_first),
                 range(translation, group.translation_first),
@@ -111,13 +164,14 @@ class SectionMap:
             original = group.original_last + 1
             translation = group.translation_last + 1
         add_stretch(
-            range(original, original_count), range(translation, translation_count)
+            range(original, original_kept.stop),
+            range(translation, translation_kept.stop),
         )
         sections.append(
             _Section(
                 _BACK,
-                range(original_count, original_count),
-                range(translation_count, translation_count),
+                range(original_kept.stop, original_count),
+                range(translation_kept.stop, translation_count),
             )
         )
         return sections
@@ -125,6 +179,11 @@ class SectionMap:
     @property
     def section_count(self) -> int:
         return len(self._sections)
+
+    def kept(self, side: str) -> range:
+        """Positions of that side's kept paragraphs (everything but front and
+        back matter)."""
+        return self._kept[side]
 
     def section_starts(self, side: str) -> list[str]:
         """Where each section begins on that side: a paragraph id, or TOP for

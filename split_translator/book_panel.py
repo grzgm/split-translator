@@ -18,7 +18,7 @@ from .anchor_editor import AnchorEditor
 from .anchor_groups import resolve_manual
 from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
 from .book_loader import load_book, resolve_position
-from .book_sync import SectionMap
+from .book_sync import SectionMap, kept_range
 from .book_view import BookView
 from .config import Config
 from .layout import LAYOUT_BOOK, normalise_layout
@@ -538,8 +538,9 @@ class BookPanel(QFrame):
             other.clear_search_mark()
 
     def _build_section_map(self) -> SectionMap:
-        """Sections from the anchors as they stand. An anchor that overlaps or
-        crosses earlier ones is left out of sync (the anchor editor lists it)."""
+        """Sections from the anchors and skip fields as they stand. An anchor
+        that overlaps or crosses earlier ones is left out of sync (the anchor
+        editor lists it)."""
         original = self.original_document
         translation = self.translation_document
         groups, _conflicting = resolve_manual(
@@ -551,6 +552,12 @@ class BookPanel(QFrame):
             translation.block_ids,
             translation.block_texts,
             groups,
+            original_kept=kept_range(
+                original.block_ids, *self.anchor_store.get_skip(ORIGINAL_SIDE)
+            ),
+            translation_kept=kept_range(
+                translation.block_ids, *self.anchor_store.get_skip(TRANSLATION_SIDE)
+            ),
         )
 
     def _push_sections(self) -> None:
@@ -563,8 +570,9 @@ class BookPanel(QFrame):
         )
 
     def _rebuild_sections(self) -> None:
-        """The anchors changed in the editor. Rebuild the sections, push them to
-        the reader's views and to the open editor, which uses the same map."""
+        """The anchors or skip fields changed in the editor. Rebuild the
+        sections, push them to the reader's views and to the open editor,
+        which uses the same map."""
         self.section_map = self._build_section_map()
         # Section numbers from the old map point at the wrong place now.
         self._original_sync_target = None

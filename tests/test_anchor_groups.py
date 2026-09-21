@@ -137,3 +137,14 @@ class GroupParagraphsTests(unittest.TestCase):
         self.assertEqual(
             group_paragraphs(group, IDS, IDS), (["b1", "b2", "b3"], ["b2"])
         )
+
+
+class WithinTests(unittest.TestCase):
+    def test_a_group_inside_both_kept_ranges(self):
+        (group,) = _groups([("b2", "b3"), ("b2", "b4")])
+        self.assertTrue(group.within(range(2, 10), range(3, 5)))
+
+    def test_a_group_reaching_past_either_end_is_not_within(self):
+        (group,) = _groups([("b2", "b3"), ("b2", "b4")])
+        self.assertFalse(group.within(range(3, 10), range(0, 10)))
+        self.assertFalse(group.within(range(0, 10), range(0, 4)))

@@ -1,14 +1,20 @@
 import unittest
 
 from split_translator.anchor_groups import build_groups
-from split_translator.book_sync import SectionMap
+from split_translator.book_sync import SectionMap, kept_range
 from split_translator.normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE
 
 ORIGINAL_IDS = [f"b{i}" for i in range(6)]
 TRANSLATION_IDS = [f"b{i}" for i in range(8)]
 
 
-def _map(anchors=(), original_texts=None, translation_texts=None):
+def _map(
+    anchors=(),
+    original_texts=None,
+    translation_texts=None,
+    original_kept=None,
+    translation_kept=None,
+):
     groups = build_groups(list(anchors), ORIGINAL_IDS, TRANSLATION_IDS)
     return SectionMap(
         ORIGINAL_IDS,
@@ -16,6 +22,8 @@ def _map(anchors=(), original_texts=None, translation_texts=None):
         TRANSLATION_IDS,
         translation_texts if translation_texts is not None else ["x" * 10] * 8,
         groups,
+        original_kept=original_kept,
+        translation_kept=translation_kept,
     )
 
 
@@ -130,3 +138,70 @@ class SectionMapTests(unittest.TestCase):
     def test_paragraphs_without_text_weigh_one_character(self):
         sections = SectionMap(ORIGINAL_IDS, [], TRANSLATION_IDS, [], [])
         self.assertEqual(sections.paragraph_at(ORIGINAL_SIDE, 1, 0.5), ("b3", 0.0))
+
+
+class KeptRangeTests(unittest.TestCase):
+    IDS = ["b1", "b3", "b4", "b7"]
+
+    def test_no_ids_keeps_everything(self):
+        self.assertEqual(kept_range(self.IDS, None, None), range(0, 4))
+
+    def test_the_first_and_last_kept_ids_bound_the_range(self):
+        self.assertEqual(kept_range(self.IDS, "b3", "b4"), range(1, 3))
+
+    def test_a_lost_first_id_resolves_forward_and_a_lost_last_id_backward(self):
+        self.assertEqual(kept_range(self.IDS, "b2", "b5"), range(1, 3))
+
+    def test_ends_that_leave_nothing_keep_everything(self):
+        self.assertEqual(kept_range(self.IDS, "b7", "b1"), range(0, 4))
+
+    def test_an_id_not_of_the_paragraph_form_keeps_that_end(self):
+        self.assertEqual(kept_range(self.IDS, "x", "b4"), range(0, 3))
+
+    def test_no_paragraphs(self):
+        self.assertEqual(kept_range([], "b3", None), range(0, 0))
+
+
+class SectionMapSkipTests(unittest.TestCase):
+    def test_skipped_paragraphs_fill_the_front_and_back_sections(self):
+        sections = _map(original_kept=range(1, 5), translation_kept=range(2, 8))
+        self.assertEqual(sections.section_count, 3)
+        self.assertEqual(
+            sections.section_starts(ORIGINAL_SIDE), ["top", "b1", "b5"]
+        )
+        self.assertEqual(
+            sections.section_starts(TRANSLATION_SIDE), ["top", "b2", "end"]
+        )
+        self.assertEqual(sections.section_of(ORIGINAL_SIDE, "b0"), 0)
+        self.assertEqual(sections.section_of(ORIGINAL_SIDE, "b5"), 2)
+
+    def test_kept_reports_each_sides_range(self):
+        sections = _map(original_kept=range(1, 5))
+        self.assertEqual(sections.kept(ORIGINAL_SIDE), range(1, 5))
+        self.assertEqual(sections.kept(TRANSLATION_SIDE), range(0, 8))
+
+    def test_a_group_outside_the_kept_range_is_ignored(self):
+        sections = _map(
+            [("b0", "b0"), ("b3", "b4")],
+            original_kept=range(1, 6),
+            translation_kept=range(1, 8),
+        )
+        self.assertEqual(
+            sections.section_starts(ORIGINAL_SIDE),
+            ["top", "b1", "b3", "b4", "end"],
+        )
+
+    def test_front_matter_is_matched_by_text_share(self):
+        # Front matter: original b0 and b1, translation b0.
+        sections = _map(original_kept=range(2, 6), translation_kept=range(1, 8))
+        self.assertEqual(sections.counterpart(ORIGINAL_SIDE, "b1"), ["b0"])
+        self.assertEqual(sections.counterpart(TRANSLATION_SIDE, "b0"), ["b1"])
+
+    def test_a_kept_range_that_does_not_fit_keeps_everything(self):
+        self.assertEqual(
+            _map(original_kept=range(3, 99)).section_starts(ORIGINAL_SIDE),
+            ["top", "b0", "end"],
+        )
+        self.assertEqual(
+            _map(original_kept=range(4, 2)).kept(ORIGINAL_SIDE), range(0, 6)
+        )

@@ -40,6 +40,17 @@ class Group:
         """Whether the two groups overlap or cross, so they cannot both hold."""
         return not (self.precedes(other) or other.precedes(self))
 
+    def within(self, original_kept: range, translation_kept: range) -> bool:
+        """Whether every paragraph the group covers is kept on both sides (see
+        the skip fields). A group that reaches into front or back matter is
+        ignored for sync."""
+        return (
+            original_kept.start <= self.original_first
+            and self.original_last < original_kept.stop
+            and translation_kept.start <= self.translation_first
+            and self.translation_last < translation_kept.stop
+        )
+
 
 def _index(ids: list[str]) -> dict[str, int]:
     return {bid: i for i, bid in enumerate(ids)}

@@ -1114,6 +1114,22 @@ class BookPanelEditorTests(unittest.TestCase):
                 panel.anchor_editor.close()
                 panel.anchor_store.shutdown()
 
+    def test_the_skip_fields_shape_the_readers_sections(self):
+        # The fixture's paragraphs are b0 to b3; keeping b1 onwards on the
+        # original puts b0 in the front matter there.
+        with tempfile.TemporaryDirectory() as d:
+            panel = BookPanel(_config(d), QWebEngineProfile())
+            self.addCleanup(panel.anchor_store.shutdown)
+            panel.anchor_store.set_skip(ORIGINAL_SIDE, "b1", None)
+            panel._rebuild_sections()
+            self.assertEqual(panel.section_map.kept(ORIGINAL_SIDE), range(1, 4))
+            self.assertEqual(
+                panel.original_view._section_starts, ["top", "b1", "end"]
+            )
+            self.assertEqual(
+                panel.translation_view._section_starts, ["top", "b0", "end"]
+            )
+
 
 class BookPanelNormaliseSpecTests(unittest.TestCase):
     """The reader takes its per-edition multipliers from the same per-book-pair
