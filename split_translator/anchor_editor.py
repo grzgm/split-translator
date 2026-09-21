@@ -693,6 +693,32 @@ class AnchorEditor(QWidget):
             and self._selected_translation is not None
         )
 
+    def _paragraph_numbers(self, side: str) -> dict[str, str]:
+        """Each paragraph id of that side mapped to its paragraph number,
+        counted from 1 as the Skip and Automatic anchors tabs count."""
+        return {bid: str(i + 1) for i, bid in enumerate(self._ids(side))}
+
+    def _pair_text(
+        self,
+        original_id: str,
+        translation_id: str,
+        original_numbers: dict[str, str] | None = None,
+        translation_numbers: dict[str, str] | None = None,
+    ) -> str:
+        """An anchor as it is shown: "1258 = 1398", the paragraph numbers of
+        its two sides. The stored ids (bN, numbered over every block of the
+        page) never reach the screen. An id that is no longer a paragraph
+        shows as "?". The number maps can be passed in when many anchors are
+        shown at once."""
+        if original_numbers is None:
+            original_numbers = self._paragraph_numbers(ORIGINAL_SIDE)
+        if translation_numbers is None:
+            translation_numbers = self._paragraph_numbers(TRANSLATION_SIDE)
+        return (
+            f"{original_numbers.get(original_id, '?')} = "
+            f"{translation_numbers.get(translation_id, '?')}"
+        )
+
     def _on_add_clicked(self) -> None:
         if self._selected_original is None or self._selected_translation is None:
             return
@@ -700,7 +726,8 @@ class AnchorEditor(QWidget):
         translation_id = self._selected_translation
         if (original_id, translation_id) in self.anchor_store.anchors:
             self.status_label.setText(
-                f"{original_id} = {translation_id} is already an anchor"
+                f"{self._pair_text(original_id, translation_id)} is already "
+                "an anchor"
             )
             self._clear_selection()
             return
@@ -716,8 +743,8 @@ class AnchorEditor(QWidget):
         )
         if blocking is not None:
             self.status_label.setText(
-                f"Not added: {original_id} = {translation_id} would overlap or "
-                f"cross the anchor {blocking[0]} = {blocking[1]}"
+                f"Not added: {self._pair_text(original_id, translation_id)} "
+                f"would overlap or cross the anchor {self._pair_text(*blocking)}"
             )
             return
         # A manual anchor always wins: the automatic anchors it touches or
@@ -732,8 +759,8 @@ class AnchorEditor(QWidget):
         self.anchor_store.add(original_id, translation_id, displaced=displaced)
         if displaced:
             self.status_label.setText(
-                f"Added {original_id} = {translation_id}; automatic anchors "
-                f"removed: {len(displaced)}"
+                f"Added {self._pair_text(original_id, translation_id)}; "
+                f"automatic anchors removed: {len(displaced)}"
             )
         else:
             self.status_label.setText("")
@@ -814,6 +841,8 @@ class AnchorEditor(QWidget):
         block_index = {
             bid: i for i, bid in enumerate(self.original_document.block_ids)
         }
+        original_numbers = self._paragraph_numbers(ORIGINAL_SIDE)
+        translation_numbers = self._paragraph_numbers(TRANSLATION_SIDE)
         entries.sort(
             key=lambda entry: (
                 block_index.get(entry[0][0], len(block_index)),
@@ -822,7 +851,9 @@ class AnchorEditor(QWidget):
         )
         for (original_id, translation_id), automatic in entries:
             anchor = (original_id, translation_id)
-            label = f"{original_id}  =  {translation_id}"
+            label = self._pair_text(
+                original_id, translation_id, original_numbers, translation_numbers
+            )
             if automatic:
                 label += "  (automatic)"
             if anchor in (ignored if automatic else conflicting):

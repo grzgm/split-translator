@@ -556,7 +556,7 @@ class AnchorEditorGroupTests(unittest.TestCase):
         self.assertEqual(store.anchors, [("b1", "b5")])
         self.assertEqual(
             editor.status_label.text(),
-            "Not added: b3 = b2 would overlap or cross the anchor b1 = b5",
+            "Not added: 4 = 3 would overlap or cross the anchor 2 = 6",
         )
         self.assertEqual(self.changed, 0)
         # The selection stays, so either side can be moved and tried again.
@@ -568,7 +568,7 @@ class AnchorEditorGroupTests(unittest.TestCase):
         self._select(editor, "b1", "b1")
         editor._on_add_clicked()
         self.assertEqual(store.anchors, [("b1", "b1")])
-        self.assertEqual(editor.status_label.text(), "b1 = b1 is already an anchor")
+        self.assertEqual(editor.status_label.text(), "2 = 2 is already an anchor")
         self.assertEqual(self.changed, 0)
 
     def test_a_successful_add_clears_an_earlier_refusal(self):
@@ -593,7 +593,7 @@ class AnchorEditorGroupTests(unittest.TestCase):
             editor.anchor_list.item(i).text()
             for i in range(editor.anchor_list.count())
         ]
-        self.assertEqual(labels, ["b1  =  b5", "b3  =  b2  (conflicts)"])
+        self.assertEqual(labels, ["2 = 6", "4 = 3  (conflicts)"])
 
     def _marks(self, editor):
         seen = {}
@@ -647,7 +647,7 @@ class AnchorEditorGroupTests(unittest.TestCase):
         self.assertEqual(store.anchors, [("b2", "b2")])
         self.assertEqual(store.auto_anchors, [("b1", "b1"), ("b3", "b3")])
         self.assertEqual(
-            editor.status_label.text(), "Added b2 = b2; automatic anchors removed: 1"
+            editor.status_label.text(), "Added 3 = 3; automatic anchors removed: 1"
         )
 
     def test_a_manual_anchor_clear_of_automatic_ones_leaves_them(self):
@@ -663,14 +663,14 @@ class AnchorEditorGroupTests(unittest.TestCase):
     def test_the_list_shows_manual_anchors_only_by_default(self):
         editor, _ = self._editor([("b3", "b3")], automatic=[("b1", "b1")])
         self.assertFalse(editor.show_automatic_checkbox.isChecked())
-        self.assertEqual(self._labels(editor), ["b3  =  b3"])
+        self.assertEqual(self._labels(editor), ["4 = 4"])
 
     def test_show_automatic_adds_them_labelled(self):
         editor, _ = self._editor([("b3", "b3")], automatic=[("b1", "b1"), ("b5", "b5")])
         editor.show_automatic_checkbox.setChecked(True)
         self.assertEqual(
             self._labels(editor),
-            ["b1  =  b1  (automatic)", "b3  =  b3", "b5  =  b5  (automatic)"],
+            ["2 = 2  (automatic)", "4 = 4", "6 = 6  (automatic)"],
         )
 
     def test_an_ignored_automatic_anchor_is_labelled_and_follows_the_manual_one(self):
@@ -678,7 +678,7 @@ class AnchorEditorGroupTests(unittest.TestCase):
         editor.show_automatic_checkbox.setChecked(True)
         self.assertEqual(
             self._labels(editor),
-            ["b3  =  b3", "b3  =  b4  (automatic)  (conflicts)"],
+            ["4 = 4", "4 = 5  (automatic)  (conflicts)"],
         )
 
     def test_an_automatic_anchor_outside_the_kept_range_is_labelled(self):
@@ -687,17 +687,63 @@ class AnchorEditorGroupTests(unittest.TestCase):
         editor.show_automatic_checkbox.setChecked(True)
         self.assertEqual(
             self._labels(editor),
-            ["b1  =  b1  (automatic)  (skipped)", "b4  =  b4  (automatic)"],
+            ["2 = 2  (automatic)  (skipped)", "5 = 5  (automatic)"],
         )
 
     def test_remove_selected_removes_an_automatic_anchor(self):
         editor, store = self._editor([("b3", "b3")], automatic=[("b3", "b3"), ("b5", "b5")])
         editor.show_automatic_checkbox.setChecked(True)
         labels = self._labels(editor)
-        editor.anchor_list.setCurrentRow(labels.index("b3  =  b3  (automatic)  (conflicts)"))
+        editor.anchor_list.setCurrentRow(labels.index("4 = 4  (automatic)  (conflicts)"))
         editor._remove_selected()
         self.assertEqual(store.anchors, [("b3", "b3")])
         self.assertEqual(store.auto_anchors, [("b5", "b5")])
+
+
+class AnchorEditorNumberingTests(unittest.TestCase):
+    """Anchors are shown by paragraph number, counted from 1 like the Skip and
+    Automatic anchors tabs, never by their stored bN ids, which skip the
+    numbers of spacers and wrappers."""
+
+    def _editor(self, anchors):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = AnchorStore(Path(tmp.name) / "anchors.json")
+        self.addCleanup(store.shutdown)
+        store.anchors = list(anchors)
+        # Ids with gaps, as in a book with a spacer after each paragraph.
+        ids = ["b5", "b7", "b9", "b11", "b13"]
+        html = "".join(f"<p data-stid='{x}'>p</p>" for x in ids)
+        doc = BookDocument(html=html, block_ids=ids, title="T")
+        editor = AnchorEditor(
+            doc, doc, store, _sections(doc, doc), QWebEngineProfile(), lambda: None
+        )
+        return editor, store
+
+    def _labels(self, editor):
+        return [editor.anchor_list.item(i).text() for i in range(editor.anchor_list.count())]
+
+    def test_the_list_shows_paragraph_numbers(self):
+        editor, _ = self._editor([("b9", "b11")])
+        self.assertEqual(self._labels(editor), ["3 = 4"])
+
+    def test_an_id_that_is_no_longer_a_paragraph_shows_as_a_question_mark(self):
+        editor, _ = self._editor([("b6", "b11")])
+        self.assertEqual(self._labels(editor), ["? = 4"])
+
+    def test_the_status_line_uses_paragraph_numbers(self):
+        editor, _ = self._editor([("b9", "b11")])
+        editor._on_original_clicked("b9")
+        editor._on_translation_clicked("b11")
+        editor._on_add_clicked()
+        self.assertEqual(editor.status_label.text(), "3 = 4 is already an anchor")
+        editor._on_original_clicked("b11")
+        editor._on_translation_clicked("b7")
+        editor._on_add_clicked()
+        self.assertEqual(
+            editor.status_label.text(),
+            "Not added: 4 = 2 would overlap or cross the anchor 3 = 4",
+        )
 
 
 from split_translator.skip_panel import AT_END, AT_START
@@ -854,7 +900,7 @@ class AnchorEditorSkipTests(unittest.TestCase):
             editor.anchor_list.item(i).text()
             for i in range(editor.anchor_list.count())
         ]
-        self.assertEqual(labels, ["b0  =  b0  (skipped)", "b3  =  b3"])
+        self.assertEqual(labels, ["1 = 1  (skipped)", "4 = 4"])
 
 
 from split_translator.anchor_store import EDITOR_SURFACE, READER_SURFACE
