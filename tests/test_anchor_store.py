@@ -8,6 +8,8 @@ from split_translator.anchor_store import (
     READER_SURFACE,
     AnchorStore,
     anchor_path_for,
+    load_anchors,
+    load_auto_anchors,
 )
 from split_translator.normalise_spec import (
     ORIGINAL_SIDE,
@@ -481,3 +483,114 @@ class SkipTests(unittest.TestCase):
         store = self._store(path)
         self.assertEqual(store.anchors, [("b1", "b2")])
         self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, None))
+
+
+class AutomaticAnchorTests(unittest.TestCase):
+    """Automatic anchors are stored in their own list beside the manual ones."""
+
+    def _path(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "anchors.json"
+
+    def _store(self, path):
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        return store
+
+    def test_none_by_default(self):
+        self.assertEqual(self._store(self._path()).auto_anchors, [])
+
+    def test_round_trips_through_the_file(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_automatic([("b1", "b2"), ("b3", "b4")])
+        store.shutdown()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            raw["auto_anchors"],
+            [
+                {"original": "b1", "translation": "b2"},
+                {"original": "b3", "translation": "b4"},
+            ],
+        )
+        self.assertEqual(raw["anchors"], [])
+        self.assertEqual(self._store(path).auto_anchors, [("b1", "b2"), ("b3", "b4")])
+
+    def test_an_empty_list_is_not_written(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_automatic([("b1", "b2")])
+        store.set_automatic([])
+        store.shutdown()
+        self.assertNotIn("auto_anchors", json.loads(path.read_text(encoding="utf-8")))
+
+    def test_set_automatic_keeps_an_exact_duplicate_once(self):
+        store = self._store(self._path())
+        store.set_automatic([("b1", "b2"), ("b1", "b2"), ("b1", "b3")])
+        self.assertEqual(store.auto_anchors, [("b1", "b2"), ("b1", "b3")])
+
+    def test_a_duplicate_on_load_is_dropped(self):
+        path = self._path()
+        pair = {"original": "b1", "translation": "b2"}
+        path.write_text(json.dumps({"auto_anchors": [pair, pair]}), encoding="utf-8")
+        self.assertEqual(load_auto_anchors(path), [("b1", "b2")])
+
+    def test_a_malformed_list_or_entry_is_ignored(self):
+        path = self._path()
+        path.write_text(json.dumps({"auto_anchors": {"x": 1}}), encoding="utf-8")
+        self.assertEqual(load_auto_anchors(path), [])
+        path.write_text(
+            json.dumps(
+                {"auto_anchors": ["b1", {"original": "b1"}, {"original": "b2", "translation": "b3"}]}
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(load_auto_anchors(path), [("b2", "b3")])
+
+    def test_a_file_written_before_this_feature_still_loads(self):
+        path = self._path()
+        path.write_text(
+            json.dumps({"anchors": [{"original": "b1", "translation": "b2"}]}),
+            encoding="utf-8",
+        )
+        store = self._store(path)
+        self.assertEqual(store.anchors, [("b1", "b2")])
+        self.assertEqual(store.auto_anchors, [])
+
+    def test_remove_automatic_removes_exactly_that_anchor(self):
+        store = self._store(self._path())
+        store.set_automatic([("b1", "b2"), ("b1", "b3")])
+        store.remove_automatic("b1", "b2")
+        self.assertEqual(store.auto_anchors, [("b1", "b3")])
+
+    def test_a_manual_add_removes_the_displaced_automatic_anchors(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_automatic([("b1", "b1"), ("b2", "b2"), ("b3", "b3")])
+        store.add("b2", "b2", displaced=[("b2", "b2"), ("b3", "b3")])
+        store.shutdown()
+        self.assertEqual(store.anchors, [("b2", "b2")])
+        self.assertEqual(store.auto_anchors, [("b1", "b1")])
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(raw["auto_anchors"], [{"original": "b1", "translation": "b1"}])
+
+    def test_other_saves_keep_the_automatic_anchors(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_automatic([("b1", "b2")])
+        store.add("b5", "b5")
+        store.shutdown()
+        self.assertEqual(self._store(path).auto_anchors, [("b1", "b2")])
+
+
+class LoadAnchorsTests(unittest.TestCase):
+    def test_a_malformed_entry_is_skipped(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "anchors.json"
+        path.write_text(
+            json.dumps({"anchors": ["b1", {"original": "b2", "translation": "b3"}]}),
+            encoding="utf-8",
+        )
+        self.assertEqual(load_anchors(path), [("b2", "b3")])

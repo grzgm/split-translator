@@ -5,6 +5,7 @@ SaveWorker, in-flight write awaited on shutdown)."""
 import hashlib
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 from PySide6.QtCore import QThread
@@ -36,18 +37,36 @@ def _load_raw(filepath: Path) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _pairs(value) -> list[tuple[str, str]]:
+    """Anchor pairs from a stored list, in stored order. An entry without both
+    ids is skipped, and an exact duplicate is dropped, keeping the first, so a
+    file that holds one pair twice is rewritten without it on the next save."""
+    if not isinstance(value, list):
+        return []
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str]] = []
+    for pair in value:
+        if not isinstance(pair, dict):
+            continue
+        if "original" not in pair or "translation" not in pair:
+            continue
+        anchor = (pair["original"], pair["translation"])
+        if anchor not in seen:
+            seen.add(anchor)
+            pairs.append(anchor)
+    return pairs
+
+
 def load_anchors(filepath: Path) -> list[tuple[str, str]]:
-    """Load anchor pairs, tolerating a missing or malformed file by returning [].
-    An exact duplicate is dropped, keeping the first, so a file that holds one
-    pair twice is rewritten without it on the next save."""
-    raw = _load_raw(filepath)
-    anchors: list[tuple[str, str]] = []
-    for pair in raw.get("anchors", []):
-        if "original" in pair and "translation" in pair:
-            anchor = (pair["original"], pair["translation"])
-            if anchor not in anchors:
-                anchors.append(anchor)
-    return anchors
+    """Load the manual anchor pairs, tolerating a missing or malformed file by
+    returning []."""
+    return _pairs(_load_raw(filepath).get("anchors", []))
+
+
+def load_auto_anchors(filepath: Path) -> list[tuple[str, str]]:
+    """Load the automatic anchor pairs (made by the aligner), tolerating a
+    missing or malformed file or key by returning []."""
+    return _pairs(_load_raw(filepath).get("auto_anchors", []))
 
 
 def _parse_scroll(value) -> tuple[str, float] | None:
@@ -218,6 +237,9 @@ class AnchorStore:
             os.path.basename(translation_path) if translation_path else None
         )
         self.anchors: list[tuple[str, str]] = load_anchors(filepath)
+        # Anchors made by the aligner, kept apart from the manual ones so the
+        # two kinds never mix and a batch can be regenerated or removed alone.
+        self.auto_anchors: list[tuple[str, str]] = load_auto_anchors(filepath)
         # Last-known scroll position per surface (reader / editor), each an
         # (original, translation) pair, restored on the next launch.
         self.scroll: dict[str, _ScrollPair] = load_scroll(filepath)
@@ -234,14 +256,24 @@ class AnchorStore:
         # kept out of the story's sections.
         self.skip: dict[str, _SkipPair] = load_skip(filepath)
 
-    def add(self, original_id: str, translation_id: str) -> None:
-        """Store an anchor and persist. An exact duplicate is not stored twice.
+    def add(
+        self,
+        original_id: str,
+        translation_id: str,
+        displaced: Iterable[tuple[str, str]] = (),
+    ) -> None:
+        """Store a manual anchor and persist. An exact duplicate is not stored
+        twice. `displaced` names the automatic anchors the new one pushes out
+        (see anchor_groups.displaced_automatic); they go in the same write.
         Whether the anchor may join the others is decided by the caller (see
         anchor_groups.add_conflict); this store is plain storage."""
         anchor = (original_id, translation_id)
         if anchor in self.anchors:
             return
         self.anchors.append(anchor)
+        if displaced:
+            gone = set(displaced)
+            self.auto_anchors = [a for a in self.auto_anchors if a not in gone]
         self.save()
 
     def remove(self, original_id: str, translation_id: str) -> None:
@@ -250,6 +282,19 @@ class AnchorStore:
         self.anchors = [
             a for a in self.anchors if a != (original_id, translation_id)
         ]
+        self.save()
+
+    def remove_automatic(self, original_id: str, translation_id: str) -> None:
+        """Remove exactly this automatic anchor and persist."""
+        self.auto_anchors = [
+            a for a in self.auto_anchors if a != (original_id, translation_id)
+        ]
+        self.save()
+
+    def set_automatic(self, anchors: list[tuple[str, str]]) -> None:
+        """Replace every automatic anchor and persist, in one write. An exact
+        duplicate is kept once, in its first place."""
+        self.auto_anchors = list(dict.fromkeys(anchors))
         self.save()
 
     def get_scroll(self, surface: str) -> _ScrollPair:
@@ -338,6 +383,10 @@ class AnchorStore:
         data["anchors"] = [
             {"original": o, "translation": t} for o, t in self.anchors
         ]
+        if self.auto_anchors:
+            data["auto_anchors"] = [
+                {"original": o, "translation": t} for o, t in self.auto_anchors
+            ]
         scroll = {}
         for surface, (original, translation) in self.scroll.items():
             side = {}
