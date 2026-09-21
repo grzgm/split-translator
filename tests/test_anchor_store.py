@@ -386,3 +386,98 @@ class NormaliseScaleTests(unittest.TestCase):
         store.set_normalise_specs(NormaliseSpec(font=0.9), NormaliseSpec())
         store.shutdown()
         self.assertEqual(self._store(path).anchors, [("a1", "b1")])
+
+
+class SkipTests(unittest.TestCase):
+    """Each edition's first and last kept paragraph, stored per book pair."""
+
+    def _path(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "anchors.json"
+
+    def _store(self, path):
+        store = AnchorStore(path)
+        self.addCleanup(store.shutdown)
+        return store
+
+    def test_nothing_is_skipped_by_default(self):
+        store = self._store(self._path())
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), (None, None))
+        self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, None))
+
+    def test_round_trips_through_the_file(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_skip(ORIGINAL_SIDE, "b100", None)
+        store.set_skip(TRANSLATION_SIDE, "b30", "b6000")
+        store.save()
+        store.shutdown()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            raw["skip"],
+            {
+                ORIGINAL_SIDE: {"first": "b100"},
+                TRANSLATION_SIDE: {"first": "b30", "last": "b6000"},
+            },
+        )
+        reloaded = self._store(path)
+        self.assertEqual(reloaded.get_skip(ORIGINAL_SIDE), ("b100", None))
+        self.assertEqual(reloaded.get_skip(TRANSLATION_SIDE), ("b30", "b6000"))
+
+    def test_set_skip_does_not_write(self):
+        # The editor changes it on every spin box step and saves on a debounce.
+        path = self._path()
+        store = self._store(path)
+        store.set_skip(ORIGINAL_SIDE, "b5", None)
+        store.shutdown()
+        self.assertFalse(path.exists())
+
+    def test_any_other_save_carries_the_skip(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_skip(ORIGINAL_SIDE, "b5", None)
+        store.add("b6", "b7")
+        store.shutdown()
+        self.assertEqual(self._store(path).get_skip(ORIGINAL_SIDE), ("b5", None))
+
+    def test_skipping_nothing_drops_the_side(self):
+        path = self._path()
+        store = self._store(path)
+        store.set_skip(ORIGINAL_SIDE, "b5", None)
+        store.set_skip(ORIGINAL_SIDE, None, None)
+        store.save()
+        store.shutdown()
+        self.assertNotIn("skip", json.loads(path.read_text(encoding="utf-8")))
+
+    def test_a_malformed_block_skips_nothing(self):
+        path = self._path()
+        path.write_text(json.dumps({"skip": "nonsense"}), encoding="utf-8")
+        self.assertEqual(self._store(path).get_skip(ORIGINAL_SIDE), (None, None))
+
+    def test_a_malformed_side_or_value_is_ignored(self):
+        path = self._path()
+        path.write_text(
+            json.dumps(
+                {
+                    "skip": {
+                        ORIGINAL_SIDE: ["b5"],
+                        TRANSLATION_SIDE: {"first": 7, "last": "b90"},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        store = self._store(path)
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), (None, None))
+        self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, "b90"))
+
+    def test_a_file_written_before_this_feature_still_loads(self):
+        path = self._path()
+        path.write_text(
+            json.dumps({"anchors": [{"original": "b1", "translation": "b2"}]}),
+            encoding="utf-8",
+        )
+        store = self._store(path)
+        self.assertEqual(store.anchors, [("b1", "b2")])
+        self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, None))

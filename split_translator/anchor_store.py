@@ -148,6 +148,37 @@ def load_normalise_scale(filepath: Path) -> dict[str, NormaliseSpec]:
     return result
 
 
+_SkipPair = tuple[str | None, str | None]
+
+
+def _parse_skip_side(value) -> _SkipPair:
+    """One edition's {"first": id, "last": id}; a missing or non-text value
+    means nothing is skipped on that end."""
+    if not isinstance(value, dict):
+        return (None, None)
+    first = value.get("first")
+    last = value.get("last")
+    return (
+        first if isinstance(first, str) and first else None,
+        last if isinstance(last, str) and last else None,
+    )
+
+
+def load_skip(filepath: Path) -> dict[str, _SkipPair]:
+    """Load each edition's first and last kept paragraph ids. Returns a dict
+    keyed by side; a side that skips nothing is absent. A missing or malformed
+    "skip" block yields an empty dict, so nothing is skipped."""
+    raw = _load_raw(filepath).get("skip", {})
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, _SkipPair] = {}
+    for side in (ORIGINAL_SIDE, TRANSLATION_SIDE):
+        pair = _parse_skip_side(raw.get(side))
+        if pair != (None, None):
+            result[side] = pair
+    return result
+
+
 def write_anchors(filepath: Path, data: dict) -> None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
@@ -198,6 +229,10 @@ class AnchorStore:
         self.normalise_scale: dict[str, NormaliseSpec] = load_normalise_scale(
             filepath
         )
+        # Each edition's first and last kept paragraph (the skip fields), keyed
+        # by side like the multipliers. Front and back matter outside them is
+        # kept out of the story's sections.
+        self.skip: dict[str, _SkipPair] = load_skip(filepath)
 
     def add(self, original_id: str, translation_id: str) -> None:
         """Store an anchor and persist. An exact duplicate is not stored twice.
@@ -268,6 +303,21 @@ class AnchorStore:
         self.normalise_scale[TRANSLATION_SIDE] = translation
         self.save()
 
+    def get_skip(self, side: str) -> _SkipPair:
+        """One edition's (first kept, last kept) paragraph ids, each None when
+        nothing is skipped on that end."""
+        return self.skip.get(side, (None, None))
+
+    def set_skip(self, side: str, first: str | None, last: str | None) -> None:
+        """Record one edition's first and last kept paragraph ids, None for an
+        end that skips nothing. Memory only: the editor changes these on every
+        spin box step and writes them on a debounce with save(). Any other save
+        writes them too, since every save dumps the whole store."""
+        if first is None and last is None:
+            self.skip.pop(side, None)
+        else:
+            self.skip[side] = (first, last)
+
     @staticmethod
     def _scroll_dict(position: tuple[str, float] | None) -> dict | None:
         if position is None:
@@ -312,6 +362,17 @@ class AnchorStore:
         }
         if scale:
             data["normalise_scale"] = scale
+        skip = {}
+        for side, (first, last) in self.skip.items():
+            entry = {}
+            if first is not None:
+                entry["first"] = first
+            if last is not None:
+                entry["last"] = last
+            if entry:
+                skip[side] = entry
+        if skip:
+            data["skip"] = skip
         return data
 
     def save(self) -> None:
