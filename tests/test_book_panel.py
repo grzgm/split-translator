@@ -910,6 +910,29 @@ class BookPanelSearchMarkTests(unittest.TestCase):
             self.assertEqual(marks["orig"], [["b1"]])
             self.assertEqual(marks["trans"], [["b1", "b2"]])
 
+    def test_automatic_anchors_cut_sections_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            marks = self._stub_marks(panel)
+            panel.anchor_store.auto_anchors = [("b1", "b1"), ("b1", "b2")]
+            panel.section_map = panel._build_section_map()
+            panel._on_matched_block(
+                panel.original_view, panel.translation_view, "b1"
+            )
+            self.assertEqual(marks["trans"], [["b1", "b2"]])
+
+    def test_an_automatic_anchor_touching_a_manual_one_is_left_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            panel = self._panel(_config(d), QWebEngineProfile())
+            marks = self._stub_marks(panel)
+            panel.anchor_store.anchors = [("b1", "b1")]
+            panel.anchor_store.auto_anchors = [("b1", "b2")]
+            panel.section_map = panel._build_section_map()
+            panel._on_matched_block(
+                panel.original_view, panel.translation_view, "b1"
+            )
+            self.assertEqual(marks["trans"], [["b1"]])
+
     def test_zero_active_match_clears_marks(self):
         # A find that reports no active match (active=0) clears both marks rather
         # than trying to locate a 0th block.

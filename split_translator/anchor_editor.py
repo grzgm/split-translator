@@ -19,8 +19,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .anchor_book_view import AnchorBookView
-from .anchor_groups import add_conflict, group_paragraphs, resolve_manual
+from .anchor_book_view import AUTOMATIC_MARKS, MANUAL_MARK, AnchorBookView
+from .anchor_groups import (
+    Resolved,
+    add_conflict,
+    displaced_automatic,
+    group_paragraphs,
+    resolve,
+)
 from .anchor_store import EDITOR_SURFACE, AnchorStore
 from .block_ids import resolve_position
 from .book_loader import BookDocument
@@ -570,8 +576,23 @@ class AnchorEditor(QWidget):
                 f"cross the anchor {blocking[0]} = {blocking[1]}"
             )
             return
-        self.anchor_store.add(original_id, translation_id)
-        self.status_label.setText("")
+        # A manual anchor always wins: the automatic anchors it touches or
+        # crosses are removed in the same write.
+        displaced = displaced_automatic(
+            self.anchor_store.anchors,
+            self.anchor_store.auto_anchors,
+            (original_id, translation_id),
+            self.original_document.block_ids,
+            self.translation_document.block_ids,
+        )
+        self.anchor_store.add(original_id, translation_id, displaced=displaced)
+        if displaced:
+            self.status_label.setText(
+                f"Added {original_id} = {translation_id}; automatic anchors "
+                f"removed: {len(displaced)}"
+            )
+        else:
+            self.status_label.setText("")
         self.refresh()
         self._on_changed()
         # The just-bound paragraphs now show as anchored.
@@ -585,37 +606,46 @@ class AnchorEditor(QWidget):
         self.translation_view.set_selected("")
         self._update_add_enabled()
 
-    def _refresh_highlights(self) -> None:
-        # Every paragraph a group covers is highlighted, the ones between its
-        # first and last included, so a paragraph matched to several shows the
-        # whole run it matches. Anchors ignored on load are not drawn.
-        groups, _conflicting = resolve_manual(
+    def _resolve(self) -> Resolved:
+        """The groups sync uses from both kinds of stored anchor."""
+        return resolve(
             self.anchor_store.anchors,
+            self.anchor_store.auto_anchors,
             self.original_document.block_ids,
             self.translation_document.block_ids,
         )
-        original_ids: list[str] = []
-        translation_ids: list[str] = []
-        for group in groups:
+
+    def _refresh_highlights(self) -> None:
+        # Every paragraph a group covers is marked, the ones between its first
+        # and last included, so a paragraph matched to several shows the whole
+        # run it matches. Manual groups get the yellow background, automatic
+        # groups a purple one that alternates between two shades from one
+        # group to the next. Anchors ignored for sync are not drawn.
+        resolved = self._resolve()
+        names = (MANUAL_MARK, *AUTOMATIC_MARKS)
+        original_marks: dict[str, list[str]] = {name: [] for name in names}
+        translation_marks: dict[str, list[str]] = {name: [] for name in names}
+        marked = [(group, MANUAL_MARK) for group in resolved.manual] + [
+            (group, AUTOMATIC_MARKS[k % 2])
+            for k, group in enumerate(resolved.automatic)
+        ]
+        for group, name in marked:
             originals, translations = group_paragraphs(
                 group,
                 self.original_document.block_ids,
                 self.translation_document.block_ids,
             )
-            original_ids.extend(originals)
-            translation_ids.extend(translations)
-        self.original_view.set_anchored(original_ids)
-        self.translation_view.set_anchored(translation_ids)
+            original_marks[name].extend(originals)
+            translation_marks[name].extend(translations)
+        self.original_view.set_marks(original_marks)
+        self.translation_view.set_marks(translation_marks)
 
     def refresh(self) -> None:
         self.anchor_list.clear()
         # An anchor that overlaps or crosses earlier ones (only possible in a
         # hand-edited or older file) is kept but ignored for sync; say so.
-        groups, conflicting = resolve_manual(
-            self.anchor_store.anchors,
-            self.original_document.block_ids,
-            self.translation_document.block_ids,
-        )
+        resolved = self._resolve()
+        groups, conflicting = resolved.manual, resolved.conflicting
         # Anchors in front or back matter are kept but ignored for sync.
         original_kept = kept_range(
             self.original_document.block_ids,

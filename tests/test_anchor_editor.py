@@ -4,6 +4,7 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWidgets import QApplication
 
 from split_translator.anchor_click_bridge import AnchorClickBridge
+from split_translator.anchor_book_view import AUTOMATIC_MARKS, MANUAL_MARK
 from split_translator.book_loader import BookDocument
 from split_translator.book_view import BookView
 
@@ -213,7 +214,7 @@ class AnchorBookViewTests(unittest.TestCase):
         view = AnchorBookView(_doc(), QWebEngineProfile())
         self.assertTrue(hasattr(view, "block_clicked"))
         self.assertTrue(callable(view.set_selected))
-        self.assertTrue(callable(view.set_anchored))
+        self.assertTrue(callable(view.set_marks))
         self.assertTrue(callable(view.set_jump))
 
     def test_block_clicked_signal_relays_bridge(self):
@@ -224,26 +225,24 @@ class AnchorBookViewTests(unittest.TestCase):
         view._bridge.clicked("b3")
         self.assertEqual(received, ["b3"])
 
-    def test_anchored_ids_reapplied_after_load(self):
-        # set_anchored can run before the page has loaded (the editor highlights
-        # at construction, while setHtml is still async). The highlight JS is
-        # only defined once the page loads, so the view must remember the ids and
-        # re-apply them in the load handler, or the anchors never light up until
-        # the next set_anchored call.
+    def test_marks_are_reapplied_after_load(self):
+        # set_marks can run before the page has loaded (the editor highlights
+        # at construction, while setHtml is still async). The helper script is
+        # only defined once the page loads, so the view must remember the marks
+        # and re-apply them in the load handler, or the groups never show until
+        # the next set_marks call.
         view = AnchorBookView(_doc(), QWebEngineProfile.defaultProfile())
         calls = []
-        view.set_anchored = lambda ids: calls.append(list(ids))
-        view.remember_anchored(["b0", "b1"])  # what the editor asks to highlight
-        calls.clear()
+        view.set_marks = lambda marks: calls.append(marks)
+        view.remember_marks({MANUAL_MARK: ["b0", "b1"]})
         view._on_load_finished(True)
-        self.assertEqual(calls, [["b0", "b1"]])
+        self.assertEqual(calls, [{MANUAL_MARK: ["b0", "b1"]}])
 
     def test_no_reapply_when_load_fails(self):
         view = AnchorBookView(_doc(), QWebEngineProfile.defaultProfile())
         calls = []
-        view.set_anchored = lambda ids: calls.append(list(ids))
-        view.remember_anchored(["b0"])
-        calls.clear()
+        view.set_marks = lambda marks: calls.append(marks)
+        view.remember_marks({MANUAL_MARK: ["b0"]})
         view._on_load_finished(False)  # a failed load re-applies nothing
         self.assertEqual(calls, [])
 
@@ -501,12 +500,13 @@ class AnchorEditorGroupTests(unittest.TestCase):
     an anchor that would overlap or cross another group, and draws each group
     over its whole extent."""
 
-    def _editor(self, anchors=()):
+    def _editor(self, anchors=(), automatic=()):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         store = AnchorStore(Path(tmp.name) / "anchors.json")
         self.addCleanup(store.shutdown)
         store.anchors = list(anchors)
+        store.auto_anchors = list(automatic)
         ids = [f"b{i}" for i in range(8)]
         html = "".join(f"<p data-stid='{x}'>p</p>" for x in ids)
         doc = BookDocument(html=html, block_ids=ids, title="T")
@@ -582,23 +582,67 @@ class AnchorEditorGroupTests(unittest.TestCase):
         ]
         self.assertEqual(labels, ["b1  =  b5", "b3  =  b2  (conflicts)"])
 
+    def _marks(self, editor):
+        seen = {}
+        editor.original_view.set_marks = lambda marks: seen.update(orig=marks)
+        editor.translation_view.set_marks = lambda marks: seen.update(trans=marks)
+        editor._refresh_highlights()
+        return seen
+
     def test_highlights_cover_every_paragraph_of_a_group(self):
         editor, _ = self._editor([("b1", "b1"), ("b1", "b3")])
-        seen = {}
-        editor.original_view.set_anchored = lambda ids: seen.update(orig=ids)
-        editor.translation_view.set_anchored = lambda ids: seen.update(trans=ids)
-        editor._refresh_highlights()
-        self.assertEqual(seen["orig"], ["b1"])
-        self.assertEqual(seen["trans"], ["b1", "b2", "b3"])
+        seen = self._marks(editor)
+        self.assertEqual(seen["orig"][MANUAL_MARK], ["b1"])
+        self.assertEqual(seen["trans"][MANUAL_MARK], ["b1", "b2", "b3"])
 
     def test_highlights_leave_out_anchors_ignored_on_load(self):
         editor, _ = self._editor([("b1", "b5"), ("b3", "b2")])
-        seen = {}
-        editor.original_view.set_anchored = lambda ids: seen.update(orig=ids)
-        editor.translation_view.set_anchored = lambda ids: seen.update(trans=ids)
-        editor._refresh_highlights()
-        self.assertEqual(seen["orig"], ["b1"])
-        self.assertEqual(seen["trans"], ["b5"])
+        seen = self._marks(editor)
+        self.assertEqual(seen["orig"][MANUAL_MARK], ["b1"])
+        self.assertEqual(seen["trans"][MANUAL_MARK], ["b5"])
+
+    def test_automatic_groups_alternate_between_two_shades(self):
+        editor, _ = self._editor(
+            automatic=[("b1", "b1"), ("b2", "b2"), ("b2", "b3"), ("b5", "b6")]
+        )
+        seen = self._marks(editor)
+        self.assertEqual(
+            seen["orig"],
+            {MANUAL_MARK: [], AUTOMATIC_MARKS[0]: ["b1", "b5"], AUTOMATIC_MARKS[1]: ["b2"]},
+        )
+        self.assertEqual(
+            seen["trans"],
+            {
+                MANUAL_MARK: [],
+                AUTOMATIC_MARKS[0]: ["b1", "b6"],
+                AUTOMATIC_MARKS[1]: ["b2", "b3"],
+            },
+        )
+
+    def test_an_automatic_group_touching_a_manual_one_is_not_drawn(self):
+        editor, _ = self._editor([("b3", "b3")], automatic=[("b3", "b4"), ("b5", "b5")])
+        seen = self._marks(editor)
+        self.assertEqual(
+            seen["orig"],
+            {MANUAL_MARK: ["b3"], AUTOMATIC_MARKS[0]: ["b5"], AUTOMATIC_MARKS[1]: []},
+        )
+
+    def test_a_manual_anchor_replaces_the_automatic_anchors_it_touches(self):
+        editor, store = self._editor(automatic=[("b1", "b1"), ("b2", "b2"), ("b3", "b3")])
+        self._select(editor, "b2", "b2")
+        editor._on_add_clicked()
+        self.assertEqual(store.anchors, [("b2", "b2")])
+        self.assertEqual(store.auto_anchors, [("b1", "b1"), ("b3", "b3")])
+        self.assertEqual(
+            editor.status_label.text(), "Added b2 = b2; automatic anchors removed: 1"
+        )
+
+    def test_a_manual_anchor_clear_of_automatic_ones_leaves_them(self):
+        editor, store = self._editor(automatic=[("b1", "b1")])
+        self._select(editor, "b4", "b4")
+        editor._on_add_clicked()
+        self.assertEqual(store.auto_anchors, [("b1", "b1")])
+        self.assertEqual(editor.status_label.text(), "")
 
 
 from split_translator.skip_panel import AT_END, AT_START

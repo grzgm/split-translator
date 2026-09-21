@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .anchor_editor import AnchorEditor
-from .anchor_groups import resolve_manual
+from .anchor_groups import resolve
 from .anchor_store import READER_SURFACE, AnchorStore, anchor_path_for
 from .block_ids import resolve_position
 from .book_loader import load_book
@@ -539,20 +539,24 @@ class BookPanel(QFrame):
             other.clear_search_mark()
 
     def _build_section_map(self) -> SectionMap:
-        """Sections from the anchors and skip fields as they stand. An anchor
-        that overlaps or crosses earlier ones is left out of sync (the anchor
-        editor lists it)."""
+        """Sections from the anchors and skip fields as they stand, manual and
+        automatic groups together. An anchor that cannot hold (a manual one
+        overlapping or crossing earlier ones, an automatic one touching a
+        manual group) is left out of sync; the anchor editor lists it."""
         original = self.original_document
         translation = self.translation_document
-        groups, _conflicting = resolve_manual(
-            self.anchor_store.anchors, original.block_ids, translation.block_ids
+        resolved = resolve(
+            self.anchor_store.anchors,
+            self.anchor_store.auto_anchors,
+            original.block_ids,
+            translation.block_ids,
         )
         return SectionMap(
             original.block_ids,
             original.block_texts,
             translation.block_ids,
             translation.block_texts,
-            groups,
+            resolved.groups,
             original_kept=kept_range(
                 original.block_ids, *self.anchor_store.get_skip(ORIGINAL_SIDE)
             ),
