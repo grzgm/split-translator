@@ -601,6 +601,129 @@ class AnchorEditorGroupTests(unittest.TestCase):
         self.assertEqual(seen["trans"], ["b5"])
 
 
+from split_translator.skip_panel import AT_END, AT_START
+
+
+class AnchorEditorSkipTests(unittest.TestCase):
+    """The Skip tab: counts of paragraphs each edition leaves out at its start
+    and end, stored as the first and last kept ids."""
+
+    def _editor(self, skip=None, anchors=()):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "anchors.json"
+        store = AnchorStore(self.path)
+        self.addCleanup(store.shutdown)
+        store.anchors = list(anchors)
+        for side, (first, last) in (skip or {}).items():
+            store.set_skip(side, first, last)
+        ids = [f"b{i}" for i in range(8)]
+        html = "".join(f"<p data-stid='{x}'>p</p>" for x in ids)
+        doc = BookDocument(html=html, block_ids=ids, title="T")
+        self.changed = 0
+
+        def on_changed():
+            self.changed += 1
+
+        editor = AnchorEditor(
+            doc, doc, store, _sections(doc, doc), QWebEngineProfile(), on_changed
+        )
+        self.jumps = {ORIGINAL_SIDE: [], TRANSLATION_SIDE: []}
+        for side, view in (
+            (ORIGINAL_SIDE, editor.original_view),
+            (TRANSLATION_SIDE, editor.translation_view),
+        ):
+            view.scroll_to = lambda bid, frac, s=side: self.jumps[s].append(
+                ("scroll", bid)
+            )
+            view.set_jump = lambda bid, s=side: self.jumps[s].append(("jump", bid))
+        return editor, store
+
+    def test_the_fields_are_seeded_from_the_store(self):
+        editor, _ = self._editor(
+            {ORIGINAL_SIDE: ("b2", None), TRANSLATION_SIDE: ("b1", "b5")}
+        )
+        self.assertEqual(editor.skip_panel.skip(ORIGINAL_SIDE), (2, 0))
+        self.assertEqual(editor.skip_panel.skip(TRANSLATION_SIDE), (1, 2))
+
+    def test_a_start_change_stores_the_first_kept_paragraph_and_shows_it(self):
+        editor, store = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(3)
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), ("b3", None))
+        self.assertEqual(self.changed, 1)
+        self.assertEqual(
+            self.jumps[ORIGINAL_SIDE], [("scroll", "b3"), ("jump", "b3")]
+        )
+        self.assertEqual(self.jumps[TRANSLATION_SIDE], [])
+        self.assertFalse(self.path.exists())  # written on the debounce
+
+    def test_an_end_change_stores_the_last_kept_paragraph(self):
+        editor, store = self._editor()
+        editor.skip_panel.box(TRANSLATION_SIDE, AT_END).setValue(2)
+        self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, "b5"))
+        self.assertEqual(
+            self.jumps[TRANSLATION_SIDE], [("scroll", "b5"), ("jump", "b5")]
+        )
+
+    def test_skipping_nothing_again_clears_the_side(self):
+        editor, store = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(3)
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(0)
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), (None, None))
+
+    def test_the_debounce_writes_the_skip(self):
+        editor, _ = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(3)
+        editor._save_skip()
+        editor.anchor_store.shutdown()
+        reloaded = AnchorStore(self.path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(reloaded.get_skip(ORIGINAL_SIDE), ("b3", None))
+
+    def test_closing_keeps_a_pending_change(self):
+        editor, _ = self._editor()
+        editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(3)
+        editor.close()
+        editor.anchor_store.shutdown()
+        reloaded = AnchorStore(self.path)
+        self.addCleanup(reloaded.shutdown)
+        self.assertEqual(reloaded.get_skip(ORIGINAL_SIDE), ("b3", None))
+        self.assertFalse(editor._skip_save_timer.isActive())
+
+    def test_from_selection_skips_what_comes_before_the_selected_paragraph(self):
+        editor, store = self._editor()
+        editor._on_original_clicked("b4")
+        editor._skip_from_selection(ORIGINAL_SIDE, AT_START)
+        self.assertEqual(editor.skip_panel.skip(ORIGINAL_SIDE), (4, 0))
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), ("b4", None))
+
+    def test_from_selection_skips_what_comes_after_the_selected_paragraph(self):
+        editor, store = self._editor()
+        editor._on_translation_clicked("b5")
+        editor._skip_from_selection(TRANSLATION_SIDE, AT_END)
+        self.assertEqual(editor.skip_panel.skip(TRANSLATION_SIDE), (0, 2))
+        self.assertEqual(store.get_skip(TRANSLATION_SIDE), (None, "b5"))
+
+    def test_from_selection_without_a_selection_says_so(self):
+        editor, store = self._editor()
+        editor._skip_from_selection(ORIGINAL_SIDE, AT_START)
+        self.assertEqual(
+            editor.status_label.text(), "Select a paragraph in the original first"
+        )
+        self.assertEqual(store.get_skip(ORIGINAL_SIDE), (None, None))
+
+    def test_anchors_outside_the_kept_range_are_labelled(self):
+        editor, _ = self._editor(
+            {ORIGINAL_SIDE: ("b1", None)}, anchors=[("b0", "b0"), ("b3", "b3")]
+        )
+        editor.refresh()
+        labels = [
+            editor.anchor_list.item(i).text()
+            for i in range(editor.anchor_list.count())
+        ]
+        self.assertEqual(labels, ["b0  =  b0  (skipped)", "b3  =  b3"])
+
+
 from split_translator.anchor_store import EDITOR_SURFACE, READER_SURFACE
 
 
@@ -714,14 +837,27 @@ class AnchorEditorNormalisePanelTests(unittest.TestCase):
         )
         return editor, store
 
-    def test_the_bottom_is_a_splitter_holding_the_list_and_the_panel(self):
+    def test_the_bottom_is_a_splitter_holding_the_list_and_the_tabs(self):
         editor, _ = self._editor()
         self.assertEqual(editor.bottom_splitter.count(), 2)
         self.assertIs(editor.bottom_splitter.widget(0), editor.anchor_list)
-        self.assertIs(editor.bottom_splitter.widget(1), editor.normalise_panel)
+        self.assertIs(editor.bottom_splitter.widget(1), editor.side_tabs)
+        self.assertEqual(
+            [editor.side_tabs.tabText(i) for i in range(editor.side_tabs.count())],
+            ["Skip", "Spacing"],
+        )
+        self.assertIs(editor.side_tabs.widget(1), editor.normalise_panel)
 
     def test_the_splitter_starts_even(self):
+        # The Skip tab (the tabs' default) is wide enough that its minimum
+        # width beats the requested 50/50 split while the widget has never
+        # been given a real size, as in a headless construction; shown at a
+        # realistic width the split is even, matching what setSizes asked for.
         editor, _ = self._editor()
+        editor.resize(1400, 800)
+        editor.show()
+        self.addCleanup(editor.hide)
+        QApplication.processEvents()
         left, right = editor.bottom_splitter.sizes()
         self.assertEqual(left, right)
 

@@ -1130,6 +1130,27 @@ class BookPanelEditorTests(unittest.TestCase):
                 panel.translation_view._section_starts, ["top", "b0", "end"]
             )
 
+    def test_a_skip_change_in_the_editor_rebuilds_the_readers_sections(self):
+        # Closed inside the `with` block, like the other editor tests here.
+        from split_translator.skip_panel import AT_START
+
+        with tempfile.TemporaryDirectory() as d:
+            panel = BookPanel(_config(d), QWebEngineProfile())
+            panel.open_anchor_editor()
+            try:
+                editor = panel.anchor_editor
+                editor.original_view.scroll_to = lambda bid, frac: None
+                editor.original_view.set_jump = lambda bid: None
+                editor.skip_panel.box(ORIGINAL_SIDE, AT_START).setValue(1)
+                self.assertEqual(panel.section_map.kept(ORIGINAL_SIDE), range(1, 4))
+                self.assertEqual(
+                    panel.original_view._section_starts, ["top", "b1", "end"]
+                )
+                self.assertIs(editor.section_map, panel.section_map)
+            finally:
+                panel.anchor_editor.close()
+                panel.anchor_store.shutdown()
+
 
 class BookPanelNormaliseSpecTests(unittest.TestCase):
     """The reader takes its per-edition multipliers from the same per-book-pair

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -22,9 +23,10 @@ from .anchor_book_view import AnchorBookView
 from .anchor_groups import add_conflict, group_paragraphs, resolve_manual
 from .anchor_store import EDITOR_SURFACE, AnchorStore
 from .book_loader import BookDocument, resolve_position
-from .book_sync import SectionMap
+from .book_sync import SectionMap, kept_range
 from .normalise_panel import NormalisePanel
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
+from .skip_panel import AT_START, SkipPanel
 from .sync_gesture import SyncGesture
 
 _ORIGINAL_ID_ROLE = 256  # Qt.UserRole
@@ -149,6 +151,13 @@ class AnchorEditor(QWidget):
         self._spec_save_timer.setSingleShot(True)
         self._spec_save_timer.timeout.connect(self._save_specs)
 
+        # Skip fields changed but not yet written, coalesced the same way as the
+        # multipliers. The store already holds them in memory, so the sections
+        # are rebuilt at once; only the write waits.
+        self._skip_save_timer = QTimer(self)
+        self._skip_save_timer.setSingleShot(True)
+        self._skip_save_timer.timeout.connect(self._save_skip)
+
         self.init_ui()
         self._push_sections()
         self.refresh()
@@ -256,8 +265,7 @@ class AnchorEditor(QWidget):
 
         # The multipliers sit beside the list rather than under it: they are
         # tuned while watching the two books above, so they must not push the
-        # books off the screen. Even by default and draggable, like the vertical
-        # splitter above.
+        # books off the screen.
         self.normalise_panel = NormalisePanel()
         self.normalise_panel.set_specs(self._original_spec, self._translation_spec)
         self.normalise_panel.changed.connect(self._apply_normalise_spec)
@@ -265,9 +273,28 @@ class AnchorEditor(QWidget):
         # this window while normalisation is off (see toggle_normalise).
         self.normalise_panel.setEnabled(self._normalise)
 
+        # How many paragraphs each edition leaves out at its start and end,
+        # seeded from the stored first and last kept paragraphs.
+        self.skip_panel = SkipPanel(
+            len(self.original_document.block_ids),
+            len(self.translation_document.block_ids),
+        )
+        for side in (ORIGINAL_SIDE, TRANSLATION_SIDE):
+            ids = self._ids(side)
+            kept = kept_range(ids, *self.anchor_store.get_skip(side))
+            self.skip_panel.set_skip(side, kept.start, len(ids) - kept.stop)
+        self.skip_panel.changed.connect(self._on_skip_changed)
+        self.skip_panel.from_selection.connect(self._skip_from_selection)
+
+        # One tab per tool, so the books above keep their height.
+        self.side_tabs = QTabWidget()
+        self.side_tabs.addTab(self.skip_panel, "Skip")
+        self.side_tabs.addTab(self.normalise_panel, "Spacing")
+
+        # Even by default and draggable, like the vertical splitter above.
         self.bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.bottom_splitter.addWidget(self.anchor_list)
-        self.bottom_splitter.addWidget(self.normalise_panel)
+        self.bottom_splitter.addWidget(self.side_tabs)
         self.bottom_splitter.setStretchFactor(0, 1)
         self.bottom_splitter.setStretchFactor(1, 1)
         self.bottom_splitter.setSizes([400, 400])
@@ -388,6 +415,59 @@ class AnchorEditor(QWidget):
         construction."""
         self._spec_save_timer.stop()
         self.anchor_store.set_normalise_specs(*self.normalise_panel.specs())
+
+    def _ids(self, side: str) -> list[str]:
+        if side == ORIGINAL_SIDE:
+            return self.original_document.block_ids
+        return self.translation_document.block_ids
+
+    def _view(self, side: str):
+        if side == ORIGINAL_SIDE:
+            return self.original_view
+        return self.translation_view
+
+    def _on_skip_changed(self, side: str, which: str) -> None:
+        """A skip field changed. Store the first and last kept paragraphs (the
+        write waits for the debounce), have the owner rebuild the sections in
+        both windows, and show where the kept range now begins or ends."""
+        ids = self._ids(side)
+        if not ids:
+            return
+        start, end = self.skip_panel.skip(side)
+        first_kept = ids[start]
+        last_kept = ids[len(ids) - 1 - end]
+        self.anchor_store.set_skip(
+            side, first_kept if start else None, last_kept if end else None
+        )
+        self._skip_save_timer.start(300)
+        self._on_changed()
+        self.refresh()
+        boundary = first_kept if which == AT_START else last_kept
+        view = self._view(side)
+        view.scroll_to(boundary, 0.0)
+        view.set_jump(boundary)
+
+    def _skip_from_selection(self, side: str, which: str) -> None:
+        """Skip everything before (at the start) or after (at the end) the
+        paragraph selected in that edition. The box clamps, so at least one
+        paragraph always stays kept."""
+        if side == ORIGINAL_SIDE:
+            selected = self._selected_original
+        else:
+            selected = self._selected_translation
+        ids = self._ids(side)
+        if selected is None or selected not in ids:
+            self.status_label.setText(f"Select a paragraph in the {side} first")
+            return
+        self.status_label.setText("")
+        position = ids.index(selected)
+        value = position if which == AT_START else len(ids) - 1 - position
+        self.skip_panel.box(side, which).setValue(value)
+
+    def _save_skip(self) -> None:
+        """Write the skip fields. Called by the debounce timer."""
+        self._skip_save_timer.stop()
+        self.anchor_store.save()
 
     def _sync_from(
         self,
@@ -516,11 +596,26 @@ class AnchorEditor(QWidget):
         self.anchor_list.clear()
         # An anchor that overlaps or crosses earlier ones (only possible in a
         # hand-edited or older file) is kept but ignored for sync; say so.
-        _groups, conflicting = resolve_manual(
+        groups, conflicting = resolve_manual(
             self.anchor_store.anchors,
             self.original_document.block_ids,
             self.translation_document.block_ids,
         )
+        # Anchors in front or back matter are kept but ignored for sync.
+        original_kept = kept_range(
+            self.original_document.block_ids,
+            *self.anchor_store.get_skip(ORIGINAL_SIDE),
+        )
+        translation_kept = kept_range(
+            self.translation_document.block_ids,
+            *self.anchor_store.get_skip(TRANSLATION_SIDE),
+        )
+        skipped = {
+            anchor
+            for group in groups
+            if not group.within(original_kept, translation_kept)
+            for anchor in group.anchors
+        }
         # Show the anchors lowest-first by the original block's position in the
         # document. Sorting by block index (not the id string) keeps "b100" after
         # "b7". Anchors whose id is no longer in the document sort to the end.
@@ -536,6 +631,8 @@ class AnchorEditor(QWidget):
             label = f"{original_id}  =  {translation_id}"
             if (original_id, translation_id) in conflicting:
                 label += "  (conflicts)"
+            if (original_id, translation_id) in skipped:
+                label += "  (skipped)"
             item = QListWidgetItem(label)
             item.setData(_ORIGINAL_ID_ROLE, original_id)
             item.setData(_TRANSLATION_ID_ROLE, translation_id)
@@ -577,6 +674,9 @@ class AnchorEditor(QWidget):
         # down, so any edit still sitting in the debounce must be flushed here.
         if self._spec_save_timer.isActive():
             self._save_specs()
+        # A pending skip change is already in the store's memory, and the
+        # scroll write below saves the whole store, so the debounce can go.
+        self._skip_save_timer.stop()
         # Persist the editor's own scroll position so it reopens here next time,
         # separately from the reader. The shared store flushes in-flight writes
         # on app shutdown (BookPanel.close_doc -> anchor_store.shutdown).
