@@ -7,7 +7,8 @@ post-load JavaScript. Instead it uses Qt's built-in mechanisms:
   so cookie banners and bot checks do not reappear every launch.
 * A QWebEngineUrlRequestInterceptor blocks known ad/tracker domains at the network layer,
   before they render (more robust than removing nodes after the fact).
-* QWebEngineScript injects cosmetic ad removal and cookie-consent auto-dismiss on every page.
+* QWebEngineScript injects cosmetic ad removal and cookie-consent auto-dismiss into
+  every page's main frame (never a subframe: see setRunsOnSubFrames below).
 """
 
 from pathlib import Path
@@ -189,7 +190,16 @@ def create_web_profile(parent=None) -> QWebEngineProfile:
     script.setSourceCode(_PAGE_SCRIPT)
     script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
     script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-    script.setRunsOnSubFrames(True)
+    # Main frame only. Injected into a subframe whose request the interceptor
+    # above had blocked, this script crashed the app: it ran in a frame the
+    # browser had already torn down, the renderer then sent a message about
+    # that frame, and Chromium killed the renderer for a bad IPC message. The
+    # browser could not start a replacement renderer afterwards, so the next
+    # search (sometimes the same one) died inside load(). Ad slots and consent
+    # banners are matched in the main document, which is where these selectors
+    # and labels belong anyway; a consent dialog served inside an iframe is
+    # clicked by hand once and the persistent profile remembers it.
+    script.setRunsOnSubFrames(False)
     profile.scripts().insert(script)
 
     return profile
