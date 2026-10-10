@@ -394,15 +394,51 @@ class DictionaryPanel(QWidget):
         var uk = grab('uk');
         var us = grab('us');
 
-        // The page headword (span.hw.dhw). This is Cambridge's canonical
-        // spelling of the entry, which differs from the raw search term when
-        // Cambridge answers the search with another entry (searching
-        // "surmises" lands on "surmise"), and when the app has followed a
-        // page that only points at the base form (see _BASE_FORM_JS). We
-        // return it so the flashcard editor fills its Headword from the
-        // dictionary rather than the search box.
-        var head = document.querySelector('.hw.dhw');
-        var headword = head ? head.textContent.trim() : null;
+        // The entry's title. This is Cambridge's canonical spelling of the
+        // entry, which differs from the raw search term when Cambridge answers
+        // the search with another entry (searching "surmises" lands on
+        // "surmise"), and when the app has followed a page that only points at
+        // the base form (see _BASE_FORM_JS). We return it so the flashcard
+        // editor fills its Headword from the dictionary rather than the search
+        // box.
+        //
+        // The title, not the first span.hw.dhw: on a phrasal verb's page the
+        // title is an <h2> holding the whole phrase, and the only span.hw.dhw
+        // is the bare verb inside the "phrasal verb with come" note beside it.
+        // So a card for "came off", which Cambridge answers at its "come off"
+        // entry, was headed "come". Measured on the live pages of came off,
+        // come off, went off, look after, put up with, count on, deal with and
+        // look forward to; the plain words dog, surmised, run, saw, better,
+        // mice, children, glasses, well-being and colour read the same as
+        // before, their title being the headword on its own.
+        //
+        // A trailing object placeholder is dropped, because Cambridge titles
+        // the entry "look after someone/something" while the phrase is "look
+        // after". A placeholder inside the phrase ("break something up") is
+        // the dictionary's own wording for where the object goes and is left
+        // as it stands.
+        var stPlaceholders = ['someone', 'something', 'somebody', 'sb', 'sth'];
+        function stIsPlaceholder(token) {
+            var parts = token.toLowerCase().split('/');
+            for (var i = 0; i < parts.length; i++) {
+                if (stPlaceholders.indexOf(parts[i]) === -1) { return false; }
+            }
+            return true;
+        }
+        function stHeadword() {
+            var title = document.querySelector('.di-title .headword')
+                || document.querySelector('.di-title')
+                || document.querySelector('.hw.dhw');
+            if (!title) { return null; }
+            var words = title.textContent.replace(/\s+/g, ' ').trim().split(' ');
+            // Never strips the entry down to nothing, so a one word entry
+            // that happens to be "something" keeps its name.
+            while (words.length > 1 && stIsPlaceholder(words[words.length - 1])) {
+                words.pop();
+            }
+            return words.join(' ') || null;
+        }
+        var headword = stHeadword();
 
         // UK/US spelling. Cambridge lists only the differing spelling as a
         // variant (span.spellvar with a .region tag saying UK or US and a .v

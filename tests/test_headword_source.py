@@ -9,7 +9,7 @@ from split_translator.main_window import TranslationTool
 
 class HeadwordSourceTests(unittest.TestCase):
     """``on_pronunciation_grabbed`` decides which text fills the flashcard
-    Headword: Cambridge's own headword (``.hw.dhw``, returned in the grab
+    Headword: Cambridge's own headword (the entry title, returned in the grab
     payload) is preferred over the raw search term, so a search that redirects
     to a lemma ("running" -> "run") records the canonical spelling. The method
     is driven as an unbound function against a lightweight carrier, avoiding the
@@ -84,6 +84,7 @@ class SearchSeedTests(unittest.TestCase):
             ),
             history_panel=SimpleNamespace(add_to_history=lambda w: None),
             book_panel=SimpleNamespace(search=lambda w: None),
+            status_bar=SimpleNamespace(clear_notice=lambda: None),
         )
         return carrier, seeded
 
