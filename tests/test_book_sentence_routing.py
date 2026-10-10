@@ -153,6 +153,9 @@ class WordSearchedClearsEditorTests(unittest.TestCase):
             book_panel=SimpleNamespace(
                 search=lambda w: order.append(("book", w))
             ),
+            status_bar=SimpleNamespace(
+                clear_notice=lambda: order.append("clear notice")
+            ),
         )
         return carrier, order
 
@@ -160,16 +163,34 @@ class WordSearchedClearsEditorTests(unittest.TestCase):
         carrier, order = self._carrier()
         TranslationTool.on_word_searched(carrier, "walk")
         # The clear runs before the book search (and before anything that could
-        # fill the editor for the new word).
-        self.assertEqual(order[0], "prepare")
+        # fill the editor for the new word). Compared by position rather than
+        # by index, since the status bar is reset ahead of the editor.
+        self.assertLess(order.index("prepare"), order.index(("seed", "walk")))
+        self.assertLess(order.index("prepare"), order.index(("book", "walk")))
         self.assertIn(("history", "walk"), order)
-        self.assertIn(("book", "walk"), order)
 
     def test_seeds_the_headword_after_the_clear(self):
         # The seed must follow the clear, or the clear would wipe it.
+        self.assertEqual(self._order_of("prepare", ("seed", "walk")), [0, 1])
+
+    def test_the_status_bar_is_reset_before_this_searchs_own_notices(self):
+        # The bar's notices are about the word looked up and have no timeout,
+        # so a new search takes down whatever is up. It has to happen before
+        # add_to_history, which raises this search's previously-searched
+        # notice, or the new notice would be the one cleared.
         carrier, order = self._carrier()
         TranslationTool.on_word_searched(carrier, "walk")
-        self.assertEqual(order[:2], ["prepare", ("seed", "walk")])
+        self.assertIn("clear notice", order)
+        self.assertLess(
+            order.index("clear notice"), order.index(("history", "walk"))
+        )
+
+    def _order_of(self, *events):
+        """Where each event lands among the others, ignoring the rest."""
+        carrier, order = self._carrier()
+        TranslationTool.on_word_searched(carrier, "walk")
+        kept = [event for event in order if event in events]
+        return [kept.index(event) for event in events]
 
 
 if __name__ == "__main__":

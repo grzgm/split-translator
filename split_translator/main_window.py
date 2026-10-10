@@ -321,6 +321,12 @@ class TranslationTool(QMainWindow):
         )
 
     def on_word_searched(self, word: str):
+        # A new search clears the status bar. Its notices are about the word
+        # that was looked up (searched before, plural) and have no timeout, so
+        # one left standing would read as though it were about this word. This
+        # runs before add_to_history below, which is what raises this search's
+        # own previously-searched notice.
+        self.status_bar.clear_notice()
         # A new search starts a fresh card: clear the editor first (only when the
         # current card is unaltered; an altered card is left alone, and stays out
         # of this search's fills entirely) so the word's pronunciation and the

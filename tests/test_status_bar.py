@@ -109,6 +109,45 @@ class StatusBarTests(unittest.TestCase):
         self.assertTrue(bar._close_button.isHidden())
         self.assertEqual(bar.styleSheet(), MESSAGE_STYLE)
 
+    def test_clear_notice_takes_a_notice_down(self):
+        # A new search resets the bar: a notice has no timeout, so one left
+        # standing would read as though it were about the word just searched.
+        bar = self._bar()
+        bar.show_notice("previously searched")
+        bar.clear_notice()
+        self.assertEqual(bar.currentMessage(), "")
+        self.assertTrue(bar._close_button.isHidden())
+        self.assertEqual(bar.styleSheet(), MESSAGE_STYLE)
+
+    def test_clear_notice_takes_a_transient_message_down_too(self):
+        # The bar shows one thing at a time, so a reset clears whatever is up.
+        bar = self._bar()
+        bar.show_message("Saved flashcard")
+        bar.clear_notice()
+        self.assertEqual(bar.currentMessage(), "")
+
+    def test_clear_notice_reports_no_dismissal(self):
+        # Nobody dismissed it: the search did. Keeping the signal for the close
+        # button alone leaves it meaning what it says.
+        bar = self._bar()
+        dismissed = []
+        bar.notice_dismissed.connect(lambda: dismissed.append(True))
+        bar.show_notice("previously searched")
+        bar.clear_notice()
+        self.assertEqual(dismissed, [])
+
+    def test_clear_notice_with_an_empty_bar_does_nothing(self):
+        bar = self._bar()
+        bar.clear_notice()  # must not raise
+        self.assertEqual(bar.currentMessage(), "")
+
+    def test_clear_notice_stops_an_in_flight_flash(self):
+        bar = self._bar()
+        bar.show_notice("previously searched")
+        bar.clear_notice()
+        self.assertFalse(bar._flash_timer.isActive())
+        self.assertEqual(bar.styleSheet(), MESSAGE_STYLE)
+
     def test_dismiss_emits_notice_dismissed(self):
         bar = self._bar()
         dismissed = []

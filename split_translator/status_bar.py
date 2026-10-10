@@ -92,6 +92,16 @@ class StatusBar(QStatusBar):
         self.showMessage(text, timeout)
         self._start_flash()
 
+    def clear_notice(self):
+        """Take the bar down to nothing, reporting no dismissal.
+
+        A new search does this. Everything the bar holds is about the word that
+        was looked up (it was searched before, it is plural), so none of it
+        should outlive that word: left up, a notice reads as though it were
+        about the word just searched. A transient message goes the same way,
+        since the bar shows one thing at a time."""
+        self.clearMessage()
+
     def dismiss_notice(self):
         """Clear the bar, as the close button does."""
         # clearMessage drives messageChanged with an empty string, which resets
