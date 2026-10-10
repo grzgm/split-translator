@@ -468,12 +468,28 @@ class DictionaryPanel(QWidget):
     # plural-only when a whole block (brackets and spacing stripped) reads exactly
     # "plural" (as for scissors, trousers, glasses). A softer block like
     # "[ U or plural ]" (data) is deliberately not matched, even though it
-    # contains the word "plural". Returns a JSON string for the same reason as
-    # _GRAB_JS (a bare object arrives empty from runJavaScript).
+    # contains the word "plural".
+    #
+    # Only the headword's own grammar is read: the block beside its part of
+    # speech (.posgram) or in the entry's heading (.di-info). A block belonging
+    # to one sense (.def-info) or to a phrase (.phrase-info) describes that
+    # sense or phrase and not the word, so reading every block on the page
+    # called singular words plural. "lee" is the clearest: a singular noun
+    # whose entry carries the phrase "the lees", marked "[ plural ]". "glass"
+    # (the phrase "glasses") and "means" (a plural sense) went the same way.
+    # Checked against the live pages of scissors, trousers, glasses, jeans,
+    # police, people, clothes, stairs, outskirts, premises and lees, all still
+    # read as plural, and of data, news, dog, run, wind, arm, savings, lee,
+    # glass and means, none of which is.
+    #
+    # Returns a JSON string for the same reason as _GRAB_JS (a bare object
+    # arrives empty from runJavaScript).
     _GRAMMAR_JS = r"""
     (function() {
         var plural = false;
-        var grams = document.querySelectorAll('.gram.dgram');
+        var grams = document.querySelectorAll(
+            '.posgram .gram.dgram, .di-info .gram.dgram'
+        );
         for (var i = 0; i < grams.length; i++) {
             var text = grams[i].textContent
                 .replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
