@@ -1388,18 +1388,45 @@ class AnchorEditorAutomaticTests(unittest.TestCase):
         return editor, store
 
     def _generate(self, editor, start, count):
-        editor.auto_panel.set_start(start)
+        # The batch starts at the selected paragraph, so selecting it is how a
+        # start is chosen; the editor tells the panel (see _update_add_enabled).
+        editor._on_original_clicked(f"b{start}")
         editor.auto_panel.count_box.setValue(count)
         editor.auto_panel.generate_button.click()
+
+    def _remove(self, editor, start, count):
+        editor._on_original_clicked(f"b{start}")
+        editor.auto_panel.count_box.setValue(count)
+        editor.auto_panel.remove_button.click()
 
     def test_the_automatic_anchors_tab_comes_first(self):
         editor, _ = self._editor()
         self.assertEqual(editor.side_tabs.tabText(0), "Automatic anchors")
         self.assertIs(editor.side_tabs.widget(0), editor.auto_panel)
 
-    def test_the_start_defaults_to_the_first_kept_paragraph(self):
+    def test_it_opens_with_no_batch_and_the_buttons_disabled(self):
+        # Nothing is selected when the editor opens, so there is no batch.
         editor, _ = self._editor(skip={ORIGINAL_SIDE: ("b2", None)})
-        self.assertEqual(editor.auto_panel.start(), 2)
+        self.assertIsNone(editor.auto_panel.start())
+        self.assertFalse(editor.auto_panel.generate_button.isEnabled())
+        self.assertFalse(editor.auto_panel.remove_button.isEnabled())
+
+    def test_selecting_an_original_paragraph_starts_the_batch_there(self):
+        editor, _ = self._editor()
+        editor._on_original_clicked("b5")
+        self.assertEqual(editor.auto_panel.start(), 5)
+        self.assertEqual(editor.auto_panel.start_label.text(), "Paragraph 6")
+        self.assertTrue(editor.auto_panel.generate_button.isEnabled())
+
+    def test_clearing_the_selection_disables_the_batch_buttons(self):
+        # Adding an anchor clears both selections, so the batch goes with them.
+        editor, _ = self._editor()
+        editor._on_original_clicked("b5")
+        editor._on_translation_clicked("b5")
+        editor.add_button.click()
+        self.assertIsNone(editor.auto_panel.start())
+        self.assertFalse(editor.auto_panel.generate_button.isEnabled())
+        self.assertFalse(editor.auto_panel.remove_button.isEnabled())
 
     def test_generate_starts_a_worker_and_disables_the_buttons(self):
         editor, _ = self._editor(skip={TRANSLATION_SIDE: ("b1", "b8")})
@@ -1441,7 +1468,8 @@ class AnchorEditorAutomaticTests(unittest.TestCase):
         self.assertEqual(
             editor.status_label.text(), "Added 4 automatic anchors for paragraphs 1 to 4"
         )
-        self.assertEqual(editor.auto_panel.start(), 4)
+        # The start stays at the selection: a batch does not move it on.
+        self.assertEqual(editor.auto_panel.start(), 0)
         self.assertTrue(editor.auto_panel.generate_button.isEnabled())
         self.assertEqual(self.changed, 1)
 
@@ -1470,9 +1498,7 @@ class AnchorEditorAutomaticTests(unittest.TestCase):
 
     def test_remove_automatic_removes_the_batch(self):
         editor, store = self._editor(automatic=[("b1", "b1"), ("b2", "b2"), ("b6", "b6")])
-        editor.auto_panel.set_start(0)
-        editor.auto_panel.count_box.setValue(4)
-        editor.auto_panel.remove_button.click()
+        self._remove(editor, 0, 4)
         self.assertEqual(store.auto_anchors, [("b6", "b6")])
         self.assertEqual(
             editor.status_label.text(), "Removed 2 automatic anchors for paragraphs 1 to 4"
@@ -1485,9 +1511,7 @@ class AnchorEditorAutomaticTests(unittest.TestCase):
         editor, store = self._editor(
             anchors=[("b3", "b3")], automatic=[("b3", "b4"), ("b6", "b6")]
         )
-        editor.auto_panel.set_start(0)
-        editor.auto_panel.count_box.setValue(4)
-        editor.auto_panel.remove_button.click()
+        self._remove(editor, 0, 4)
         self.assertEqual(store.auto_anchors, [("b6", "b6")])
         self.assertEqual(
             editor.status_label.text(),
@@ -1508,27 +1532,12 @@ class AnchorEditorAutomaticTests(unittest.TestCase):
 
     def test_remove_with_nothing_in_the_batch_says_so(self):
         editor, store = self._editor(automatic=[("b6", "b6")])
-        editor.auto_panel.set_start(0)
-        editor.auto_panel.count_box.setValue(4)
-        editor.auto_panel.remove_button.click()
+        self._remove(editor, 0, 4)
         self.assertEqual(store.auto_anchors, [("b6", "b6")])
         self.assertEqual(
             editor.status_label.text(), "No automatic anchors for paragraphs 1 to 4"
         )
         self.assertEqual(self.changed, 0)
-
-    def test_from_selection_starts_the_batch_at_the_selected_paragraph(self):
-        editor, _ = self._editor()
-        editor._on_original_clicked("b5")
-        editor.auto_panel.from_selection_button.click()
-        self.assertEqual(editor.auto_panel.start(), 5)
-
-    def test_from_selection_without_a_selection_says_so(self):
-        editor, _ = self._editor()
-        editor.auto_panel.from_selection_button.click()
-        self.assertEqual(
-            editor.status_label.text(), "Select a paragraph in the original first"
-        )
 
     def test_closing_while_aligning_waits_and_applies_the_result(self):
         editor, store = self._editor()

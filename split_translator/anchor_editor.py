@@ -351,14 +351,12 @@ class AnchorEditor(QWidget):
         self.skip_panel.changed.connect(self._on_skip_changed)
         self.skip_panel.from_selection.connect(self._skip_from_selection)
 
-        # A batch of automatic anchors: a start and a count of original
-        # paragraphs. The start begins at the first kept paragraph, where the
-        # story begins.
+        # A batch of automatic anchors: the paragraph selected in the original
+        # and a count. It opens with nothing selected, so the panel opens with
+        # its buttons disabled; _update_add_enabled keeps it told.
         self.auto_panel = AutoAnchorPanel(len(self.original_document.block_ids))
-        self.auto_panel.set_start(self._kept(ORIGINAL_SIDE).start)
         self.auto_panel.generate.connect(self._generate)
         self.auto_panel.remove.connect(self._remove_batch)
-        self.auto_panel.from_selection.connect(self._batch_from_selection)
 
         # One tab per tool, so the books above keep their height.
         self.side_tabs = QTabWidget()
@@ -679,8 +677,6 @@ class AnchorEditor(QWidget):
             f"Added {len(added)} automatic anchors for "
             f"{self._batch_text(start, count)}"
         )
-        # Ready for the next batch.
-        self.auto_panel.set_start(start + count)
 
     def _remove_batch(self, start: int, count: int) -> None:
         """Remove the automatic anchors of every automatic group that belongs
@@ -707,16 +703,6 @@ class AnchorEditor(QWidget):
             f"Removed {len(gone)} automatic anchors for "
             f"{self._batch_text(start, count)}"
         )
-
-    def _batch_from_selection(self) -> None:
-        """Start the batch at the paragraph selected in the original."""
-        ids = self.original_document.block_ids
-        selected = self._selected_original
-        if selected is None or selected not in ids:
-            self.status_label.setText("Select a paragraph in the original first")
-            return
-        self.status_label.setText("")
-        self.auto_panel.set_start(ids.index(selected))
 
     def _sync_from(
         self,
@@ -779,11 +765,19 @@ class AnchorEditor(QWidget):
             self._on_translation_clicked(block_id)
 
     def _update_add_enabled(self) -> None:
-        # Called whenever either selection changes, so the labels follow too.
+        # Called whenever either selection changes, so the labels and the
+        # batch follow too.
         self._update_selection_labels()
         self.add_button.setEnabled(
             self._selected_original is not None
             and self._selected_translation is not None
+        )
+        # A batch starts at the selected original paragraph, so with no
+        # selection there is no batch to generate or remove.
+        ids = self.original_document.block_ids
+        selected = self._selected_original
+        self.auto_panel.set_selected(
+            ids.index(selected) if selected in ids else None
         )
 
     def _paragraph_numbers(self, side: str) -> dict[str, str]:
