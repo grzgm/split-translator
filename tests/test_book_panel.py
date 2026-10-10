@@ -959,14 +959,24 @@ class BookPanelForceOriginalSearchTests(unittest.TestCase):
         return panel
 
     def _stub_finds(self, panel):
-        # Record which view find() runs on (and the forward flag), without
-        # running the real page JS. Also stub marking so no page read follows.
-        finds = {"orig": [], "trans": []}
+        # Record which view a find runs on, without running the real page JS.
+        # The two entry points are kept apart: "orig"/"trans" are steps through
+        # the matches (find, as Prev and Next use it, carrying on from the
+        # current match) and "orig_search"/"trans_search" are new searches
+        # (find_from_reading_position, anchored at the paragraph on screen).
+        # Also stub marking so no page read follows.
+        finds = {"orig": [], "trans": [], "orig_search": [], "trans_search": []}
         panel.original_view.find = (
             lambda term, forward, cb: finds["orig"].append((term, forward))
         )
         panel.translation_view.find = (
             lambda term, forward, cb: finds["trans"].append((term, forward))
+        )
+        panel.original_view.find_from_reading_position = (
+            lambda term, cb: finds["orig_search"].append(term)
+        )
+        panel.translation_view.find_from_reading_position = (
+            lambda term, cb: finds["trans_search"].append(term)
         )
         panel.original_view.matched_block_id = lambda term, index, cb: cb("")
         panel.original_view.mark_search_blocks = lambda ids: None
@@ -983,8 +993,10 @@ class BookPanelForceOriginalSearchTests(unittest.TestCase):
             finds = self._stub_finds(panel)
             panel.search("needle")
             self.assertEqual(panel.tabs.currentIndex(), 0)  # switched to Original
-            self.assertEqual(finds["orig"], [("needle", True)])
-            self.assertEqual(finds["trans"], [])  # never searches Translation
+            self.assertEqual(finds["orig_search"], ["needle"])
+            self.assertEqual(finds["orig"], [])  # not a step through matches
+            self.assertEqual(finds["trans_search"], [])  # never searches Translation
+            self.assertEqual(finds["trans"], [])
 
     def test_search_from_original_tab_stays_and_finds_on_original(self):
         with tempfile.TemporaryDirectory() as d:
@@ -993,7 +1005,9 @@ class BookPanelForceOriginalSearchTests(unittest.TestCase):
             finds = self._stub_finds(panel)  # Original is the default tab
             panel.search("needle")
             self.assertEqual(panel.tabs.currentIndex(), 0)
-            self.assertEqual(finds["orig"], [("needle", True)])
+            self.assertEqual(finds["orig_search"], ["needle"])
+            self.assertEqual(finds["orig"], [])
+            self.assertEqual(finds["trans_search"], [])
             self.assertEqual(finds["trans"], [])
 
     def test_next_from_translation_tab_switches_and_finds_forward_on_original(self):
@@ -1380,8 +1394,8 @@ class BookPanelLayoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             panel = self._panel(_config(d, LAYOUT_BOOK), QWebEngineProfile())
             found = []
-            panel.original_view.find = (
-                lambda term, forward, cb: found.append(term)
+            panel.original_view.find_from_reading_position = (
+                lambda term, cb: found.append(term)
             )
             panel.search("wieczor")
             self.assertEqual(found, ["wieczor"])

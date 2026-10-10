@@ -144,20 +144,56 @@ _SCROLL_TO_JS = """
 })();
 """
 
+# The paragraph the reader is on: the last one starting at or above the top of
+# the window, so the paragraph straddling the top edge counts as theirs. Shared
+# by the topmost-block read and the search seed below, which have to agree on
+# where the reader is.
+_TOPMOST_BLOCK_JS = """
+    function __stTopmostBlock() {
+        var blocks = Array.prototype.slice.call(
+            document.querySelectorAll('[data-stid]'));
+        if (!blocks.length) return null;
+        var y = window.scrollY;
+        var current = blocks[0];
+        for (var i = 0; i < blocks.length; i++) {
+            if (blocks[i].offsetTop <= y) current = blocks[i];
+            else break;
+        }
+        return current;
+    }
+"""
+
 _TOPMOST_ID_JS = """
 (function() {
-    var blocks = Array.prototype.slice.call(
-        document.querySelectorAll('[data-stid]'));
-    if (!blocks.length) return "";
-    var y = window.scrollY;
-    var current = blocks[0];
-    for (var i = 0; i < blocks.length; i++) {
-        if (blocks[i].offsetTop <= y) current = blocks[i];
-        else break;
-    }
-    return current.getAttribute("data-stid");
+    __TOPMOST_BLOCK__
+    var block = __stTopmostBlock();
+    return block ? block.getAttribute("data-stid") : "";
 })();
-"""
+""".replace("__TOPMOST_BLOCK__", _TOPMOST_BLOCK_JS)
+
+# Puts the caret at the start of the paragraph the reader is on, for the find
+# that follows to start from. Chromium begins a new search at the selection and
+# takes no notice of where the page is scrolled, so without this a search for a
+# new word carries on from wherever the search before it stopped. Nothing ties
+# that to the reader, and it drifts further from them with every lookup: in a
+# 4841 paragraph book, reading at paragraph 2904, a new word was found at
+# paragraph 75, where the previous search had got to. The caret is collapsed,
+# so nothing is selected on the page and nothing is scrolled by seeding it.
+_SEED_FIND_JS = """
+(function() {
+    __TOPMOST_BLOCK__
+    var block = __stTopmostBlock();
+    if (!block) return "";
+    var selection = window.getSelection();
+    if (!selection) return "";
+    var range = document.createRange();
+    range.selectNodeContents(block);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return block.getAttribute("data-stid");
+})();
+""".replace("__TOPMOST_BLOCK__", _TOPMOST_BLOCK_JS)
 
 # Injected once per load: adds the search-block overlay style. The reader marks
 # the paragraph holding the current find match (and its counterpart paragraphs in
@@ -437,8 +473,10 @@ class BookView(QWebEngineView):
         # Whether this page has finished loading, and the one find held back
         # until it can be answered. See find(): a page that is not loaded, or
         # not on screen, answers a find with silence or with nothing found.
+        # The held find is kept as the work to run, so a find that has to seed
+        # its starting point first carries that with it.
         self._loaded = False
-        self._pending_find: tuple[str, bool, Callable] | None = None
+        self._pending_find: Callable[[], None] | None = None
         # The book HTML is loaded from a temp file, not setHtml: a full novel's
         # HTML is larger than setHtml's ~2 MB data-URL cap and would silently
         # fail to render (loadFinished ok=False, blank view). See book_render.
@@ -685,12 +723,46 @@ class BookView(QWebEngineView):
         reached the books, and both cleared on searching again, which is all
         the second search did differently. The held find is sent as soon as the
         page loads or the view is shown; only the newest is kept, since by then
-        an older one's term has left the search box."""
+        an older one's term has left the search box.
+
+        The search carries on from the last match, which is what Prev and Next
+        step through. A search for a new term starts from the reader instead;
+        see find_from_reading_position."""
+        self._hold_or_run(lambda: self._find_now(term, forward, callback))
+
+    def find_from_reading_position(self, term: str, callback) -> None:
+        """Find `term` from the paragraph the reader is on, reporting like find.
+
+        Chromium starts a new search at the selection and ignores the scroll
+        position, so each search carries on from where the one before it
+        stopped. Nothing ties that to the reader: over a session of lookups it
+        runs ahead of them, and a word is then found pages into the book they
+        have not read, which gives the story away. Measured in a 4841 paragraph
+        book: reading at paragraph 2904, a search for a new word landed on
+        paragraph 75, the previous search's place.
+
+        So the caret is put at the paragraph on screen first, and the nearest
+        match forward from there is the one found, wrapping to the top of the
+        book when the word does not occur again. The seed is the paragraph
+        straddling the top of the window rather than the first one fully below
+        it, so a match a line above the fold is found rather than stepped
+        over."""
+        self._hold_or_run(lambda: self._seed_then_find(term, callback))
+
+    def _seed_then_find(self, term: str, callback) -> None:
+        """Seed the caret, then search forward from it. The seed is a page read,
+        so the find waits for it rather than racing it."""
+        self.page().runJavaScript(
+            _SEED_FIND_JS, lambda _block_id: self._find_now(term, True, callback)
+        )
+
+    def _hold_or_run(self, run: Callable[[], None]) -> None:
+        """Run a find now, or hold it until the page can answer it (see find)."""
         if not self._loaded or not self.isVisible():
-            self._pending_find = (term, forward, callback)
+            self._pending_find = run
             return
         self._pending_find = None
-        self._find_now(term, forward, callback)
+        run()
 
     def _find_now(self, term: str, forward: bool, callback) -> None:
         flags = QWebEnginePage.FindFlag(0)
@@ -720,9 +792,9 @@ class BookView(QWebEngineView):
             return
         if not self._loaded or not self.isVisible():
             return
-        term, forward, callback = self._pending_find
+        run = self._pending_find
         self._pending_find = None
-        self._find_now(term, forward, callback)
+        run()
 
     def topmost_block_id(self, callback) -> None:
         """Read the topmost visible block id and pass it to callback(str)."""

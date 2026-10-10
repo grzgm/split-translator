@@ -1,4 +1,12 @@
-"""Finding in a book view that cannot answer yet.
+"""Finding in a book view: where a search starts, and what happens when the
+page cannot answer one yet.
+
+Chromium starts a new search at the selection and pays no attention to where
+the page is scrolled, so one search carries on from the one before it. Nothing
+in that is tied to the reader, so over a session of lookups it drifts ahead of
+them and a word is found pages into a part of the book they have not read. A
+new term is therefore searched from the paragraph on screen, while Prev and
+Next still step on from the current match.
 
 findText fails two ways and says so neither time. Sent before the document has
 loaded it never calls back at all, so the match counter and the paragraph marks
@@ -45,6 +53,31 @@ def _doc():
         block_ids=["b0", "b1"],
         title="T",
     )
+
+
+#: Paragraph count of the tall fixture, and the two paragraphs holding the term.
+TALL_BLOCKS = 80
+EARLY = 5
+LATE = 60
+#: Where the reader is: between the two, so the two possible starting points
+#: (the top of the book and the paragraph on screen) give different matches.
+READING_AT = 40
+
+
+def _tall_doc():
+    """A page long enough to scroll, with the term early and late in it."""
+    paragraphs = []
+    ids = []
+    for i in range(TALL_BLOCKS):
+        bid = f"b{i}"
+        ids.append(bid)
+        word = TERM if i in (EARLY, LATE) else "hay"
+        paragraphs.append(
+            f"<p data-stid='{bid}'>Paragraph {i} holds some {word} "
+            "and enough words after it to take up a line or two of the "
+            "page, so that scrolling has somewhere to go.</p>"
+        )
+    return BookDocument(html="".join(paragraphs), block_ids=ids, title="T")
 
 
 def _spin(until, timeout_ms: int = 10000) -> None:
@@ -133,6 +166,100 @@ class HeldFindTests(unittest.TestCase):
         self.assertIsNone(self.view._pending_find)
         _spin(lambda: self.answers, timeout_ms=400)
         self.assertEqual(self.answers, [])
+
+
+class SearchStartsAtTheReaderTests(unittest.TestCase):
+    """Where a new term's search begins, measured on a page that scrolls."""
+
+    def setUp(self):
+        self.view = BookView(_tall_doc(), PROFILE)
+        self.view.resize(600, 400)
+        self.view.show()
+        self.answers = []
+        _spin(lambda: self.view._loaded)
+        self.assertTrue(self.view._loaded, "the page never loaded")
+
+    def tearDown(self):
+        self.view.release_rendered()
+        self.view.deleteLater()
+
+    def _read_at(self, index: int) -> None:
+        """Put the reader at a paragraph and let the scroll land."""
+        self.view.scroll_to(f"b{index}", 0.0)
+        _spin(lambda: False, timeout_ms=400)
+
+    def _answer(self):
+        _spin(lambda: self.answers)
+        self.assertTrue(self.answers, "the find never answered")
+        return self.answers[-1]
+
+    def _paragraph_of(self, active: int) -> str:
+        box = []
+        self.view.matched_block_id(TERM, active, box.append)
+        _spin(lambda: box)
+        return box[0] if box else ""
+
+    def test_a_new_search_starts_at_the_paragraph_on_screen(self):
+        self._read_at(READING_AT)
+        self.view.find_from_reading_position(
+            TERM, lambda a, c: self.answers.append((a, c))
+        )
+        active, count = self._answer()
+        self.assertEqual(count, 2)
+        self.assertEqual(active, 2)  # the one after the reader, not the first
+        self.assertEqual(self._paragraph_of(active), f"b{LATE}")
+
+    def test_the_plain_find_is_the_one_that_ignores_the_reader(self):
+        # The control, and what the reader used to get: with no find session of
+        # its own to carry on from, a plain find starts at the top of the book
+        # however far in the reader is. The same carrying-on lands on the
+        # previous search's match once there has been one, which is the drift
+        # this fixes.
+        self._read_at(READING_AT)
+        self.view.find(TERM, True, lambda a, c: self.answers.append((a, c)))
+        active, _count = self._answer()
+        self.assertEqual(active, 1)
+        self.assertEqual(self._paragraph_of(active), f"b{EARLY}")
+
+    def test_a_second_new_search_starts_at_the_reader_again(self):
+        # Two lookups in a row: the second does not carry on from the first,
+        # which is what made searches walk away from the reader.
+        self._read_at(READING_AT)
+        self.view.find_from_reading_position(
+            TERM, lambda a, c: self.answers.append(("first", a, c))
+        )
+        self._answer()
+        self.view.find_from_reading_position(
+            TERM, lambda a, c: self.answers.append(("second", a, c))
+        )
+        _spin(lambda: len(self.answers) > 1)
+        self.assertEqual(self.answers[-1], ("second", 2, 2))
+
+    def test_a_search_with_nothing_left_ahead_wraps_to_the_top(self):
+        # Reading past the last match, so there is none forward: the search
+        # wraps rather than reporting the word missing from the book.
+        self._read_at(TALL_BLOCKS - 2)
+        self.view.find_from_reading_position(
+            TERM, lambda a, c: self.answers.append((a, c))
+        )
+        active, count = self._answer()
+        self.assertEqual(count, 2)
+        self.assertEqual(active, 1)
+        self.assertEqual(self._paragraph_of(active), f"b{EARLY}")
+
+    def test_a_new_search_is_held_until_the_page_can_answer_it(self):
+        # The holding in HeldFindTests applies to this entry point too: a word
+        # typed before the books have rendered still reaches them.
+        view = BookView(_tall_doc(), PROFILE)
+        self.addCleanup(view.release_rendered)
+        view.resize(600, 400)
+        view.show()
+        answers = []
+        view.find_from_reading_position(TERM, lambda a, c: answers.append((a, c)))
+        self.assertEqual(answers, [])
+        self.assertIsNotNone(view._pending_find)
+        _spin(lambda: answers)
+        self.assertEqual(answers, [(1, 2)])
 
 
 if __name__ == "__main__":

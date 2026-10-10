@@ -85,7 +85,11 @@ class _EditorSearch:
             self._on_label("")
             return
         self._current = 0
-        self._view.find(self._term, True, self._on_result)
+        # From the paragraph on screen, for the same reason the reader's search
+        # is (see BookView.find_from_reading_position): a new term carries on
+        # from the last search's match otherwise, which in a long book is
+        # nowhere near the paragraph being worked on.
+        self._view.find_from_reading_position(self._term, self._on_result)
 
     def next(self) -> None:
         if self._term:

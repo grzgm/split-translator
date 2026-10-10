@@ -144,7 +144,9 @@ class _FakeView:
     def __init__(self, script):
         # script: list of (active, count) tuples, consumed one per find() call.
         self._script = list(script)
-        self.find_calls = []  # (term, forward)
+        self.find_calls = []  # (term, forward), either entry point
+        #: The terms searched from the reading position rather than stepped to.
+        self.anchored_terms = []
         self.marks = []  # paragraph lists marked; [] for a clear
         self.block_for_index = {}  # active index -> block id for matched_block_id
 
@@ -152,6 +154,11 @@ class _FakeView:
         self.find_calls.append((term, forward))
         active, count = self._script.pop(0) if self._script else (0, 0)
         callback(active, count)
+
+    def find_from_reading_position(self, term, callback):
+        """A new term's search: always forward, from the paragraph on screen."""
+        self.anchored_terms.append(term)
+        self.find(term, True, callback)
 
     def matched_block_id(self, term, index, callback):
         callback(self.block_for_index.get(index, ""))
@@ -174,6 +181,9 @@ class EditorSearchTests(unittest.TestCase):
         search = self._search(view)
         search.search("word")
         self.assertEqual(view.find_calls, [("word", True)])
+        # A new term starts at the paragraph on screen, not at the last
+        # search's match (see BookView.find_from_reading_position).
+        self.assertEqual(view.anchored_terms, ["word"])
         self.assertEqual(self.labels[-1], "3 / 12")
         self.assertEqual(view.marks[-1], ["b5"])  # match paragraph marked
 
@@ -205,6 +215,8 @@ class EditorSearchTests(unittest.TestCase):
             view.find_calls,
             [("a", True), ("a", True), ("a", False)],
         )
+        # Only the search is anchored; stepping carries on from the match.
+        self.assertEqual(view.anchored_terms, ["a"])
 
     def test_step_without_a_term_does_nothing(self):
         view = _FakeView([])

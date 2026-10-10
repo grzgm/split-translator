@@ -441,7 +441,15 @@ class BookPanel(QFrame):
             return
         self.current_match = 0
         self._ensure_original_tab()
-        self.original_view.find(self.search_term, True, self._on_find_result)
+        # A new word is looked for from the paragraph the reader is on, not from
+        # wherever the last search ended: the native find carries on from its
+        # own last match, which drifts ahead of the reader over a session of
+        # lookups and gives away a part of the book they have not reached. Prev
+        # and Next below do carry on from the current match, which is what
+        # stepping through matches means (see BookView.find_from_reading_position).
+        self.original_view.find_from_reading_position(
+            self.search_term, self._on_find_result
+        )
 
     def _on_find_result(self, active: int, count: int) -> None:
         # Single landing point for every find (initial search and Next/Prev). The
