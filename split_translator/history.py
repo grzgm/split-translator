@@ -158,6 +158,22 @@ class HistoryPanel(QWidget):
         self.save_history()
         self.update_history_list()
 
+    def delete_row(self, row: int) -> None:
+        """Remove the entry at `row`, the position of a row in the list.
+
+        By position, not by word: the same word can hold several entries, since
+        a word looked up again on a later day keeps the older entry as well as
+        adding the new one (see add_to_history). Matching by word deleted the
+        first entry carrying it, which is the newest one, whichever row the
+        user had actually asked to delete. The list is built one item per entry
+        in order (see update_history_list), so a row and an entry share an
+        index. Out of range does nothing."""
+        if not 0 <= row < len(self.history):
+            return
+        self.history.pop(row)
+        self.history_list.takeItem(row)
+        self.save_history()
+
     def update_history_list(self):
         self.history_list.setUpdatesEnabled(False)  # Pause rendering.
         self.history_list.clear()
@@ -199,13 +215,7 @@ class HistoryPanel(QWidget):
         action = menu.exec(self.history_list.mapToGlobal(position))
 
         if action == delete_action:
-            word = item.data(Qt.ItemDataRole.UserRole)["word"]
-            for i, entry in enumerate(self.history):
-                if entry["word"] == word:
-                    self.history.pop(i)
-                    self.history_list.takeItem(i)
-                    break
-            self.save_history()
+            self.delete_row(self.history_list.row(item))
         elif action == search_action:
             word = item.data(Qt.ItemDataRole.UserRole)["word"]
             self.word_selected.emit(word)
