@@ -3,6 +3,7 @@ a paragraph position (a paragraph id plus a fraction toward the next paragraph)
 and a section position (a section index plus a share of its height)."""
 
 import json
+from collections.abc import Callable
 
 from PySide6.QtCore import Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
@@ -433,6 +434,11 @@ class BookView(QWebEngineView):
         # The section starts this page measures against, re-sent on every load
         # because a page forgets them when it reloads. Empty until set.
         self._section_starts: list[str] = []
+        # Whether this page has finished loading, and the one find held back
+        # until it can be answered. See find(): a page that is not loaded, or
+        # not on screen, answers a find with silence or with nothing found.
+        self._loaded = False
+        self._pending_find: tuple[str, bool, Callable] | None = None
         # The book HTML is loaded from a temp file, not setHtml: a full novel's
         # HTML is larger than setHtml's ~2 MB data-URL cap and would silently
         # fail to render (loadFinished ok=False, blank view). See book_render.
@@ -445,6 +451,9 @@ class BookView(QWebEngineView):
         # search can mark the paragraph holding the current match. Connect before
         # loading so the signal is not missed.
         self.loadFinished.connect(self._inject_search_mark)
+        # Note when the page becomes searchable, and send any held find.
+        # Connect before loading so the signal is not missed.
+        self.loadFinished.connect(self._note_loaded)
         # Restore the saved scroll position once the page has laid out: offsets
         # are only correct after load, so scrolling before loadFinished would
         # land at the top. Connect before loading so the signal is not missed.
@@ -622,7 +631,10 @@ class BookView(QWebEngineView):
         )
 
     def clear_search_mark(self) -> None:
-        """Remove the search-block highlight."""
+        """Remove the search-block highlight. Any held find goes with it: the
+        term it was for has been cleared, so answering it later would mark a
+        paragraph for a search that is no longer on."""
+        self._pending_find = None
         self.page().runJavaScript(_MARK_BLOCKS_JS % {"ids": "[]"})
 
     def matched_block_id(self, term: str, index: int, callback) -> None:
@@ -662,7 +674,25 @@ class BookView(QWebEngineView):
     def find(self, term: str, forward: bool, callback) -> None:
         """Run a native find; report (active_match, total) to callback(int, int).
         active_match is the 1-based index of the highlighted match (0 when there
-        is none), so the caller can number it absolutely and locate its block."""
+        is none), so the caller can number it absolutely and locate its block.
+
+        A find the page cannot answer yet is held rather than sent, because
+        findText fails two ways and neither says so. Sent before the document
+        has loaded, it never calls back at all, so the match counter and the
+        marks keep standing at the search before. Sent to a view that is off
+        screen, it answers 0 matches however many the book holds, so the word
+        reads as missing from the book. Both looked like a search that never
+        reached the books, and both cleared on searching again, which is all
+        the second search did differently. The held find is sent as soon as the
+        page loads or the view is shown; only the newest is kept, since by then
+        an older one's term has left the search box."""
+        if not self._loaded or not self.isVisible():
+            self._pending_find = (term, forward, callback)
+            return
+        self._pending_find = None
+        self._find_now(term, forward, callback)
+
+    def _find_now(self, term: str, forward: bool, callback) -> None:
         flags = QWebEnginePage.FindFlag(0)
         if not forward:
             flags |= QWebEnginePage.FindFlag.FindBackward
@@ -671,6 +701,28 @@ class BookView(QWebEngineView):
             callback(result.activeMatch(), result.numberOfMatches())
 
         self.page().findText(term, flags, _on_result)
+
+    def _note_loaded(self, ok: bool) -> None:
+        """The page has settled. A failed load leaves it unsearchable, so a held
+        find waits for a load that works rather than being spent on a blank
+        page."""
+        self._loaded = bool(ok)
+        self._send_held_find()
+
+    def showEvent(self, event) -> None:
+        """A view just put on screen can answer a find it could not before."""
+        super().showEvent(event)
+        self._send_held_find()
+
+    def _send_held_find(self) -> None:
+        """Send the held find, if there is one and the page can answer it."""
+        if self._pending_find is None:
+            return
+        if not self._loaded or not self.isVisible():
+            return
+        term, forward, callback = self._pending_find
+        self._pending_find = None
+        self._find_now(term, forward, callback)
 
     def topmost_block_id(self, callback) -> None:
         """Read the topmost visible block id and pass it to callback(str)."""
