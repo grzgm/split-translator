@@ -266,9 +266,13 @@ class BookViewSearchMarkTests(unittest.TestCase):
         calls = []
         view.page().runJavaScript = lambda js, *a, **k: calls.append(js)
         view.clear_search_mark()
-        self.assertEqual(len(calls), 1)
-        self.assertIn("st-search-block", calls[0])
-        self.assertIn("([])", calls[0])
+        # Two scripts: the sentence mark goes with the paragraph marks, since
+        # it marks a line inside one of them and means nothing on its own.
+        self.assertEqual(len(calls), 2)
+        blocks = [js for js in calls if "st-search-block" in js]
+        self.assertEqual(len(blocks), 1)
+        self.assertIn("([])", blocks[0])
+        self.assertTrue(any("st-search-sentence" in js for js in calls))
 
     def test_matched_block_id_forwards_the_blocks_id_to_the_callback(self):
         # The occurrence-count JS returns the block id; matched_block_id forwards

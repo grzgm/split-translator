@@ -24,7 +24,13 @@ from .book_view import BookView
 from .config import Config
 from .layout import LAYOUT_BOOK, normalise_layout
 from .normalise_spec import ORIGINAL_SIDE, TRANSLATION_SIDE, NormaliseSpec
+from .sentence_sync import counterpart_sentence
 from .sync_gesture import SyncGesture
+
+
+def _other_side(side: str) -> str:
+    """The other edition's side name, as book_sync._other does."""
+    return TRANSLATION_SIDE if side == ORIGINAL_SIDE else ORIGINAL_SIDE
 
 
 class BookPanel(QFrame):
@@ -536,6 +542,8 @@ class BookPanel(QFrame):
         # with scroll sync; otherwise clear the other side's stale mark.
         if not self.sync_enabled:
             other.clear_search_mark()
+            # Nothing is mirrored, so only this edition's sentence is marked.
+            self._mark_sentences(active, None, block_id)
             return
         side = ORIGINAL_SIDE if active is self.original_view else TRANSLATION_SIDE
         # A paragraph in a group marks the whole group on the other side;
@@ -545,6 +553,79 @@ class BookPanel(QFrame):
             other.mark_search_blocks(counterpart)
         else:
             other.clear_search_mark()
+        self._mark_sentences(active, other, block_id)
+
+    def _mark_sentences(self, active, other, block_id: str) -> None:
+        """Mark the sentence holding the match inside the marked paragraph, and
+        the sentence that answers it inside the other edition's.
+
+        Which sentence holds the match is a question only the page can answer,
+        so this reads it; the answering sentence is then worked out from the
+        text alone (see sentence_sync). `other` is None when sync is off and
+        nothing is mirrored.
+
+        This reads the same script the flashcard example reads in
+        _on_find_result. Two reads rather than one shared answer: a
+        runJavaScript on a loaded page costs nothing worth saving, and the two
+        features stay independent of each other's timing."""
+        term, match = self.search_term, self.current_match
+        active.match_sentence_at(
+            term,
+            match,
+            lambda _sentence, index, count, word: self._on_match_sentence(
+                active, other, block_id, term, match, index, count, word
+            ),
+        )
+
+    def _on_match_sentence(
+        self, active, other, block_id, term, match, index: int, count: int,
+        word: tuple[int, int] | None = None,
+    ) -> None:
+        # The read is asynchronous, so a newer search may own the marks by now.
+        # Its own read is coming, so this answer is dropped rather than painted
+        # over the top of it.
+        if term != self.search_term or match != self.current_match:
+            return
+        # One sentence in the paragraph means the paragraph mark already says
+        # everything a sentence mark could.
+        if index >= 0 and count > 1:
+            # The word is left out of this edition's mark so the engine's own
+            # colour on it still shows; the other edition has no match in it.
+            active.mark_sentence(block_id, index, count, word)
+        else:
+            active.clear_sentence_mark()
+        if other is None:
+            return
+        side = ORIGINAL_SIDE if active is self.original_view else TRANSLATION_SIDE
+        # Only an anchored pair is worth looking inside: between anchors the
+        # counterpart paragraph is itself an estimate (see group_counterpart).
+        group = self.section_map.group_counterpart(side, block_id)
+        if group is None or index < 0:
+            other.clear_sentence_mark()
+            return
+        here, there = group
+        answer = counterpart_sentence(
+            self._paragraph_texts(side, here),
+            self._paragraph_texts(_other_side(side), there),
+            here.index(block_id),
+            index,
+            count,
+        )
+        if answer is None:
+            other.clear_sentence_mark()
+            return
+        paragraph, sentence, total = answer
+        other.mark_sentence(there[paragraph], sentence, total)
+
+    def _paragraph_texts(self, side: str, block_ids: list[str]) -> list[str]:
+        """The text of each of those paragraphs of one edition, in order."""
+        document = (
+            self.original_document
+            if side == ORIGINAL_SIDE
+            else self.translation_document
+        )
+        at = {bid: i for i, bid in enumerate(document.block_ids)}
+        return [document.block_texts[at[bid]] for bid in block_ids if bid in at]
 
     def _build_section_map(self) -> SectionMap:
         """Sections from the anchors and skip fields as they stand, manual and

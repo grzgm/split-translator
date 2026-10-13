@@ -203,16 +203,42 @@ _SEED_FIND_JS = """
 #: and in the anchor editor's find bars alike (see anchor_book_view).
 SEARCH_MARK_STYLE = "background: #fff3a8; outline: 2px solid #e0b400;"
 
+#: How the matching sentence inside a marked paragraph is marked: a background
+#: between the paragraph's pale #fff3a8 and the orange the engine paints a find
+#: match in (#ff9632), nearer the paragraph's end of that range, so the three
+#: read as one scale from the passage to the sentence to the word without the
+#: sentence shouting.
+#:
+#: The word is left out of it rather than painted over. A highlight's
+#: background goes over the top of the engine's own find match, whatever shade
+#: it is: measured on a real page, a matched word's 416 orange pixels became 0
+#: under a highlight background. So the sentence is marked as two ranges, one
+#: each side of the found word, which leaves the engine's orange showing
+#: through the gap and keeps all 416 (see mark_sentence). The paragraph's own
+#: background sits below the find match, which is why it never had to.
+SENTENCE_MARK_STYLE = "background-color: #ffdc8a;"
+
 _SEARCH_STYLE_JS = """
 (function() {
     if (document.getElementById('st-search-style')) return;
     var style = document.createElement('style');
     style.id = 'st-search-style';
     style.textContent =
-        '.st-search-block { __SEARCH_MARK_STYLE__ }';
+        '.st-search-block { __SEARCH_MARK_STYLE__ }'
+        // A highlight, not a class: a sentence is a range of text inside the
+        // paragraph, and wrapping that range in an element fails on real book
+        // markup (surroundContents throws InvalidStateError when the range
+        // partially selects an inline <span> or <br>, which these books are
+        // full of). A highlight marks the range itself and leaves the DOM
+        // alone, so the search's own text-run counting sees nothing change.
+        // Its background would cover the found word, so the mark leaves a
+        // gap where the word is: see SENTENCE_MARK_STYLE and mark_sentence.
+        + ' ::highlight(st-search-sentence) { __SENTENCE_MARK_STYLE__ }';
     (document.head || document.documentElement).appendChild(style);
 })();
-""".replace("__SEARCH_MARK_STYLE__", SEARCH_MARK_STYLE)
+""".replace("__SEARCH_MARK_STYLE__", SEARCH_MARK_STYLE).replace(
+    "__SENTENCE_MARK_STYLE__", SENTENCE_MARK_STYLE
+)
 
 # The paragraph-spacing normalisation rules live in normalise_spec, which builds
 # them from one edition's multipliers; see that module for why the app levels
@@ -245,6 +271,110 @@ _NORMALISE_STYLE_JS = """
 # or clear issued before the style injection still works; it just lacks the
 # colour until the style lands on load. %(ids)s is a JSON list of paragraph
 # ids, empty to only clear.
+# Cuts a block's text into sentences and locates one of them as a Range. The
+# rule is sentence_sync.split's: a sentence ends at . ! or ? followed by
+# whitespace or the end of the text. It is defined twice, here and in Python,
+# the way _FOLD_JS mirrors book_align.fold, because the sentence to mark is
+# chosen in Python while only the page can turn it into a Range. The count
+# travels with the mark so a disagreement between the two is caught.
+_SENTENCE_BOUNDS_JS = """
+    function __stSentenceBounds(whole) {
+        var at = 0, bounds = [];
+        // Each piece is trimmed and an empty one dropped, which is what
+        // sentence_sync.split does with strip(); the two have to count the
+        // same sentences. Trimming also keeps the mark off the space in front
+        // of a sentence, which would otherwise show as a coloured gap.
+        function push(from, to) {
+            while (from < to && /\\s/.test(whole.charAt(from))) { from++; }
+            while (to > from && /\\s/.test(whole.charAt(to - 1))) { to--; }
+            if (to > from) { bounds.push([from, to]); }
+        }
+        for (var i = 0; i < whole.length; i++) {
+            var c = whole.charAt(i);
+            if ((c === '.' || c === '!' || c === '?')
+                    && (i + 1 >= whole.length || /\\s/.test(whole.charAt(i + 1)))) {
+                push(at, i + 1);
+                at = i + 1;
+            }
+        }
+        push(at, whole.length);
+        return bounds.length ? bounds : [[0, whole.length]];
+    }
+    function __stSentenceRange(block, bound) {
+        // Text offsets within the block, turned into a Range. The walk is over
+        // text nodes, so a sentence running through an inline element is one
+        // range across several nodes.
+        var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+        var nodes = [], node, offset = 0;
+        while ((node = walker.nextNode())) {
+            nodes.push({ node: node, start: offset });
+            offset += node.nodeValue.length;
+        }
+        if (!nodes.length) { return null; }
+        function locate(index) {
+            for (var k = 0; k < nodes.length; k++) {
+                var n = nodes[k];
+                if (index <= n.start + n.node.nodeValue.length) {
+                    return { node: n.node, offset: index - n.start };
+                }
+            }
+            var last = nodes[nodes.length - 1];
+            return { node: last.node, offset: last.node.nodeValue.length };
+        }
+        var from = locate(bound[0]), to = locate(bound[1]);
+        var range = document.createRange();
+        range.setStart(from.node, from.offset);
+        range.setEnd(to.node, to.offset);
+        return range;
+    }
+"""
+
+# Marks one sentence of one paragraph, or clears the mark when the id is empty.
+# Does nothing when the page counts a different number of sentences in that
+# paragraph from the number the mark was worked out from: the index would then
+# point at another sentence, and marking the wrong line is worse than marking
+# none, because the paragraph mark alone is still correct.
+#
+# %(word)s is the found word's [start, end] within the paragraph's text, or
+# null when there is no match in it (the other edition's, where the search term
+# is in the wrong language). The sentence is then marked as the two stretches
+# either side of that word, so the engine's own orange on the word shows
+# through instead of being painted over. A word that is not inside the
+# sentence is ignored, which keeps a bad offset from moving the mark off the
+# sentence it belongs to.
+_MARK_SENTENCE_JS = """
+(function(id, index, count, word) {
+    __SENTENCE_BOUNDS__
+    if (!window.CSS || !CSS.highlights) { return "no highlight support"; }
+    CSS.highlights.delete('st-search-sentence');
+    if (!id) { return "cleared"; }
+    var block = document.querySelector('[data-stid=' + JSON.stringify(id) + ']');
+    if (!block) { return "no such paragraph"; }
+    var bounds = __stSentenceBounds(block.textContent);
+    if (bounds.length !== count) { return "sentence count differs"; }
+    if (index < 0 || index >= bounds.length) { return "no such sentence"; }
+    var from = bounds[index][0], to = bounds[index][1];
+    var parts = [[from, to]];
+    if (word && word.length === 2 && word[1] > word[0]
+            && word[0] >= from && word[1] <= to) {
+        parts = [];
+        if (word[0] > from) { parts.push([from, word[0]]); }
+        if (word[1] < to) { parts.push([word[1], to]); }
+    }
+    var highlight = new Highlight();
+    for (var k = 0; k < parts.length; k++) {
+        var range = __stSentenceRange(block, parts[k]);
+        if (range) { highlight.add(range); }
+    }
+    if (!highlight.size) {
+        // The word is the whole sentence, so the engine has already marked it.
+        return "the word is the sentence";
+    }
+    CSS.highlights.set('st-search-sentence', highlight);
+    return "marked";
+})(%(id)s, %(index)s, %(count)s, %(word)s);
+""".replace("__SENTENCE_BOUNDS__", _SENTENCE_BOUNDS_JS)
+
 _MARK_BLOCKS_JS = """
 (function(ids) {
     var els = document.querySelectorAll('.st-search-block');
@@ -385,8 +515,11 @@ _MATCH_BLOCK_JS = """
 # %(index)s is the 1-based match index.
 _MATCH_SENTENCE_JS = """
 (function(term, index) {
-    if (!term || index < 1) return JSON.stringify({sentence: ""});
+    if (!term || index < 1) {
+        return JSON.stringify({sentence: "", index: -1, count: 0, word: null});
+    }
     __FOLD__
+    __SENTENCE_BOUNDS__
     var needle = __fold(term.toLowerCase());
     __TEXT_RUNS__
     var seen = 0;
@@ -422,15 +555,32 @@ _MATCH_SENTENCE_JS = """
                     }
                 }
                 var sentence = raw.substring(start, end).trim();
-                return JSON.stringify({sentence: sentence});
+                // Where that sentence sits in the paragraph, by the same rule
+                // the mark cuts with, so the two agree on what sentence 3 is.
+                var bounds = __stSentenceBounds(raw);
+                var place = 0;
+                for (var k = 0; k < bounds.length; k++) {
+                    if (hit >= bounds[k][0] && hit < bounds[k][1]) {
+                        place = k;
+                        break;
+                    }
+                }
+                return JSON.stringify({
+                    sentence: sentence, index: place, count: bounds.length,
+                    // Where the match itself sits in the paragraph, so the
+                    // sentence mark can leave it uncovered.
+                    word: [hit, hit + needle.length]
+                });
             }
             from = hit + needle.length;
             hit = text.indexOf(needle, from);
         }
     }
-    return JSON.stringify({sentence: ""});
+    return JSON.stringify({sentence: "", index: -1, count: 0, word: null});
 })(%(term)s, %(index)s);
-""".replace("__TEXT_RUNS__", _TEXT_RUNS_JS).replace("__FOLD__", _FOLD_JS)
+""".replace("__TEXT_RUNS__", _TEXT_RUNS_JS).replace("__FOLD__", _FOLD_JS).replace(
+    "__SENTENCE_BOUNDS__", _SENTENCE_BOUNDS_JS
+)
 
 
 class BookView(QWebEngineView):
@@ -668,11 +818,51 @@ class BookView(QWebEngineView):
             _MARK_BLOCKS_JS % {"ids": json.dumps(list(block_ids))}
         )
 
+    def mark_sentence(
+        self,
+        block_id: str,
+        index: int,
+        count: int,
+        word: tuple[int, int] | None = None,
+    ) -> None:
+        """Mark one sentence of one paragraph, inside the paragraph mark rather
+        than instead of it: the paragraph keeps its pale background and the
+        sentence takes the stronger one (see SENTENCE_MARK_STYLE). An empty id
+        clears the mark.
+
+        `count` is how many sentences the sentence was chosen from. The page
+        cuts the paragraph itself and marks nothing if it counts a different
+        number, because the index would then point at another sentence; the
+        paragraph mark alone is still right in that case.
+
+        `word` is the found word's (start, end) within the paragraph's text, on
+        the edition that was searched. The sentence is marked either side of it
+        so the engine's own colour on the word is not painted over. The other
+        edition has no match to leave out and passes None."""
+        self.page().runJavaScript(
+            _MARK_SENTENCE_JS
+            % {
+                "id": json.dumps(block_id or ""),
+                "index": int(index),
+                "count": int(count),
+                "word": json.dumps(
+                    [int(word[0]), int(word[1])] if word else None
+                ),
+            }
+        )
+
+    def clear_sentence_mark(self) -> None:
+        """Remove the sentence mark, leaving any paragraph mark in place."""
+        self.mark_sentence("", -1, 0)
+
     def clear_search_mark(self) -> None:
         """Remove the search-block highlight. Any held find goes with it: the
         term it was for has been cleared, so answering it later would mark a
-        paragraph for a search that is no longer on."""
+        paragraph for a search that is no longer on. The sentence mark goes
+        too: it marks a line inside the paragraph mark and means nothing
+        without it."""
         self._pending_find = None
+        self.clear_sentence_mark()
         self.page().runJavaScript(_MARK_BLOCKS_JS % {"ids": "[]"})
 
     def matched_block_id(self, term: str, index: int, callback) -> None:
@@ -696,16 +886,47 @@ class BookView(QWebEngineView):
             "index": int(index),
         }
 
+        self.match_sentence_at(
+            term,
+            index,
+            lambda sentence, _index, _count, _word: callback(sentence),
+        )
+
+    def match_sentence_at(self, term: str, index: int, callback) -> None:
+        """The sentence around the `index`-th match and where it sits: calls
+        callback(sentence, sentence_index, sentence_count, word) with the
+        sentence's 0-based place in its paragraph, how many sentences that
+        paragraph holds, and the match's own (start, end) within the
+        paragraph's text. ("", -1, 0, None) when the match cannot be located.
+
+        The text is what the flashcard's first example wants; the rest is what
+        the sentence mark wants. The count travels with it so the mark can be
+        refused if the page ever cuts the paragraph differently from Python
+        (see sentence_sync), and the word so the mark can leave it uncovered
+        (see mark_sentence)."""
+        js = _MATCH_SENTENCE_JS % {
+            "term": json.dumps(term),
+            "index": int(index),
+        }
+
         def _on_result(payload):
             if not payload:
-                callback("")
+                callback("", -1, 0, None)
                 return
             try:
                 data = json.loads(payload)
             except (ValueError, TypeError):
-                callback("")
+                callback("", -1, 0, None)
                 return
-            callback(data.get("sentence", "") or "")
+            word = data.get("word")
+            callback(
+                data.get("sentence", "") or "",
+                int(data.get("index", -1)),
+                int(data.get("count", 0)),
+                (int(word[0]), int(word[1]))
+                if isinstance(word, list) and len(word) == 2
+                else None,
+            )
 
         self.page().runJavaScript(js, _on_result)
 

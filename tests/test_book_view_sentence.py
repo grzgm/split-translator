@@ -64,3 +64,104 @@ class MatchSentenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarkSentenceTests(unittest.TestCase):
+    """BookView.mark_sentence fills the marking script with the paragraph, the
+    sentence and the count it was chosen from. The script itself needs a real
+    page (see test_sentence_mark_js); here the Python contract is checked
+    against a stub page."""
+
+    def _view_with_stub_page(self):
+        view = BookView.__new__(BookView)
+        calls = []
+
+        class StubPage:
+            def runJavaScript(self, js, cb=None):
+                calls.append(js)
+
+        view.page = lambda: StubPage()
+        return view, calls
+
+    def test_the_paragraph_sentence_and_count_go_into_the_script(self):
+        view, calls = self._view_with_stub_page()
+        view.mark_sentence("b7", 3, 9)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('"b7"', calls[0])
+        self.assertIn('("b7", 3, 9, null)', calls[0])
+        self.assertIn("st-search-sentence", calls[0])
+
+    def test_clearing_sends_an_empty_paragraph(self):
+        view, calls = self._view_with_stub_page()
+        view.clear_sentence_mark()
+        self.assertIn('("", -1, 0, null)', calls[0])
+
+    def test_the_found_word_goes_in_so_the_mark_can_leave_it_out(self):
+        view, calls = self._view_with_stub_page()
+        view.mark_sentence("b7", 3, 9, (12, 18))
+        self.assertIn('("b7", 3, 9, [12, 18])', calls[0])
+
+    def test_a_missing_paragraph_clears_rather_than_marking(self):
+        view, calls = self._view_with_stub_page()
+        view.mark_sentence("", 2, 5)
+        self.assertIn('("", 2, 5, null)', calls[0])
+
+
+class MatchSentenceAtTests(unittest.TestCase):
+    """The richer read: the sentence text, its place in the paragraph and how
+    many sentences that paragraph holds. match_sentence is the same read with
+    the place dropped."""
+
+    def _view_with_stub_page(self, js_return):
+        view = BookView.__new__(BookView)
+
+        class StubPage:
+            def runJavaScript(self, js, cb):
+                cb(js_return)
+
+        view.page = lambda: StubPage()
+        return view
+
+    def test_the_place_and_the_word_come_through(self):
+        view = self._view_with_stub_page(
+            json.dumps(
+                {"sentence": "She saw it.", "index": 2, "count": 5, "word": [4, 7]}
+            )
+        )
+        got = []
+        view.match_sentence_at("saw", 1, lambda *args: got.append(args))
+        self.assertEqual(got, [("She saw it.", 2, 5, (4, 7))])
+
+    def test_no_match_reports_no_place(self):
+        view = self._view_with_stub_page(
+            json.dumps({"sentence": "", "index": -1, "count": 0, "word": None})
+        )
+        got = []
+        view.match_sentence_at("zzz", 1, lambda *args: got.append(args))
+        self.assertEqual(got, [("", -1, 0, None)])
+
+    def test_an_empty_answer_reports_no_place(self):
+        view = self._view_with_stub_page("")
+        got = []
+        view.match_sentence_at("zzz", 1, lambda *args: got.append(args))
+        self.assertEqual(got, [("", -1, 0, None)])
+
+    def test_a_malformed_word_is_dropped(self):
+        view = self._view_with_stub_page(
+            json.dumps(
+                {"sentence": "She saw it.", "index": 2, "count": 5, "word": [4]}
+            )
+        )
+        got = []
+        view.match_sentence_at("saw", 1, lambda *args: got.append(args))
+        self.assertEqual(got, [("She saw it.", 2, 5, None)])
+
+    def test_match_sentence_still_hands_over_the_text_alone(self):
+        view = self._view_with_stub_page(
+            json.dumps(
+                {"sentence": "She saw it.", "index": 2, "count": 5, "word": [4, 7]}
+            )
+        )
+        got = []
+        view.match_sentence("saw", 1, got.append)
+        self.assertEqual(got, ["She saw it."])
