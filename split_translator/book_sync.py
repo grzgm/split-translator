@@ -231,6 +231,34 @@ class SectionMap:
         share = (before + weights[position] / 2) / total
         return [self.paragraph_at(other, k, share)[0]]
 
+    def group_counterpart(
+        self, side: str, paragraph_id: str
+    ) -> tuple[list[str], list[str]] | None:
+        """The paragraphs of the group holding this paragraph, this side first
+        and the other second, or None when the paragraph is not in a group.
+
+        counterpart() above answers for every paragraph, falling back between
+        anchors to the one at the same share of the section's text. That
+        fallback is an estimate of where the reader is, which is all a scroll
+        or a highlight needs. Looking inside it is another matter: a sentence
+        marked within an estimated paragraph would be a guess inside a guess.
+        So this says when the two sides are an anchored pair, which is when
+        going down to sentences means anything (see sentence_sync)."""
+        position = self._positions[side].get(paragraph_id)
+        if position is None:
+            return None
+        section = self._sections[self._section_at[side][position]]
+        if section.kind != _GROUP:
+            return None
+        other = _other(side)
+        here, there = section.paragraphs(side), section.paragraphs(other)
+        if not len(here) or not len(there):
+            return None
+        return (
+            self._ids[side][here.start : here.stop],
+            self._ids[other][there.start : there.stop],
+        )
+
     def paragraph_at(
         self, side: str, section: int, share: float
     ) -> tuple[str, float]:

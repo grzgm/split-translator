@@ -492,3 +492,43 @@ def align_batch(
                 )
             )
     return anchors
+
+
+def align_sentences(a: list[str], b: list[str]) -> list[tuple[int, int, int, int]]:
+    """The cheapest beads through two short lists of texts, as half-open
+    ranges (a0, a1, b0, b1) covering both lists completely and in order.
+
+    The same bead search align_batch uses, over the sentences of one paragraph
+    pair instead of a book's paragraphs. Both lists must already be known to
+    say the same thing, which is what makes covering them completely the right
+    demand; the paragraphs of one anchor group are such a pair. Two devices the
+    book-scale search needs are therefore unnecessary here: there are no sure
+    points to aim at, because a dozen sentences hold no rare word that occurs
+    twice in the whole book, and the band is the whole table, because the table
+    is a dozen cells square rather than millions.
+
+    Empty when either list is empty: there would be nothing to cover."""
+    if not a or not b:
+        return []
+    first, second = _Edition(a), _Edition(b)
+    ratio = second.lengths[-1] / max(1, first.lengths[-1])
+    try:
+        return _align_stretch(
+            first,
+            second,
+            0,
+            len(a),
+            0,
+            len(b),
+            [],
+            ratio,
+            _SharedWords(first, second, _shared_vocabulary(first, second)),
+            head=False,
+            tail=False,
+            band=len(a) + len(b),
+        )
+    except _Unreachable:
+        # The band covers the whole table, so every cell is reachable and this
+        # cannot happen. Answered as "no beads" rather than raised: the caller
+        # marks nothing extra and the paragraph mark still stands.
+        return []

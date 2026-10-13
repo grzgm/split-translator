@@ -205,3 +205,43 @@ class SectionMapSkipTests(unittest.TestCase):
         self.assertEqual(
             _map(original_kept=range(4, 2)).kept(ORIGINAL_SIDE), range(0, 6)
         )
+
+
+class GroupCounterpartTests(unittest.TestCase):
+    """Which paragraph pairs are anchored, as opposed to estimated. Only an
+    anchored pair is worth looking inside for a sentence (see sentence_sync);
+    between anchors the counterpart paragraph is itself an estimate."""
+
+    def test_a_paragraph_in_a_group_reports_both_sides(self):
+        sections = _map([("b2", "b3")])
+        self.assertEqual(
+            sections.group_counterpart(ORIGINAL_SIDE, "b2"), (["b2"], ["b3"])
+        )
+        self.assertEqual(
+            sections.group_counterpart(TRANSLATION_SIDE, "b3"), (["b3"], ["b2"])
+        )
+
+    def test_a_group_covering_several_paragraphs_reports_all_of_them(self):
+        # One original paragraph matched to two translation paragraphs.
+        sections = _map([("b2", "b3"), ("b2", "b4")])
+        self.assertEqual(
+            sections.group_counterpart(ORIGINAL_SIDE, "b2"),
+            (["b2"], ["b3", "b4"]),
+        )
+
+    def test_a_paragraph_between_anchors_reports_nothing(self):
+        # counterpart() still answers for it, by share of the section's text;
+        # that estimate is not an anchored pair.
+        sections = _map([("b1", "b1"), ("b4", "b6")])
+        self.assertTrue(sections.counterpart(ORIGINAL_SIDE, "b2"))
+        self.assertIsNone(sections.group_counterpart(ORIGINAL_SIDE, "b2"))
+
+    def test_front_and_back_matter_report_nothing(self):
+        sections = _map([("b2", "b3")])
+        self.assertIsNone(sections.group_counterpart(ORIGINAL_SIDE, "b0"))
+        self.assertIsNone(sections.group_counterpart(ORIGINAL_SIDE, "b5"))
+
+    def test_an_unknown_id_reports_nothing(self):
+        self.assertIsNone(
+            _map([("b2", "b3")]).group_counterpart(ORIGINAL_SIDE, "nope")
+        )

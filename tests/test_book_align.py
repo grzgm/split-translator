@@ -1,7 +1,13 @@
 import unittest
 
 from split_translator.anchor_groups import build_groups
-from split_translator.book_align import _bead_anchors, align_batch, fold, tokens
+from split_translator.book_align import (
+    _bead_anchors,
+    align_batch,
+    align_sentences,
+    fold,
+    tokens,
+)
 
 # Invented names, one per story paragraph, shared by both editions the way
 # character and place names are. The rest of each paragraph is filler that
@@ -171,6 +177,75 @@ class AlignBatchTests(unittest.TestCase):
             original, translation, fixed=[("b0", "t0"), ("b2", "t82")]
         )
         self.assertIn(("b1", "t1"), anchors)
+
+
+class AlignSentencesTests(unittest.TestCase):
+    """The same bead search over the sentences of one paragraph pair. Both
+    sides are known to say the same thing, so every sentence on both sides
+    belongs to exactly one bead, and the lists are short enough to need
+    neither sure points nor a band."""
+
+    def test_sentence_for_sentence_when_the_translator_kept_them(self):
+        here = [
+            "Fremen must return to Arrakis.",
+            "The Imperium offers him nothing.",
+            "It will rob him of his soul.",
+        ]
+        there = [
+            "Fremen musi wrocic na Arrakis.",
+            "Imperium nie oferuje mu niczego.",
+            "Okradnie go z duszy.",
+        ]
+        self.assertEqual(
+            align_sentences(here, there),
+            [(0, 1, 0, 1), (1, 2, 1, 2), (2, 3, 2, 3)],
+        )
+
+    def test_a_sentence_split_in_two_comes_back_as_one_bead(self):
+        # The shape that breaks counting and breaks taking a share of the
+        # characters: one sentence became two, and the lengths say so.
+        here = [
+            "Fremen must return to Arrakis and to the faith of his fathers in"
+            " the deep desert of the south.",
+            "The Imperium offers him nothing at all.",
+        ]
+        there = [
+            "Fremen musi wrocic na Arrakis.",
+            "Musi wrocic do wiary ojcow na glebokiej pustyni poludnia.",
+            "Imperium nie oferuje mu zupelnie niczego.",
+        ]
+        self.assertEqual(
+            align_sentences(here, there), [(0, 1, 0, 2), (1, 2, 2, 3)]
+        )
+
+    def test_two_sentences_run_together_come_back_as_one_bead(self):
+        here = [
+            "Fremen must return to Arrakis.",
+            "He must return to the faith of his fathers.",
+            "The Imperium offers him nothing.",
+        ]
+        there = [
+            "Fremen musi wrocic na Arrakis i do wiary swoich ojcow.",
+            "Imperium nie oferuje mu niczego.",
+        ]
+        self.assertEqual(align_sentences(here, there), [(0, 2, 0, 1), (2, 3, 1, 2)])
+
+    def test_every_sentence_on_both_sides_is_covered_once(self):
+        here = ["One here." for _ in range(5)]
+        there = ["Jedno tutaj." for _ in range(6)]
+        beads = align_sentences(here, there)
+        self.assertEqual([b[0] for b in beads], [0] + [b[1] for b in beads[:-1]])
+        self.assertEqual(beads[0][0], 0)
+        self.assertEqual(beads[-1][1], 5)
+        self.assertEqual(beads[0][2], 0)
+        self.assertEqual(beads[-1][3], 6)
+
+    def test_an_empty_side_has_nothing_to_cover(self):
+        self.assertEqual(align_sentences([], ["Jedno."]), [])
+        self.assertEqual(align_sentences(["One."], []), [])
+
+    def test_one_sentence_each(self):
+        self.assertEqual(align_sentences(["One."], ["Jedno."]), [(0, 1, 0, 1)])
 
 
 if __name__ == "__main__":
